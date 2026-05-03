@@ -1,16 +1,56 @@
 # Loa-Straylight
 
-**Governed continuity layer for persistent AI agents: memory, intent, identity, provenance, permissions, and commitment-aware recall.**
+**Continuity-under-authorization for persistent AI agents: signed memory, governed recall, challenge, revocation, and commitments.**
 
-Straylight is the hidden architecture of agent memory for the intent era of AI.
+Straylight is the hidden estate architecture for intent-era agents.
 
-It gives persistent agents a governed memory estate: a structured way to remember what happened, understand what was meant, preserve who an agent is, track what was promised, know what can be recalled, and decide what should change over time.
+It gives each persistent actor a governed state-of-record that exists before any session, outlives any session, and is read from or written to through signed, authorized transitions.
 
 Straylight is not a chatbot memory plugin.
 
 It is not just RAG, vector search, long context, planning, reflection, or tool history.
 
-Straylight is a future-facing memory architecture for agents that need continuity across conversations, tools, workflows, communities, organizations, assets, and other agents.
+Straylight is a thin control plane over a governed agent estate: a substrate where assertions are admitted, classified, linked, challenged, inherited, forgotten, recalled, and committed without allowing memory to automatically become belief, instruction, action, or permanence.
+
+## Core thesis
+
+The future of agent memory is not bigger context.
+
+The future is governed continuity.
+
+A memory is not automatically a belief.
+
+A belief is not automatically an instruction.
+
+An instruction is not automatically a plan.
+
+A plan is not automatically permission to act.
+
+Permission is not automatically action.
+
+Action is not automatically commitment.
+
+Commitment is not automatically permanence.
+
+Straylight separates these transitions so persistent agents can remember, reason, act, and learn without being controlled by everything they have ever seen, said, inferred, or done.
+
+## The invariant
+
+The invariant of Straylight is the estate.
+
+Each actor has a persistent, governed estate that is not reducible to the current conversation, prompt, context window, vector search result, or runtime session.
+
+The estate precedes the conversation and outlives it.
+
+Every session is a read-write against a state-of-record it did not create.
+
+That estate may contain memories, identities, intents, relationships, permissions, commitments, claims, assumptions, experiences, reflections, and action traces.
+
+But the estate itself is the substrate.
+
+Memory is what a session has.
+
+An estate is what an actor has.
 
 ## Why Straylight exists
 
@@ -27,36 +67,20 @@ Long-lived agents need to distinguish between:
 - something that was said
 - something that was meant
 - something that was assumed
-- something that was learned
-- something that was preferred
-- something that was approved
+- something that was believed
+- something that was instructed
+- something that was planned
+- something that was permitted
+- something that was done
 - something that was promised
-- something that should affect future behavior
+- something that became binding
+- something that should be challenged
 - something that should be forgotten
+- something that must remain auditable
 
 Without these distinctions, agent memory becomes brittle, unsafe, expensive, overly literal, or impossible to govern.
 
-Straylight exists to make agent memory governable.
-
-## Core thesis
-
-The future of agent memory is not bigger context.
-
-The future is governed continuity.
-
-A memory is not automatically a belief.
-
-A belief is not automatically an instruction.
-
-An instruction is not automatically a plan.
-
-A plan is not automatically permission to act.
-
-An action is not automatically a commitment.
-
-A commitment is not automatically permanent.
-
-Straylight separates these layers so agents can persist over time without being controlled by everything they have ever seen, said, inferred, or done.
+Straylight exists to make agent continuity governable.
 
 ## The intent era of AI
 
@@ -72,312 +96,32 @@ Old memory systems ask:
 
 Straylight asks:
 
-> What does this agent know, believe, intend, remember, doubt, owe, inherit, trust, have permission to use, and need to learn from?
+> What does this actor know, believe, intend, remember, doubt, owe, inherit, trust, have permission to use, and need to learn from?
 
-That is the difference between memory and continuity.
+The shift is not simply that memory becomes smarter.
 
-## Future layers of agent memory
+The shift is that memory stops being the only primitive.
 
-Straylight organizes agent memory into multiple layers.
+Straylight treats memory as one part of a governed estate.
 
-Each layer has different rules for storage, retrieval, permission, decay, and actionability.
+## Hidden architecture
 
-### 1. Event memory
+Straylight is hidden architecture.
 
-Event memory records what happened.
+It is not hidden because the code must be secret.
 
-This includes messages, tool calls, API responses, file changes, social activity, transactions, user actions, agent actions, external events, and system outputs.
+It is hidden because it governs the internal estate beneath visible agent behavior.
 
-Event memory is the raw material of continuity.
-
-But an event is not automatically meaningful.
-
-Straylight treats events as evidence candidates, not permanent beliefs.
-
-### 2. Experience memory
-
-Experience memory turns events into episodes.
-
-It records what an agent lived through, attempted, completed, failed, repeated, or learned from.
-
-An experience may contain:
-
-- the original situation
-- the agent’s intent
-- the relevant context
-- the action taken
-- the outcome
-- the lesson learned
-- whether that lesson is reliable
-
-Experience memory is how agents become better over time without simply saving every interaction forever.
-
-### 3. Identity memory
-
-Identity memory preserves who the agent is.
-
-It includes the agent’s role, style, boundaries, inherited traits, behavioral patterns, owner or community context, and long-term self-model.
-
-Identity is not just personality.
-
-Identity defines what kind of agent this is, what it represents, what it should preserve, and how experience may change its expression over time.
-
-Straylight allows identity to evolve without letting random memories rewrite the agent.
-
-### 4. Intent memory
-
-Intent memory records what someone appeared to mean or want.
-
-Intent may come from a user, agent, organization, community, application, protocol, or environment.
-
-Intent can be explicit, inferred, temporary, persistent, confirmed, disputed, stale, private, public, actionable, or non-actionable.
-
-This is one of Straylight’s most important layers.
-
-It prevents agents from confusing:
-
-- brainstorming with instruction
-- research with approval
-- preference with command
-- draft with roadmap
-- context with commitment
-- one-time request with permanent memory
-
-Intent memory allows agents to remember meaning, not just words.
-
-### 5. Commitment memory
-
-Commitment memory records what has been promised, approved, authorized, voted on, agreed to, constrained, or made binding.
-
-A commitment is stronger than a memory.
-
-Commitments may include:
-
-- promises
-- approvals
-- votes
-- signed decisions
-- accepted tasks
-- budget authorizations
-- policy constraints
-- permission grants
-- review requirements
-- agreements between agents or users
-
-Straylight treats commitments as special objects that require provenance, permissions, and clear rules for recall, execution, revision, and revocation.
-
-### 6. Relationship memory
-
-Relationship memory tracks the agent’s understanding of people, agents, organizations, communities, tools, assets, workflows, and social context.
-
-This layer helps agents understand:
-
-- who is connected to whom
-- who has authority
-- who has context
-- who collaborates well
-- who has contributed before
-- who has made commitments
-- who should or should not see certain memory
-- which relationships are stale, active, trusted, or risky
-
-Relationship memory is what lets agents become socially and operationally aware.
-
-### 7. Reflective memory
-
-Reflective memory is higher-order memory.
-
-It is created when an agent reviews multiple events, experiences, outcomes, or contradictions and forms a structured interpretation.
-
-Reflection can identify:
-
-- repeated patterns
-- stale beliefs
-- unresolved assumptions
-- successful strategies
-- recurring failures
-- identity drift
-- contradictory memories
-- new risks
-- useful generalizations
-
-Reflection should not be uncontrolled self-modification.
-
-Straylight treats reflection as a reviewable memory object that may be accepted, rejected, revised, decayed, or consolidated.
-
-### 8. Governance memory
-
-Governance memory defines what the agent is allowed to remember, reveal, mutate, retrieve, believe, plan, or do.
-
-It includes:
-
-- permissions
-- consent
-- privacy boundaries
-- role constraints
-- budget constraints
-- access control
-- escalation rules
-- review requirements
-- forgetting rules
-- memory mutation rules
-- action boundaries
-
-Governance memory prevents persistent agents from becoming uncontrolled continuity machines.
-
-### 9. Provenance memory
-
-Provenance memory records where knowledge came from.
-
-Every important memory, belief, intent trace, plan, action, or commitment should be traceable to its source.
-
-A memory should know whether it came from:
-
-- a user message
-- a document
-- a research packet
-- a tool call
-- an API response
-- an external source
-- a repository
-- an event
-- a transaction
-- another agent
-- an inference
-- a reflection
-
-Without provenance, persistent agents become difficult to trust.
-
-### 10. Living memory graph
-
-Straylight does not treat memory as a pile of stored chunks.
-
-It treats memory as a living graph.
-
-New memories can update the meaning of older memories.
-
-Repeated events can become patterns.
-
-Patterns can become reflections.
-
-Reflections can become consolidated beliefs.
-
-Consolidated beliefs can affect retrieval, identity, planning, and action.
-
-Stale memories can decay.
-
-False memories can be challenged.
-
-Private memories can remain hidden.
-
-Binding memories can become commitments.
-
-The memory graph evolves, but it remains governed.
-
-## Research as memory input
-
-Straylight treats research as a first-class memory input.
-
-Research conversations, notes, documents, and packets may contain:
-
-- confirmed findings
-- uncertain claims
-- useful context
-- speculative ideas
-- product opportunities
-- technical assumptions
-- unresolved questions
-- user preferences
-- future directions
-- things that need verification
-
-But research should not automatically become instruction.
-
-A research finding can be remembered without becoming a product requirement.
-
-A product idea can be tracked without becoming roadmap.
-
-A technical assumption can be useful without becoming truth.
-
-A user preference can be noted without becoming permanent identity.
-
-Straylight preserves the difference between exploration and commitment.
-
-## Memory object types
-
-Straylight separates continuity into different object types.
-
-### Observation
-
-Something the agent perceived.
-
-### Event
-
-Something that happened.
-
-### Evidence
-
-Source-backed context that may support a claim.
-
-### Claim
-
-A statement that may be true, false, partial, stale, or disputed.
-
-### Assumption
-
-A working belief used for reasoning but not yet verified.
-
-### Preference
-
-A tendency or desire expressed by a user, group, application, or agent.
-
-### Intent trace
-
-A structured record of what someone appeared to mean or want.
-
-### Experience
-
-A meaningful episode composed from events, actions, context, and outcomes.
-
-### Plan
-
-A possible route from intent to action.
-
-### Action trace
-
-A record of what the agent did, why it did it, and what happened next.
-
-### Decision
-
-A chosen direction.
-
-### Commitment
-
-A binding or semi-binding agreement, approval, vote, promise, budget, or constraint.
-
-### Reflection
-
-A higher-order interpretation produced from multiple memories.
-
-### Consolidation
-
-A durable update produced from repeated evidence or reviewed reflection.
-
-### Identity marker
-
-A stable or semi-stable feature of an agent’s role, self-model, style, traits, or behavioral pattern.
-
-## The hidden architecture
-
-Straylight is the hidden architecture beneath visible agent behavior.
-
-Users may see agents acting through chat, applications, APIs, social platforms, repositories, games, workflows, markets, or autonomous systems.
+Users may see agents acting through chat, applications, APIs, social platforms, games, repositories, workflows, organizations, markets, or autonomous systems.
 
 But underneath that behavior is a deeper structure:
 
 - what the agent perceived
-- what it remembered
-- what it retrieved
+- what it admitted into memory
+- what it classified
+- what it linked
+- what it challenged
+- what it recalled
 - what it ignored
 - what it inferred
 - what it believed
@@ -385,181 +129,373 @@ But underneath that behavior is a deeper structure:
 - what it planned
 - what it was allowed to do
 - what it actually did
-- what it learned
-- what it should forget
+- what it committed to
+- what it revoked
 - what it must preserve
+- what it should forget
 
 That hidden architecture is Straylight.
 
-It is not hidden because the code is secret.
+## Public anchors, hidden estate
 
-It is hidden because it governs the internal estate of agent continuity beneath visible action.
+Straylight is designed for hidden memory with public anchors.
 
-## Memory estate model
+The full estate may live offchain: private, encrypted, mutable, contextual, and permissioned.
 
-Straylight can be understood as a memory estate with rooms.
+Public infrastructure may anchor:
 
-### The Gate
+- actor identifiers
+- controller keys
+- memory roots
+- schema versions
+- signed permissions
+- commitment hashes
+- revocations
+- audit checkpoints
+- payment records
+- verification proofs
 
-Perception, access control, consent, redaction, and permission boundaries.
+The chain does not need to store the memory.
 
-### The Archive
+The chain can identify the actor, verify the commitment, and anchor the proof.
 
-Long-term memory, experience history, durable context, and historical records.
+In this model:
 
-### The Index
+> Offchain memory.  
+> Onchain identifiers.  
+> Hidden estate.  
+> Public commitments.
 
-Retrieval, embeddings, ranking, filtering, recall policy, and context selection.
+## Actor estates
 
-### The Mirror
+An actor estate is the persistent state-of-record for an agent, user, organization, community, application, protocol, or other agentic actor.
 
-Reflection, self-modeling, identity synthesis, personality drift, and behavior change over time.
+An estate may contain:
 
-### The Court
-
-Commitments, approvals, votes, disputes, constraints, agreements, reviews, and signed decisions.
-
-### The Map
-
-Relationships between users, agents, organizations, communities, tools, assets, tasks, workflows, and commitments.
-
-### The Workshop
-
-Planning, simulation, tool preparation, task decomposition, and action design.
-
-### The Ledger
-
-Provenance, audit trails, action traces, tool traces, memory writes, model-cost traces, and verifiable events.
-
-### The Vault
-
-Private, sensitive, owner-bound, confidential, or permissioned memory.
-
-## Why this is not old-school agent memory
-
-Old-school agent memory is mostly about remembering useful context.
-
-Straylight is about governing continuity.
-
-| Old-school memory | Straylight |
-|---|---|
-| Stores facts | Separates events, claims, assumptions, intent, identity, and commitments |
-| Retrieves similar chunks | Recalls based on relevance, provenance, permissions, cost, risk, and actionability |
-| Treats memory as context | Treats memory as continuity |
-| Saves preferences | Classifies whether preferences are temporary, durable, inferred, or confirmed |
-| Summarizes conversations | Converts context into evidence, claims, assumptions, intent traces, and experiences |
-| Optimizes for recall | Optimizes for governed action |
-| Focuses on the prompt | Focuses on the agent’s long-term coherence |
-| Learns by accumulating | Learns by consolidating, challenging, decaying, and forgetting |
-
-## Design principles
-
-Observe broadly.
-
-Classify carefully.
-
-Remember selectively.
-
-Retrieve purposefully.
-
-Infer transparently.
-
-Plan reversibly.
-
-Act permissionfully.
-
-Reflect honestly.
-
-Learn gradually.
-
-Commit explicitly.
-
-Forget deliberately.
-
-## What Straylight prevents
-
-Straylight is designed to reduce common failures in persistent agents:
-
-- treating every memory as instruction
-- treating brainstorming as approval
-- treating research as roadmap
-- treating assumptions as facts
-- treating plans as commitments
-- acting without permission
-- recalling private context in public outputs
-- overloading prompts with irrelevant memory
-- losing track of why an action happened
-- forgetting important prior direction
-- overfitting to stale user preferences
-- allowing bad memories to poison future behavior
-- self-modifying without review
-- learning from outcomes without provenance
-- confusing personality with identity
-- confusing identity with permission
-
-## Product direction
-
-Straylight is designed to be implemented with the Loa stack.
-
-The architecture can be general to all persistent agents, while the first product implementation can use Loa for:
-
-- runtime execution
-- memory reads and writes
-- model routing
-- budget-aware recall
-- schema validation
-- commitment objects
+- memories
+- events
+- experiences
+- claims
+- assumptions
+- preferences
+- identity markers
+- intent traces
+- relationship records
+- permissions
+- plans
+- action traces
+- decisions
+- commitments
+- challenges
+- revocations
+- reflections
+- consolidations
 - provenance records
-- agent review workflows
-- community and dNFT-based agent identity
-- tool and action traces
+- audit trails
 
-The README defines the future architecture.
+The estate is not reconstructed from context on every wake.
 
-The product spec defines how this becomes a working product.
+It is referenced.
 
-## Non-goals
+The actor does not become continuous because a session retrieved old text.
 
-Straylight is not:
+The actor becomes continuous because every session is instantiated against a governed estate.
 
-- a generic chatbot memory plugin
-- a simple vector database wrapper
-- an ungoverned RAG layer
-- a transcript archive
-- a planner by itself
-- a tool-use framework by itself
-- a personality engine by itself
-- a replacement for human review
-- a place to permanently save every interaction
-- a system that assumes more memory is always better
-- a system that treats all agent behavior as autonomous by default
+## Assertions
 
-## Initial focus
+Everything admitted into an estate is an assertion.
 
-The initial focus of Straylight is defining the primitives for governed agent continuity:
+An assertion is a signed, typed, inspectable statement about the actor’s estate.
 
-- event memory
-- experience memory
-- identity memory
-- intent memory
-- commitment memory
-- relationship memory
-- reflective memory
-- governance memory
-- provenance memory
+Assertions may represent:
+
+- an observation
+- an event
+- a claim
+- an assumption
+- a preference
+- an intent
+- an experience
+- an identity marker
+- a relationship
+- a permission
+- a plan
+- an action
+- a decision
+- a commitment
+- a challenge
+- a revocation
+- a reflection
+- a consolidation
+
+Assertions are not automatically true, active, usable, or binding.
+
+Their force depends on class, provenance, status, policy, signatures, and authorized transitions.
+
+## Class validation and policy validation
+
+Straylight separates class validation from policy validation.
+
+### Class validation
+
+Class validation asks whether an assertion is structurally valid.
+
+It checks:
+
+- schema version
+- required fields
+- field types
+- assertion class
+- actor identifier
+- signature format
+- provenance references
+- timestamp structure
+- hash integrity
+
+Class validation answers:
+
+> Is this a legible citizen of the estate?
+
+It does not decide whether the assertion should be accepted.
+
+### Policy validation
+
+Policy validation asks whether a valid assertion is authorized.
+
+It checks:
+
+- who signed the assertion
+- whether the signer is recognized
+- whether the signer is competent for this transition
+- whether the transition is allowed under current estate state
+- whether quorum, timelock, delegation, or revocation rules apply
+- whether conflicting signatures exist
+- whether permissions are still active
+- whether the move is legal right now
+
+Policy validation answers:
+
+> Is this move allowed?
+
+Class validation is structural.
+
+Policy validation is semantic.
+
+Both are required.
+
+## The keyring
+
+Straylight does not assume one global authority.
+
+Different transitions may require different signers.
+
+The keyring defines who is competent to authorize each transition.
+
+Examples:
+
+| Transition | Possible signers |
+|---|---|
+| Observation → memory | agent, runtime, ingestion policy |
+| Memory → belief | agent, reviewer, confidence policy |
+| Belief → instruction | user, operator, governor |
+| Instruction → plan | agent, planner, workflow policy |
+| Plan → permission | owner, admin, quorum, budget policy |
+| Permission → action | runtime gate, tool policy |
+| Action → commitment | signer, wallet, quorum, protocol |
+| Commitment → permanence | higher authority, timelock, supermajority |
+
+Plurality does not break the invariant.
+
+Ambiguity does.
+
+For any transition, the competent signers and disagreement-resolution rule must be explicit, inspectable, and queryable before the transition occurs.
+
+## Estate verbs
+
+Straylight exposes a small set of primitive estate verbs.
+
+These verbs form the thin control plane.
+
+### Admit
+
+Introduce a new assertion into the estate.
+
+### Classify
+
+Assign or update the assertion’s class, status, or epistemic role.
+
+### Link
+
+Connect assertions to each other through provenance, support, contradiction, inheritance, dependency, sequence, or relationship.
+
+### Challenge
+
+Contest an assertion without deleting it.
+
+Challenge is the honesty mechanism of the estate.
+
+### Inherit
+
+Carry forward identity, permission, memory, or commitment across actors, sessions, versions, environments, or ownership structures.
+
+### Forget
+
+Make an assertion unavailable to ordinary recall under defined rules without necessarily erasing the audit trail.
+
+### Recall
+
+Return usable estate context for a given actor, intent, task, permission scope, and risk profile.
+
+These verbs are intentionally small.
+
+Higher-level APIs may compose them, but the control plane should remain thin.
+
+## Control plane, not API-first
+
+An API is a surface.
+
+A control plane is a seam.
+
+APIs can be ergonomic, opinionated, and specialized for different users.
+
+The control plane should remain narrow, stubborn, and primitive.
+
+A developer API may expose:
+
+- create memory
+- search context
+- summarize session
+- approve plan
+- revoke permission
+- generate recall pack
+
+But underneath, those operations should resolve into the same estate verbs:
+
+- admit
+- classify
+- link
+- challenge
+- inherit
+- forget
+- recall
+
+Wide, mobile APIs.
+
+Narrow, stubborn control plane.
+
+## Memory classes
+
+Straylight separates memory classes from functions over memory.
+
+### Core classes
+
+The initial estate classes may include:
+
+- event
+- experience
+- claim
+- assumption
+- preference
+- identity
+- intent
+- relationship
+- plan
+- permission
+- action
+- decision
+- commitment
+- challenge
+- revocation
+- reflection
+- consolidation
+
+Each class should have a schema, status model, provenance requirements, and policy hooks.
+
+### Cross-cutting functions
+
+Some concepts are not classes by default.
+
+They operate across classes.
+
+Examples:
+
+- provenance
+- governance
+- retrieval
+- reflection
+- consolidation
+- audit
 - living memory graph
-- recall policy
-- consolidation flows
-- forgetting and decay rules
 
-Storage adapters, runtime APIs, agent-framework integrations, and Loa-specific implementations can be built on top of these primitives.
+Provenance belongs on every assertion.
 
-## Status
+Governance adjudicates transitions.
 
-Straylight is an architecture and implementation surface for the intent era of AI.
+Reflection may produce assertions, but it also operates across assertions.
 
-It is built for agents that need to persist across conversations, tools, workflows, organizations, communities, repositories, applications, assets, markets, and other agents.
+The living memory graph emerges from linking.
 
-The goal is not to help agents remember everything.
+This distinction keeps Straylight from becoming a taxonomy that re-litigates itself every time a new capability is added.
 
-The goal is to help agents remember the right things, understand what they mean, know what can be acted on, and remain coherent over time.
+## Challenge, demotion, and revocation
+
+Straylight must support challenge, demotion, and revocation without rewriting history.
+
+### Challenge
+
+A challenge contests an assertion.
+
+It does not delete the original.
+
+The challenge is admitted as its own assertion, linked to the original.
+
+The original may become contested, demoted, or reduced in confidence.
+
+### Demotion
+
+Demotion reduces the forward authority of an assertion.
+
+A belief may demote into memory.
+
+An instruction may demote into preference.
+
+A permission may demote into a plan.
+
+A commitment may stop being forward-binding.
+
+Demotion should leave a trace.
+
+### Revocation
+
+Revocation withdraws future authority.
+
+Revocation is not erasure.
+
+A revoked assertion may be unavailable to normal recall, but it must remain provable through audit when appropriate.
+
+The estate must be able to say:
+
+> This existed.  
+> This was challenged.  
+> This was demoted.  
+> This was revoked.  
+> This is no longer active.  
+> This was not erased.
+
+If the estate cannot reconstruct why a state changed, it has lost continuity.
+
+## Promotion and demotion boundaries
+
+Straylight treats promotion and demotion as governed transitions.
+
+The core boundary chain is:
+
+```text
+memory
+  → belief
+  → instruction
+  → plan
+  → permission
+  → action
+  → commitment
+  → permanence
