@@ -1,11 +1,11 @@
 # Straylight schema candidates
 
-> Status: Phase 6 (inventory + boundary + fixtures) and Phase 7
-> (extraction handoff). **Pre-extraction prep, in-repo only.** Nothing
-> in this directory is a canonical Hounfour schema. Nothing in this
-> directory is a cross-repo integration artifact. Nothing in this
-> directory imports from a sibling repo or installs Hounfour as a
-> dependency.
+> Status: Phase 6 (inventory + boundary + fixtures), Phase 7
+> (extraction handoff), and Phase 8 (local Hounfour conformance
+> vectors). **Pre-extraction prep, in-repo only.** Nothing in this
+> directory is a canonical Hounfour schema. Nothing in this directory
+> is a cross-repo integration artifact. Nothing in this directory
+> imports from a sibling repo or installs Hounfour as a dependency.
 
 ## What this directory is
 
@@ -35,10 +35,20 @@ performing the extraction*. It contains:
   conformance bar Hounfour must satisfy before `loa-straylight`
   consumes it, and sketches the future-PR sequence. Does not
   perform the extraction.
+- [`hounfour-conformance-vectors.md`](./hounfour-conformance-vectors.md)
+  — Phase 8 local conformance vectors. Pins 12 deterministic JSON
+  vectors per validation layer (`class_validation`,
+  `policy_validation`, `audit_validation`, `keyring_validation`)
+  under [`fixtures/hounfour-conformance/`](../../fixtures/hounfour-conformance/).
+  Written by `npm run hounfour:conformance`. **Not** canonical
+  Hounfour schemas; intended as future Hounfour test inputs.
 
 The matching JSON example shapes live one directory up at
-[`fixtures/schema-candidates/`](../../fixtures/schema-candidates/) so the
-helper script and conformance tests can read them as plain files.
+[`fixtures/schema-candidates/`](../../fixtures/schema-candidates/) (Phase 6
+current-shape examples) and
+[`fixtures/hounfour-conformance/`](../../fixtures/hounfour-conformance/)
+(Phase 8 conformance vectors) so the helper scripts and conformance tests
+can read them as plain files.
 
 ## What this directory is **not**
 

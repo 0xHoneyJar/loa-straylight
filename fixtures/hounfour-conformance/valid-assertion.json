@@ -1,0 +1,44 @@
+{
+  "case_name": "valid_observation_assertion",
+  "expected_valid": true,
+  "validation_layer": "class_validation",
+  "reason": "Structurally legible observation: every required field present, schema_version pinned, body_hash sha256-prefixed, signatures non-empty.",
+  "subject": "assertion",
+  "payload": {
+    "assertion_id": "asrt_6c74618c57e0",
+    "estate_id": "estate:satoshi-demo",
+    "actor_id": "agent:satoshi-demo",
+    "assertion_class": "observation",
+    "status": "active",
+    "body": {
+      "text": "Conformance: a structurally legible observation."
+    },
+    "body_hash": "sha256:0185cd1d2b9579c0092051f0579c3bde7c86fbf55b5be4e6da82f5c7fe9bda2a",
+    "schema_version": "0.1.0",
+    "provenance": [
+      {
+        "provenance_id": "prov:fixture-default",
+        "source_type": "operator_input",
+        "observed_at": "2026-05-05T11:00:00Z",
+        "captured_by": "operator:eileen",
+        "evidence_summary": "fixture default operator-input provenance"
+      }
+    ],
+    "privacy_scope": "public",
+    "risk_level": "low",
+    "signatures": [
+      {
+        "signature_id": "sig_577e87117f7c",
+        "signer_id": "runtime:finn",
+        "signer_type": "runtime",
+        "signature_type": "dev_signature",
+        "signed_payload_hash": "sha256:4cc20ea19d8fce7805a844ab46e92e33f9259af601e93ec591822295208f6e4e",
+        "signature": "dev:74dd22c41f4c294ebc4d6858b5765566ae6d81b6efd3b619d3b7c1fcc3f34eb3",
+        "signed_at": "2026-05-05T10:00:00Z",
+        "key_ref": "dev-key:runtime:finn"
+      }
+    ],
+    "created_at": "2026-05-05T10:00:00Z",
+    "updated_at": "2026-05-05T10:00:00Z"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "case_name": "policy_decision_denied_unknown_signer",
+  "expected_valid": false,
+  "validation_layer": "policy_validation",
+  "reason": "decision: 'deny'. The signer (operator:not-on-keyring) is not on the keyring; signer_competence_result.allowed is false with reason unknown_signer:<id>. Class validation passes for the underlying candidate; policy lane refuses the move.",
+  "subject": "policy_decision",
+  "payload": {
+    "decision": "deny",
+    "policy_id": "straylight.default-agent-estate.v0",
+    "policy_version": "0.1.0",
+    "signer_competence_result": {
+      "allowed": false,
+      "reason": "unknown_signer:operator:not-on-keyring",
+      "matched_rule_id": "rule:admit-observation-runtime"
+    },
+    "reasons": [
+      "competence:unknown_signer:operator:not-on-keyring"
+    ],
+    "decided_at": "2026-05-05T12:35:00Z"
+  }
+}

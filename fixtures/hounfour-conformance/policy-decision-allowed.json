@@ -1,0 +1,30 @@
+{
+  "case_name": "policy_decision_allowed_admit_observation",
+  "expected_valid": true,
+  "validation_layer": "policy_validation",
+  "reason": "decision: 'allow'. The signer (runtime:finn) is on the keyring with status: 'active' and the runtime role is in rule:admit-observation-runtime's required_signer_roles. Policy lane authorizes the move now.",
+  "subject": "policy_decision",
+  "payload": {
+    "decision": "allow",
+    "policy_id": "straylight.default-agent-estate.v0",
+    "policy_version": "0.1.0",
+    "signer_competence_result": {
+      "allowed": true,
+      "reason": "competent_signer_present",
+      "matched_rule_id": "rule:admit-observation-runtime",
+      "signer_id": "runtime:finn",
+      "signer_role": "runtime",
+      "signature_id": "sig_577e87117f7c",
+      "competent_signer_ids": [
+        "runtime:finn"
+      ],
+      "quorum_required": 1,
+      "quorum_present": 1,
+      "requires_review": false
+    },
+    "reasons": [
+      "signer_runtime_competent_for_admit_observation"
+    ],
+    "decided_at": "2026-05-05T10:00:00Z"
+  }
+}
