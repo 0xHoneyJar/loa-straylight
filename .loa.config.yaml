@@ -1,0 +1,47 @@
+# Loa Framework Configuration (Submodule Mode)
+# This file is yours to customize - framework updates will never modify it
+
+# Installation mode (DO NOT CHANGE - use mount-loa.sh to switch to standard)
+installation_mode: submodule
+
+# Submodule settings
+submodule:
+  path: .loa
+  # ref: main  # Uncomment to track specific ref
+
+# =============================================================================
+# Persistence Mode
+# =============================================================================
+persistence_mode: standard
+
+# =============================================================================
+# Integrity Enforcement
+# =============================================================================
+# Note: Submodule mode uses git submodule integrity instead of checksums
+integrity_enforcement: warn
+
+# =============================================================================
+# Agent Configuration
+# =============================================================================
+disabled_agents: []
+
+# =============================================================================
+# Structured Memory
+# =============================================================================
+memory:
+  notes_file: grimoires/loa/NOTES.md
+  trajectory_dir: grimoires/loa/a2a/trajectory
+  trajectory_retention_days: 30
+
+# =============================================================================
+# Context Hygiene
+# =============================================================================
+compaction:
+  enabled: true
+  threshold: 5
+
+# =============================================================================
+# Integrations
+# =============================================================================
+integrations:
+  - github

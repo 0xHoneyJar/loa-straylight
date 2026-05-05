@@ -1,0 +1,1 @@
+../../.loa/.claude/commands/plan.md

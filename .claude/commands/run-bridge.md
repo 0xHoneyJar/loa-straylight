@@ -1,0 +1,1 @@
+../../.loa/.claude/commands/run-bridge.md
