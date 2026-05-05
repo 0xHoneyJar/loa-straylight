@@ -1,0 +1,121 @@
+{
+  "keyring_id": "keyring:satoshi-demo",
+  "actor_id": "agent:satoshi-demo",
+  "estate_id": "estate:satoshi-demo",
+  "version": "0.1.0",
+  "signer_entries": [
+    {
+      "signer_id": "operator:eileen",
+      "signer_type": "operator",
+      "key_ref": "dev-key:operator:eileen",
+      "status": "active",
+      "valid_from": "2026-01-01T00:00:00Z",
+      "scopes": ["estate:satoshi-demo"]
+    },
+    {
+      "signer_id": "runtime:finn",
+      "signer_type": "runtime",
+      "key_ref": "dev-key:runtime:finn",
+      "status": "active",
+      "valid_from": "2026-01-01T00:00:00Z",
+      "scopes": ["estate:satoshi-demo"]
+    },
+    {
+      "signer_id": "reviewer:dixie",
+      "signer_type": "reviewer",
+      "key_ref": "dev-key:reviewer:dixie",
+      "status": "active",
+      "valid_from": "2026-01-01T00:00:00Z",
+      "scopes": ["estate:satoshi-demo"]
+    },
+    {
+      "signer_id": "operator:revoked",
+      "signer_type": "operator",
+      "key_ref": "dev-key:operator:revoked",
+      "status": "revoked",
+      "valid_from": "2026-01-01T00:00:00Z",
+      "scopes": ["estate:satoshi-demo"]
+    }
+  ],
+  "competence_rules": [
+    {
+      "rule_id": "rule:admit-observation-runtime",
+      "transition_type": "admit_assertion",
+      "assertion_class": "observation",
+      "required_signer_roles": ["runtime", "operator", "reviewer"]
+    },
+    {
+      "rule_id": "rule:admit-event-runtime",
+      "transition_type": "admit_assertion",
+      "assertion_class": "event",
+      "required_signer_roles": ["runtime", "operator", "reviewer"]
+    },
+    {
+      "rule_id": "rule:admit-claim-operator",
+      "transition_type": "admit_assertion",
+      "assertion_class": "claim",
+      "required_signer_roles": ["operator", "reviewer"]
+    },
+    {
+      "rule_id": "rule:admit-preference-operator",
+      "transition_type": "admit_assertion",
+      "assertion_class": "preference",
+      "required_signer_roles": ["operator", "reviewer"]
+    },
+    {
+      "rule_id": "rule:admit-reflection-runtime",
+      "transition_type": "admit_assertion",
+      "assertion_class": "reflection",
+      "required_signer_roles": ["runtime", "operator", "reviewer"]
+    },
+    {
+      "rule_id": "rule:admit-relationship-operator",
+      "transition_type": "admit_assertion",
+      "assertion_class": "relationship",
+      "required_signer_roles": ["operator", "reviewer"]
+    },
+    {
+      "rule_id": "rule:admit-action-trace-runtime",
+      "transition_type": "admit_assertion",
+      "assertion_class": "action_trace",
+      "required_signer_roles": ["runtime", "operator"]
+    },
+    {
+      "rule_id": "rule:admit-identity-reviewer-only",
+      "transition_type": "admit_assertion",
+      "assertion_class": "identity",
+      "required_signer_roles": ["reviewer"],
+      "forbid_signer_roles": ["runtime"]
+    },
+    {
+      "rule_id": "rule:admit-permission-reviewer-only",
+      "transition_type": "admit_assertion",
+      "assertion_class": "permission",
+      "required_signer_roles": ["reviewer", "operator"],
+      "forbid_signer_roles": ["runtime"]
+    },
+    {
+      "rule_id": "rule:challenge-any",
+      "transition_type": "challenge_assertion",
+      "required_signer_roles": ["operator", "reviewer", "runtime"]
+    },
+    {
+      "rule_id": "rule:revoke-reviewer-or-operator",
+      "transition_type": "revoke_assertion",
+      "required_signer_roles": ["operator", "reviewer"]
+    },
+    {
+      "rule_id": "rule:forget-reviewer-or-operator",
+      "transition_type": "forget_assertion_from_recall",
+      "required_signer_roles": ["operator", "reviewer"]
+    },
+    {
+      "rule_id": "rule:recall-default",
+      "transition_type": "recall_estate_context",
+      "required_signer_roles": ["operator", "runtime", "reviewer"]
+    }
+  ],
+  "revoked_key_refs": ["dev-key:operator:revoked"],
+  "created_at": "2026-05-05T00:00:00Z",
+  "updated_at": "2026-05-05T00:00:00Z"
+}
