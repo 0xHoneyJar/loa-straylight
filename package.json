@@ -12,7 +12,8 @@
     "demo:recall": "vite-node scripts/demo-recall-wedge.ts",
     "demo:recall:json": "vite-node scripts/demo-recall-wedge.ts -- --json --out=.run/recall-demo.json",
     "schema:candidates": "vite-node scripts/export-schema-candidates.ts",
-    "hounfour:conformance": "vite-node scripts/export-hounfour-conformance.ts"
+    "hounfour:conformance": "vite-node scripts/export-hounfour-conformance.ts",
+    "hounfour:handoff": "vite-node scripts/print-hounfour-handoff-summary.ts"
   },
   "engines": {
     "node": ">=20"
