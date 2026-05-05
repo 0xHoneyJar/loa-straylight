@@ -1,0 +1,150 @@
+{
+  "case_name": "bot_recall_public_discord",
+  "expected_allowed": true,
+  "reason": "Freeside's Discord bot adapter builds a RecallRequest envelope per the wedge's validateRecallRequest shape, attaches environment_frame=public_discord, runs cross-tenant boundary checks, and forwards to the runtime gate. The bot reply renders the served RecallPack + RecallReceipt; included items are quotable, marked items carry a 'contested' affordance, excluded items appear only as exclusion summary entries.",
+  "input": {
+    "adapter": "discord",
+    "adapter_event": "discord:bot.recall",
+    "environment_frame": "public_discord",
+    "caller": {
+      "tenant_id": "tenant:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "discord": {
+        "guild_id": "guild:freeside-demo",
+        "channel_id": "channel:community",
+        "channel_visibility": "public"
+      },
+      "signer": {
+        "signer_id": "operator:eileen",
+        "signer_type": "operator"
+      }
+    },
+    "request_envelope": {
+      "recall_request_id": "rreq_freeside-bot-recall-public-discord",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "requested_by": "operator:eileen",
+      "task": "freeside-handoff: public_discord bot recall, healthy estate",
+      "environment_frame": "public_discord",
+      "risk_profile": "medium",
+      "requested_classes": [
+        "observation",
+        "preference"
+      ],
+      "mark_statuses": [
+        "contested",
+        "demoted"
+      ],
+      "exclude_statuses": [
+        "revoked",
+        "forgotten_from_recall",
+        "sealed"
+      ],
+      "include_receipt_detail": "standard",
+      "include_provenance": true,
+      "signature": {
+        "signature_id": "sig_5877bdd15ff5",
+        "signer_id": "operator:eileen",
+        "signer_type": "operator",
+        "signature_type": "dev_signature",
+        "signed_payload_hash": "sha256:7e498ffce3a16eb6b8305b20c7a58724e91b5f404519faf6b9b1ef4ba687df46",
+        "signature": "dev:c7f44276092f487a48c3287c22e854a9615f45787b3fba13115f5674b14c2c30",
+        "signed_at": "2026-05-05T11:00:00Z",
+        "key_ref": "dev-key:operator:eileen"
+      },
+      "created_at": "2026-05-05T11:00:00Z"
+    },
+    "now": "2026-05-05T11:00:00Z"
+  },
+  "expected_output": {
+    "intake_decision": "accepted",
+    "served_pack": {
+      "recall_pack_id": "rpack_043258227ebc",
+      "recall_request_id": "rreq_freeside-bot-recall-public-discord",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "included": [
+        {
+          "assertion_id": "asrt_2d2d1e128aba",
+          "assertion_class": "observation",
+          "status": "active",
+          "summary": "Freeside-handoff: public observation, a Discord bot may quote this.",
+          "body_ref": "assertion:asrt_2d2d1e128aba",
+          "provenance_refs": [
+            "prov:fixture-default"
+          ],
+          "use_instruction": "usable"
+        },
+        {
+          "assertion_id": "asrt_745953adc0b7",
+          "assertion_class": "preference",
+          "status": "active",
+          "summary": "Freeside-handoff: agent prefers concise replies in public Discord.",
+          "body_ref": "assertion:asrt_745953adc0b7",
+          "provenance_refs": [
+            "prov:fixture-default"
+          ],
+          "use_instruction": "usable"
+        }
+      ],
+      "marked": [],
+      "redacted": [],
+      "excluded_summary": [],
+      "policy_decision": {
+        "decision": "allow",
+        "policy_id": "straylight.default-agent-estate.v0",
+        "policy_version": "0.1.0",
+        "signer_competence_result": {
+          "allowed": true,
+          "reason": "competent_signer_present",
+          "matched_rule_id": "rule:recall-default",
+          "signer_id": "operator:eileen",
+          "signer_role": "operator",
+          "signature_id": "sig_5877bdd15ff5",
+          "competent_signer_ids": [
+            "operator:eileen"
+          ],
+          "quorum_required": 1,
+          "quorum_present": 1,
+          "requires_review": false
+        },
+        "reasons": [
+          "signer_operator_competent_for_recall_public_discord"
+        ],
+        "decided_at": "2026-05-05T11:00:00Z"
+      },
+      "receipt_id": "rcpt_54cd90462390",
+      "pack_hash": "sha256:fa954ba25588522a6323be857cd3b07fd2bce4c6d516514d22a9b1119a319763",
+      "created_at": "2026-05-05T11:00:00Z"
+    },
+    "served_receipt": {
+      "receipt_id": "rcpt_54cd90462390",
+      "recall_request_id": "rreq_freeside-bot-recall-public-discord",
+      "recall_pack_id": "rpack_043258227ebc",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "filters_applied": [
+        "environment_frame:public_discord",
+        "risk_profile:medium",
+        "requested_classes:observation,preference",
+        "exclude_statuses:revoked,forgotten_from_recall,sealed",
+        "mark_statuses:contested,demoted"
+      ],
+      "included_assertion_ids": [
+        "asrt_2d2d1e128aba",
+        "asrt_745953adc0b7"
+      ],
+      "marked_assertion_ids": [],
+      "redacted_count": 0,
+      "excluded_counts_by_reason": {},
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "requester_signature_ref": "sig_5877bdd15ff5",
+      "pack_hash": "sha256:fa954ba25588522a6323be857cd3b07fd2bce4c6d516514d22a9b1119a319763",
+      "receipt_hash": "sha256:d39a8810cf5b1374b9a242c4ddbd4de0c211f22f5fc610261a5d2b9bbf76292d",
+      "created_at": "2026-05-05T11:00:00Z",
+      "detail_level": "standard"
+    },
+    "receipt_pack_hash_matches": true,
+    "notes": "The Discord bot reply MUST surface the included / marked / excluded_summary discipline intact. The receipt is the audit artifact; a pack rendered without its receipt is a runtime bug."
+  }
+}

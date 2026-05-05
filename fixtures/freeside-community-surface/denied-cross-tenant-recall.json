@@ -1,0 +1,71 @@
+{
+  "case_name": "denied_cross_tenant_recall",
+  "expected_allowed": false,
+  "reason": "Freeside's ingress refuses cross-tenant recall at the bot / REST / NATS layer. The caller's signer is not on the target estate's keyring, and the caller's tenant boundary does not match the target's tenant. Freeside emits an audit log entry referencing the wedge's recall_denied event. Dixie / Finn / the wedge are the second / third / fourth lines of defense — every layer refuses.",
+  "input": {
+    "adapter": "rest",
+    "adapter_event": "POST /admin/recall",
+    "environment_frame": "private_operator",
+    "caller_frame_intent": "tenant_admin",
+    "caller": {
+      "tenant_id": "tenant:other-actor",
+      "actor_id": "agent:other-actor",
+      "signer": {
+        "signer_id": "operator:not-on-keyring",
+        "signer_type": "operator"
+      },
+      "rest_route": "/admin/recall",
+      "rest_tenant_header": "tenant:other-actor"
+    },
+    "request_envelope": {
+      "recall_request_id": "rreq_freeside-cross-tenant-refused",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "requested_by": "operator:not-on-keyring",
+      "task": "freeside-handoff: cross-tenant recall, must be refused at ingress",
+      "environment_frame": "private_operator",
+      "risk_profile": "medium",
+      "requested_classes": [
+        "observation"
+      ],
+      "mark_statuses": [
+        "contested",
+        "demoted"
+      ],
+      "exclude_statuses": [
+        "revoked",
+        "forgotten_from_recall",
+        "sealed"
+      ],
+      "include_receipt_detail": "standard",
+      "include_provenance": true,
+      "signature": {
+        "signature_id": "sig_69c418e46fb4",
+        "signer_id": "operator:not-on-keyring",
+        "signer_type": "operator",
+        "signature_type": "dev_signature",
+        "signed_payload_hash": "sha256:79865f47b2910ea3490586654ad5fe4db242b0b0cfb46e201a36464b34906991",
+        "signature": "dev:c6de3a407a3d3ad3de735dcf6e9085b5fe8d714da606a8e3965f8aa06ecafbd2",
+        "signed_at": "2026-05-05T11:15:00Z",
+        "key_ref": "dev-key:not-on-keyring"
+      },
+      "created_at": "2026-05-05T11:15:00Z"
+    },
+    "now": "2026-05-05T11:15:00Z"
+  },
+  "expected_output": {
+    "intake_decision": "denied",
+    "deny_reason": "cross_tenant_recall_refused",
+    "freeside_audit_entry": {
+      "event_type": "freeside_recall_intake_denied",
+      "recall_request_id": "rreq_freeside-cross-tenant-refused",
+      "target_estate_id": "estate:satoshi-demo",
+      "caller_tenant_id": "tenant:other-actor",
+      "caller_signer_id": "operator:not-on-keyring",
+      "reason": "cross_tenant_recall_refused",
+      "references_wedge_event_type": "recall_denied",
+      "now": "2026-05-05T11:15:00Z"
+    },
+    "notes": "Cross-tenant prevention is a Freeside-layer responsibility (first line of defense). Dixie / Finn / the wedge re-check downstream; every layer must refuse for the boundary to hold."
+  }
+}

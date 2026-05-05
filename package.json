@@ -15,7 +15,8 @@
     "hounfour:conformance": "vite-node scripts/export-hounfour-conformance.ts",
     "hounfour:handoff": "vite-node scripts/print-hounfour-handoff-summary.ts",
     "finn:enforcement": "vite-node scripts/export-finn-enforcement-fixtures.ts",
-    "dixie:recall": "vite-node scripts/export-dixie-governed-recall-fixtures.ts"
+    "dixie:recall": "vite-node scripts/export-dixie-governed-recall-fixtures.ts",
+    "freeside:surface": "vite-node scripts/export-freeside-community-surface-fixtures.ts"
   },
   "engines": {
     "node": ">=20"

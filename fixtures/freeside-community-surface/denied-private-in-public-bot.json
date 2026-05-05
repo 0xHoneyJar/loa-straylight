@@ -1,0 +1,149 @@
+{
+  "case_name": "denied_private_in_public_bot",
+  "expected_allowed": false,
+  "reason": "Freeside's Discord bot adapter surfaces the served pack with the actor_private body excluded — privacyDispositionForFrame in public_discord refuses actor_private material. The private assertion is NOT in included, NOT in marked; it appears only in excluded_summary as private_excluded_from_public_frame. The bot reply MUST surface the exclusion summary, never the body.",
+  "input": {
+    "adapter": "discord",
+    "adapter_event": "discord:bot.recall",
+    "environment_frame": "public_discord",
+    "caller": {
+      "tenant_id": "tenant:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "discord": {
+        "guild_id": "guild:freeside-demo",
+        "channel_id": "channel:community",
+        "channel_visibility": "public"
+      },
+      "signer": {
+        "signer_id": "operator:eileen",
+        "signer_type": "operator"
+      }
+    },
+    "seeded_private_assertion": {
+      "assertion_id": "asrt_252ef7898f40",
+      "estate_id": "estate:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "assertion_class": "observation",
+      "status": "active",
+      "body": {
+        "text": "Freeside-handoff: a private observation a Discord bot must NOT leak."
+      },
+      "body_hash": "sha256:3acbdf2873e72a07f0aef0a8b9cf82ca5af5a99a965b1d56d6277ed9c602aec0",
+      "schema_version": "0.1.0",
+      "provenance": [
+        {
+          "provenance_id": "prov:fixture-default",
+          "source_type": "operator_input",
+          "observed_at": "2026-05-05T11:00:00Z",
+          "captured_by": "operator:eileen",
+          "evidence_summary": "fixture default operator-input provenance"
+        }
+      ],
+      "privacy_scope": "actor_private",
+      "risk_level": "medium",
+      "signatures": [
+        {
+          "signature_id": "sig_501c9387b9d6",
+          "signer_id": "operator:eileen",
+          "signer_type": "operator",
+          "signature_type": "dev_signature",
+          "signed_payload_hash": "sha256:02c2d59df1ff2a37f2dbed7185c8990edbbebaf0ed773d5c8065f62487fedf27",
+          "signature": "dev:24059088cf8da5d1e095bf263b45f3ec40021f87a108ca272f0c7fc400681257",
+          "signed_at": "2026-05-05T10:14:00Z",
+          "key_ref": "dev-key:operator:eileen"
+        }
+      ],
+      "created_at": "2026-05-05T10:14:00Z",
+      "updated_at": "2026-05-05T10:14:00Z"
+    },
+    "recall_request_id": "rreq_freeside-private-public-bot",
+    "now": "2026-05-05T11:20:00Z"
+  },
+  "expected_output": {
+    "served_pack": {
+      "recall_pack_id": "rpack_e8fce599d6ae",
+      "recall_request_id": "rreq_freeside-private-public-bot",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "included": [
+        {
+          "assertion_id": "asrt_de0d8aef3b3b",
+          "assertion_class": "observation",
+          "status": "active",
+          "summary": "Freeside-handoff: public counterpart a Discord bot may include.",
+          "body_ref": "assertion:asrt_de0d8aef3b3b",
+          "provenance_refs": [
+            "prov:fixture-default"
+          ],
+          "use_instruction": "usable"
+        }
+      ],
+      "marked": [],
+      "redacted": [],
+      "excluded_summary": [
+        {
+          "reason": "privacy_actor_private_in_public_frame",
+          "count": 1
+        }
+      ],
+      "policy_decision": {
+        "decision": "allow",
+        "policy_id": "straylight.default-agent-estate.v0",
+        "policy_version": "0.1.0",
+        "signer_competence_result": {
+          "allowed": true,
+          "reason": "competent_signer_present",
+          "matched_rule_id": "rule:recall-default",
+          "signer_id": "operator:eileen",
+          "signer_role": "operator",
+          "signature_id": "sig_3af785336f96",
+          "competent_signer_ids": [
+            "operator:eileen"
+          ],
+          "quorum_required": 1,
+          "quorum_present": 1,
+          "requires_review": false
+        },
+        "reasons": [
+          "signer_operator_competent_for_recall_public_discord"
+        ],
+        "decided_at": "2026-05-05T11:20:00Z"
+      },
+      "receipt_id": "rcpt_ec40ecdd65c5",
+      "pack_hash": "sha256:8ef17392253e4dfba303608e207f874e1ad7ea2e54d2b1f369d50502490f667c",
+      "created_at": "2026-05-05T11:20:00Z"
+    },
+    "served_receipt": {
+      "receipt_id": "rcpt_ec40ecdd65c5",
+      "recall_request_id": "rreq_freeside-private-public-bot",
+      "recall_pack_id": "rpack_e8fce599d6ae",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "filters_applied": [
+        "environment_frame:public_discord",
+        "risk_profile:medium",
+        "requested_classes:observation",
+        "exclude_statuses:revoked,forgotten_from_recall,sealed",
+        "mark_statuses:contested,demoted"
+      ],
+      "included_assertion_ids": [
+        "asrt_de0d8aef3b3b"
+      ],
+      "marked_assertion_ids": [],
+      "redacted_count": 0,
+      "excluded_counts_by_reason": {
+        "privacy_actor_private_in_public_frame": 1
+      },
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "requester_signature_ref": "sig_3af785336f96",
+      "pack_hash": "sha256:8ef17392253e4dfba303608e207f874e1ad7ea2e54d2b1f369d50502490f667c",
+      "receipt_hash": "sha256:44fbc1a4ed56bac675e99398bdc2773ffa8d93e84cbd22b48e90d1944c95b6b9",
+      "created_at": "2026-05-05T11:20:00Z",
+      "detail_level": "standard"
+    },
+    "private_assertion_in_included": false,
+    "private_assertion_in_marked": false,
+    "deny_reason": "private_excluded_from_public_frame",
+    "notes": "Freeside MUST NOT expose actor_private bodies in public_discord under any circumstance, even if the caller has admin role in Discord. Frame elevation is forbidden; private bodies live in audit_review only (and only via Dixie's reviewer-signed surface)."
+  }
+}

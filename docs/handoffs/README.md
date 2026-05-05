@@ -94,6 +94,29 @@ Validate locally:
 npm run dixie:recall
 ```
 
+### Phase 14 — Freeside community / app surface
+
+Target: [`0xHoneyJar/loa-freeside`](https://github.com/0xHoneyJar/loa-freeside).
+
+| Document | Purpose |
+|---|---|
+| [`freeside-community-surface-issue.md`](./freeside-community-surface-issue.md) | Issue-ready handoff describing what `loa-freeside` should eventually expose: Discord / Telegram bot recall, public-channel redaction, tenant-scoped recall, community-scoped recall, Discord / Telegram / REST / NATS environment-frame routing, feedback signal capture, admin capability grants, bot action with receipt, cross-tenant recall prevention, challenged / revoked / forgotten awareness, and tenant-admin estate inspection — all under fail-closed semantics inherited from Hounfour / Finn / the wedge / Dixie. |
+| [`freeside-community-surface-boundary.md`](./freeside-community-surface-boundary.md) | Companion boundary doc — what Freeside owns vs what it must not own. Pins the no-go boundaries: no canonical schema authority, no runtime policy enforcement that bypasses Finn / the wedge, no bot memory as governed recall, no Discord / Telegram / REST / NATS message as canonical estate truth, no recall without receipt, no leakage of private estate material in public community surfaces, no surfacing of challenged / revoked / forgotten as ordinary active context, no community / bot / admin action without policy validation and receipt / audit trail. |
+| [`freeside-surface-mapping.md`](./freeside-surface-mapping.md) | Mapping table from each Straylight primitive / operation to the proposed Freeside community / bot / admin / tenant surface, required input, required output, fail-closed condition, receipt / provenance requirement, related Hounfour schema candidate, related Finn enforcement point, and related Dixie BFF surface. |
+
+The packet consumes the wedge's stable public API surface
+([`src/straylight/index.ts`](../../src/straylight/index.ts)), the
+Phase 9 Hounfour mapping, the Phase 10 Finn enforcement mapping,
+the Phase 12 Dixie recall mapping, and the deterministic fixtures
+under
+[`fixtures/freeside-community-surface/`](../../fixtures/freeside-community-surface/).
+
+Validate locally:
+
+```bash
+npm run freeside:surface
+```
+
 ## What this directory is *not*
 
 - **Not** Hounfour integration. Phase 9 stages the contract; the
@@ -103,17 +126,21 @@ npm run dixie:recall
 - **Not** Dixie integration. Phase 12 stages the contract; the
   governed-recall / BFF / inspection module ships later in
   `loa-dixie`.
+- **Not** Freeside integration. Phase 14 stages the contract;
+  the community / bot / admin / tenant / Discord / Telegram /
+  REST / NATS module ships later in `loa-freeside`.
 - **Not** a license to begin sibling work ahead of the schedule.
   Until the sibling repo's PR lands, the wedge owns every primitive
   the packets describe.
-- **Not** a Phase 0–11 behavior change. The wedge runtime is
+- **Not** a Phase 0–13 behavior change. The wedge runtime is
   unchanged. The handoffs are docs + fixtures, not behavior.
 
 ## Cross-references
 
 - [`docs/architecture/loa-straylight-product-system-architecture-spec.md`](../architecture/loa-straylight-product-system-architecture-spec.md)
-  §6.2.2 (Hounfour), §6.2.3 (Finn), §6.2.4 (Dixie), §22.4 (Finn
-  runtime epic), §22.5 (Dixie BFF epic), §23.2 (proposed Finn
+  §6.2.2 (Hounfour), §6.2.3 (Finn), §6.2.4 (Dixie), §6.2.5
+  (Freeside), §22.4 (Finn runtime epic), §22.5 (Dixie BFF
+  epic), §22.7 (Freeside integration epic), §23.2 (proposed Finn
   directory layout).
 - [`docs/mvp/package-boundary.md`](../mvp/package-boundary.md) —
   the wedge's stable public API surface that all three packets

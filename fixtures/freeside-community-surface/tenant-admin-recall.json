@@ -1,0 +1,135 @@
+{
+  "case_name": "tenant_admin_recall",
+  "expected_allowed": true,
+  "reason": "Freeside's tenant-admin surface (REST or admin Discord channel) maps caller frame intent 'tenant_admin' to wedge frame 'private_operator', forwards the recall, and renders the result. The frame intent is a Freeside-side presentation overlay; it is NOT a new wedge EnvironmentFrame value.",
+  "input": {
+    "adapter": "rest",
+    "adapter_event": "POST /admin/recall",
+    "environment_frame": "private_operator",
+    "caller_frame_intent": "tenant_admin",
+    "caller": {
+      "tenant_id": "tenant:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "signer": {
+        "signer_id": "operator:eileen",
+        "signer_type": "operator"
+      },
+      "rest_route": "/admin/recall",
+      "rest_tenant_header": "tenant:satoshi-demo"
+    },
+    "request_envelope": {
+      "recall_request_id": "rreq_freeside-tenant-admin-recall",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "requested_by": "operator:eileen",
+      "task": "freeside-handoff: tenant_admin recall via private_operator frame",
+      "environment_frame": "private_operator",
+      "risk_profile": "medium",
+      "requested_classes": [
+        "observation"
+      ],
+      "mark_statuses": [
+        "contested",
+        "demoted"
+      ],
+      "exclude_statuses": [
+        "revoked",
+        "forgotten_from_recall",
+        "sealed"
+      ],
+      "include_receipt_detail": "standard",
+      "include_provenance": true,
+      "signature": {
+        "signature_id": "sig_95acac7ee731",
+        "signer_id": "operator:eileen",
+        "signer_type": "operator",
+        "signature_type": "dev_signature",
+        "signed_payload_hash": "sha256:dcfe93b85e72e419aaf2aff2395d1cde5369d286a5693acb8b7b1cdf7194902f",
+        "signature": "dev:cba2900e7c5375fad1f1bf7d573ee0695da164bb99d87a17c63a543929d9c6ec",
+        "signed_at": "2026-05-05T11:10:00Z",
+        "key_ref": "dev-key:operator:eileen"
+      },
+      "created_at": "2026-05-05T11:10:00Z"
+    },
+    "now": "2026-05-05T11:10:00Z"
+  },
+  "expected_output": {
+    "intake_decision": "accepted",
+    "served_pack": {
+      "recall_pack_id": "rpack_9d218c898914",
+      "recall_request_id": "rreq_freeside-tenant-admin-recall",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "included": [
+        {
+          "assertion_id": "asrt_542057ea6871",
+          "assertion_class": "observation",
+          "status": "active",
+          "summary": "Freeside-handoff: tenant-admin observation, scoped to admin dashboard.",
+          "body_ref": "assertion:asrt_542057ea6871",
+          "provenance_refs": [
+            "prov:fixture-default"
+          ],
+          "use_instruction": "usable"
+        }
+      ],
+      "marked": [],
+      "redacted": [],
+      "excluded_summary": [],
+      "policy_decision": {
+        "decision": "allow",
+        "policy_id": "straylight.default-agent-estate.v0",
+        "policy_version": "0.1.0",
+        "signer_competence_result": {
+          "allowed": true,
+          "reason": "competent_signer_present",
+          "matched_rule_id": "rule:recall-default",
+          "signer_id": "operator:eileen",
+          "signer_role": "operator",
+          "signature_id": "sig_95acac7ee731",
+          "competent_signer_ids": [
+            "operator:eileen"
+          ],
+          "quorum_required": 1,
+          "quorum_present": 1,
+          "requires_review": false
+        },
+        "reasons": [
+          "signer_operator_competent_for_recall_private_operator"
+        ],
+        "decided_at": "2026-05-05T11:10:00Z"
+      },
+      "receipt_id": "rcpt_29481c0998b6",
+      "pack_hash": "sha256:52d5f4c94e15d14691a102ea33e5691c865fa29f5f481e551dc537d254c44939",
+      "created_at": "2026-05-05T11:10:00Z"
+    },
+    "served_receipt": {
+      "receipt_id": "rcpt_29481c0998b6",
+      "recall_request_id": "rreq_freeside-tenant-admin-recall",
+      "recall_pack_id": "rpack_9d218c898914",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "filters_applied": [
+        "environment_frame:private_operator",
+        "risk_profile:medium",
+        "requested_classes:observation",
+        "exclude_statuses:revoked,forgotten_from_recall,sealed",
+        "mark_statuses:contested,demoted"
+      ],
+      "included_assertion_ids": [
+        "asrt_542057ea6871"
+      ],
+      "marked_assertion_ids": [],
+      "redacted_count": 0,
+      "excluded_counts_by_reason": {},
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "requester_signature_ref": "sig_95acac7ee731",
+      "pack_hash": "sha256:52d5f4c94e15d14691a102ea33e5691c865fa29f5f481e551dc537d254c44939",
+      "receipt_hash": "sha256:0500650c9facf0458837f58672f4ece88c76ef6aca0a814388550603522907f7",
+      "created_at": "2026-05-05T11:10:00Z",
+      "detail_level": "standard"
+    },
+    "receipt_pack_hash_matches": true,
+    "notes": "Tenant-admin recall lets the admin view counts and tenant-scoped material; actor_private bodies stay private unless the admin holds the reviewer signer (in which case audit_review applies and Dixie hosts the surface)."
+  }
+}
