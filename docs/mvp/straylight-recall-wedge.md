@@ -1,6 +1,6 @@
 # Straylight Recall Wedge — MVP, in-repo
 
-> Status: Phase 0, 1, 2, and 3 implementation. Local-only. No cross-repo
+> Status: Phase 0, 1, 2, 3, and 4 implementation. Local-only. No cross-repo
 > integration, no production DB, no onchain anchor, no Discord/Freeside
 > surface.
 
@@ -60,8 +60,14 @@ tests/
   quorum-and-timelock.test.ts   (Phase 3)
   forget-flow.test.ts           (Phase 3)
   policy-unavailable.test.ts    (Phase 3)
+  phase-4-demo.test.ts          (Phase 4 — acceptance test for runDemo())
+scripts/
+  demo-recall-wedge.ts          (Phase 4 — npm run demo:recall entrypoint)
+  demo-recall-wedge.lib.ts      (Phase 4 — runDemo() shared by CLI + test)
 docs/migrations/
   001-init.md         (Phase 2/3 — table contract for any storage adapter)
+docs/mvp/
+  phase-4-demo.md     (Phase 4 — how to run the demo + what it proves)
 ```
 
 ## Run it
@@ -70,11 +76,13 @@ docs/migrations/
 npm install
 npm run typecheck
 npm test
+npm run demo:recall   # Phase 4 — local end-to-end transcript
 ```
 
 Each script is intentionally minimal: `tsc --noEmit` for `typecheck`,
-`vitest run` for `test`. The wedge has no build step — its consumers will
-import from `src/straylight/index.ts` directly.
+`vitest run` for `test`, and `vite-node scripts/demo-recall-wedge.ts` for
+the demo. The wedge has no build step — its consumers will import from
+`src/straylight/index.ts` directly.
 
 ## Demo flow (covered by `tests/demo-flow.test.ts`)
 
@@ -97,6 +105,32 @@ import from `src/straylight/index.ts` directly.
    reflection in `marked`, never in `included`, with `use_instruction !=
    'usable'`.
 8. The estate's audit hash chain verifies clean.
+
+## Phase 4 — runnable demo
+
+Phase 4 adds a single executable entrypoint that walks the wedge end-to-end
+without any new runtime surface. It composes the Phase 0–3 primitives only.
+
+```bash
+npm run demo:recall
+```
+
+The demo (1) bootstraps the demo estate, (2) admits a preference + an
+observation, (3) admits a reflection that links them via
+`linked_assertion_refs`, (4) admits a private relationship, (5) admits two
+extra assertions that get used as revoke + forget targets, (6) challenges
+the reflection with `mark_contested`, (7) revokes one of the extras,
+(8) marks the other `forgotten_from_recall`, (9) runs a `public_discord`
+recall, prints the resulting RecallPack + RecallReceipt + exclusion
+reasons, (10) re-runs the same estate under `audit_review` to prove
+revoked + forgotten + contested assertions remain visible (always as
+`marked`, never as `usable`), and (11) verifies the per-estate audit hash
+chain.
+
+`runDemo()` is the same function the Phase 4 acceptance test
+(`tests/phase-4-demo.test.ts`) invokes with `silent: true`, so the CLI
+transcript and the test both check the same artifacts. See
+[`docs/mvp/phase-4-demo.md`](./phase-4-demo.md) for a step-by-step guide.
 
 ## Runtime enforcement (Phase 3)
 
