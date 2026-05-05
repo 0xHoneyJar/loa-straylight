@@ -1,9 +1,11 @@
 # Straylight schema candidates
 
-> Status: Phase 6. **Pre-extraction prep, in-repo only.** Nothing in this
-> directory is a canonical Hounfour schema. Nothing in this directory is
-> a cross-repo integration artifact. Nothing in this directory imports
-> from a sibling repo or installs Hounfour as a dependency.
+> Status: Phase 6 (inventory + boundary + fixtures) and Phase 7
+> (extraction handoff). **Pre-extraction prep, in-repo only.** Nothing
+> in this directory is a canonical Hounfour schema. Nothing in this
+> directory is a cross-repo integration artifact. Nothing in this
+> directory imports from a sibling repo or installs Hounfour as a
+> dependency.
 
 ## What this directory is
 
@@ -27,6 +29,12 @@ performing the extraction*. It contains:
   schemas (structural shape) and policy-decision artifacts (runtime
   authority). Hounfour will own the former; `loa-straylight` keeps
   the latter.
+- [`hounfour-extraction-plan.md`](./hounfour-extraction-plan.md) —
+  Phase 7 engineering handoff. Classifies each candidate as
+  `move_to_hounfour` or `stay_in_straylight`, defines the
+  conformance bar Hounfour must satisfy before `loa-straylight`
+  consumes it, and sketches the future-PR sequence. Does not
+  perform the extraction.
 
 The matching JSON example shapes live one directory up at
 [`fixtures/schema-candidates/`](../../fixtures/schema-candidates/) so the
@@ -55,11 +63,12 @@ helper script and conformance tests can read them as plain files.
   exactly as they were. The wedge passes the same `npm test`,
   `npm run demo:recall`, and `npm run demo:recall:json` checks.
 
-## Intended next step (out of scope for Phase 6)
+## Intended next step (out of scope for Phase 6 and Phase 7)
 
-Review this inventory and the class-vs-policy boundary, then *in a
-separate change in a separate repository*, extract the chosen
-candidates into `loa-hounfour` as canonical schemas. At that point:
+Review this inventory, the class-vs-policy boundary, and the Phase 7
+extraction plan, then *in a separate change in a separate
+repository*, extract the chosen candidates into `loa-hounfour` as
+canonical schemas. At that point:
 
 1. `loa-hounfour` becomes the schema source of truth for the candidate
    types listed here.
