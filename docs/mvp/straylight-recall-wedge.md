@@ -1,8 +1,13 @@
 # Straylight Recall Wedge — MVP, in-repo
 
-> Status: Phase 0, 1, 2, 3, and 4 implementation. Local-only. No cross-repo
-> integration, no production DB, no onchain anchor, no Discord/Freeside
-> surface.
+> Status: Phase 0, 1, 2, 3, 4, and 5 implementation. Local-only. No
+> cross-repo integration, no production DB, no onchain anchor, no
+> Discord/Freeside surface.
+>
+> Phase 5 hardens the package boundary, the threat model, and the
+> fail-closed contracts — see [`package-boundary.md`](./package-boundary.md)
+> and [`threat-model.md`](./threat-model.md). The runtime behavior of
+> phases 0–4 is unchanged.
 
 This document is the user-facing entry point for the wedge. Source of truth
 for the wedge's semantics is
@@ -61,28 +66,49 @@ tests/
   forget-flow.test.ts           (Phase 3)
   policy-unavailable.test.ts    (Phase 3)
   phase-4-demo.test.ts          (Phase 4 — acceptance test for runDemo())
+  phase-5-hardening.test.ts     (Phase 5 — fail-closed acceptance tests)
 scripts/
-  demo-recall-wedge.ts          (Phase 4 — npm run demo:recall entrypoint)
-  demo-recall-wedge.lib.ts      (Phase 4 — runDemo() shared by CLI + test)
+  demo-recall-wedge.ts          (Phase 4/5 — CLI entrypoint with --json)
+  demo-recall-wedge.lib.ts      (Phase 4/5 — runDemo() + toDemoJson())
 docs/migrations/
   001-init.md         (Phase 2/3 — table contract for any storage adapter)
 docs/mvp/
   phase-4-demo.md     (Phase 4 — how to run the demo + what it proves)
+  package-boundary.md (Phase 5 — stable public API and integration seams)
+  threat-model.md     (Phase 5 — threats and their fail-closed defenses)
 ```
+
+## Public API entrypoint
+
+```ts
+import { /* … */ } from './src/straylight/index.js';
+```
+
+`src/straylight/index.ts` is the **only** stable import path. Anything not
+re-exported there is internal and may change without notice. The full
+stable surface and future cross-repo integration notes live in
+[`package-boundary.md`](./package-boundary.md).
 
 ## Run it
 
 ```bash
 npm install
-npm run typecheck
-npm test
-npm run demo:recall   # Phase 4 — local end-to-end transcript
+npm run typecheck            # tsc --noEmit
+npm test                     # vitest run
+npm run demo:recall          # Phase 4 — human-readable transcript
+npm run demo:recall:json     # Phase 5 — JSON to .run/recall-demo.json
+# Or, with custom flags:
+npm run demo:recall -- --json                 # JSON to stdout
+npm run demo:recall -- --json --out=PATH      # JSON to PATH
 ```
 
 Each script is intentionally minimal: `tsc --noEmit` for `typecheck`,
 `vitest run` for `test`, and `vite-node scripts/demo-recall-wedge.ts` for
 the demo. The wedge has no build step — its consumers will import from
 `src/straylight/index.ts` directly.
+
+`.run/` is gitignored; the JSON demo writes there by default and is safe
+to delete at any time.
 
 ## Demo flow (covered by `tests/demo-flow.test.ts`)
 
@@ -131,6 +157,44 @@ chain.
 (`tests/phase-4-demo.test.ts`) invokes with `silent: true`, so the CLI
 transcript and the test both check the same artifacts. See
 [`docs/mvp/phase-4-demo.md`](./phase-4-demo.md) for a step-by-step guide.
+
+## Phase 5 — hardening + package boundary prep
+
+Phase 5 freezes the *shape* of the wedge. It does not add runtime features
+and does not change phase 0–4 behavior. What it adds:
+
+- **Stable public API**. `src/straylight/index.ts` re-exports the full
+  intended public surface, grouped into eleven sections (types, IDs,
+  signatures, class validation, keyring, policy, audit, estate store,
+  recall, commitment, storage). See
+  [`package-boundary.md`](./package-boundary.md) for the contract.
+- **Threat model**. [`threat-model.md`](./threat-model.md) lists the
+  twelve threats the wedge defends against (memory poisoning,
+  inference-as-fact, revoked / forgotten / private leakage, contested
+  promotion, missing policy, tampered audit chain, prompt injection
+  treated as authority, etc.) and points each one at the test that pins
+  it.
+- **Fail-closed acceptance tests**. `tests/phase-5-hardening.test.ts`
+  proves: missing policy denies, unknown class fails class validation,
+  unknown signer fails competence, revoked / forgotten / private /
+  contested do not surface as `usable` in any frame, a tampered audit
+  chain is detectable via `verifyChain`, recall requests missing
+  `actor_id` / `estate_id` fail class validation, and the commitment
+  root changes whenever estate material changes.
+- **Machine-readable demo output**. `npm run demo:recall:json` writes a
+  JSON projection (`recall_request`, `recall_pack`, `recall_receipt`,
+  `audit_review`, `audit_chain_verification`) to `.run/recall-demo.json`.
+  `npm run demo:recall -- --json` prints the same JSON to stdout.
+
+What Phase 5 explicitly does **not** do:
+
+- No production database integration (still `InMemoryStorage` /
+  `JsonlStorage`).
+- No onchain publishing (still local commitment roots).
+- No Discord / Freeside / Finn / Dixie / Hounfour cross-repo wiring.
+- No real cryptography (still `dev_signature` HMAC).
+- No generic RAG / vector retrieval (still full estate scan).
+- No change to phase 0–4 runtime semantics.
 
 ## Runtime enforcement (Phase 3)
 

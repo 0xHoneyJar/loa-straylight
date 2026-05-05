@@ -13,6 +13,7 @@ import {
   type AuditEvent,
   type RecallPack,
   type RecallReceipt,
+  type RecallRequest,
   type SignatureEnvelope,
 } from '../src/straylight/index.js';
 import {
@@ -41,12 +42,16 @@ const T = {
 } as const;
 
 export interface DemoResult {
+  publicRequest: RecallRequest;
   publicPack: RecallPack;
   publicReceipt: RecallReceipt;
+  auditRequest: RecallRequest;
   auditPack: RecallPack;
+  auditReceipt: RecallReceipt;
   excludedReasons: { reason: string; count: number }[];
   auditEvents: readonly AuditEvent[];
   auditChainOk: boolean;
+  auditChainResult: { ok: true } | { ok: false; broken_at: number; reason: string };
   revokedAssertion: Assertion;
   forgottenAssertion: Assertion;
   contestedAssertion: Assertion;
@@ -55,6 +60,37 @@ export interface DemoResult {
 
 export interface DemoOptions {
   silent?: boolean;
+}
+
+// Phase 5 — machine-readable projection of a runDemo() result. The shape is
+// the contract the JSON demo mode (`npm run demo:recall:json` /
+// `npm run demo:recall -- --json`) emits, and is what downstream tooling
+// (Dixie audit views, Hounfour schema diff) can consume without re-running
+// the wedge end-to-end.
+export interface DemoJsonOutput {
+  recall_request: RecallRequest;
+  recall_pack: RecallPack;
+  recall_receipt: RecallReceipt;
+  audit_review: {
+    request: RecallRequest;
+    pack: RecallPack;
+    receipt: RecallReceipt;
+  };
+  audit_chain_verification: { ok: true } | { ok: false; broken_at: number; reason: string };
+}
+
+export function toDemoJson(result: DemoResult): DemoJsonOutput {
+  return {
+    recall_request: result.publicRequest,
+    recall_pack: result.publicPack,
+    recall_receipt: result.publicReceipt,
+    audit_review: {
+      request: result.auditRequest,
+      pack: result.auditPack,
+      receipt: result.auditReceipt,
+    },
+    audit_chain_verification: result.auditChainResult,
+  };
 }
 
 export function runDemo(opts: DemoOptions = {}): DemoResult {
@@ -294,10 +330,11 @@ export function runDemo(opts: DemoOptions = {}): DemoResult {
     signed_at: T.recall_audit,
   });
   const auditOut = executeRecall(store, auditReq, T.recall_audit);
-  if (!auditOut.ok || !auditOut.pack) {
+  if (!auditOut.ok || !auditOut.pack || !auditOut.receipt) {
     throw new Error(`audit-review recall denied: ${auditOut.policy_decision.reasons.join(',')}`);
   }
   const auditPack = auditOut.pack;
+  const auditReceipt = auditOut.receipt;
 
   const auditMarkedIds = auditPack.marked.map((m) => m.assertion_id);
   const auditIncludedIds = auditPack.included.map((m) => m.assertion_id);
@@ -344,12 +381,16 @@ export function runDemo(opts: DemoOptions = {}): DemoResult {
   if (!chain.ok) throw new Error('audit chain verification failed');
 
   return {
+    publicRequest: publicReq,
     publicPack,
     publicReceipt,
+    auditRequest: auditReq,
     auditPack,
+    auditReceipt,
     excludedReasons: publicPack.excluded_summary.map((s) => ({ reason: s.reason, count: s.count })),
     auditEvents: store.auditLog.list(),
     auditChainOk: chain.ok,
+    auditChainResult: chain,
     revokedAssertion: revoked,
     forgottenAssertion: forgotten,
     contestedAssertion: contested,
