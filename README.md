@@ -2,6 +2,15 @@
 
 **Continuity-under-authorization for persistent AI agents: signed memory, governed recall, challenge, revocation, and commitments.**
 
+> **MVP status (Phase 5).** Local-only, in-repo Recall Wedge. Public
+> entrypoint: `src/straylight/index.ts`. Run `npm run typecheck`,
+> `npm test`, `npm run demo:recall`, or `npm run demo:recall:json`.
+> See [`docs/mvp/straylight-recall-wedge.md`](docs/mvp/straylight-recall-wedge.md)
+> for what each phase proves, [`docs/mvp/package-boundary.md`](docs/mvp/package-boundary.md)
+> for the stable API surface, and [`docs/mvp/threat-model.md`](docs/mvp/threat-model.md)
+> for fail-closed defenses.
+
+
 Straylight is the hidden estate architecture for intent-era agents.
 
 It gives each persistent actor a governed state-of-record that exists before any session, outlives any session, and is read from or written to through signed, authorized transitions.
