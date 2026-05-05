@@ -1,0 +1,23 @@
+{
+  "audit_event_id": "aud_6b4152d9723e",
+  "event_type": "assertion_challenged",
+  "actor_id": "agent:satoshi-demo",
+  "estate_id": "estate:satoshi-demo",
+  "transition_id": "trn_6736d7f5a228",
+  "assertion_refs": [
+    "asrt_75c575485990",
+    "chal_c4487c2a7f65"
+  ],
+  "result_hash": "sha256:5ac2a08b658a88e2898ceea27f8405f810e54e859503ef0a6223e25f1a259bb3",
+  "signer_refs": [
+    "reviewer:dixie"
+  ],
+  "policy_decision_ref": "straylight.default-agent-estate.v0",
+  "previous_audit_hash": "sha256:bfe95cfb77e78cfa0964d8c332a98efff4d8a684d1298999988afd032fdc2f56",
+  "audit_hash": "sha256:19d12af472174fa1c8a99c794394c008c3420daa20273506f8a37434509e8f87",
+  "created_at": "2026-05-05T11:00:00Z",
+  "payload": {
+    "effect": "mark_contested",
+    "new_status": "contested"
+  }
+}

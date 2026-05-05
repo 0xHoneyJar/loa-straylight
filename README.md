@@ -2,13 +2,20 @@
 
 **Continuity-under-authorization for persistent AI agents: signed memory, governed recall, challenge, revocation, and commitments.**
 
-> **MVP status (Phase 5).** Local-only, in-repo Recall Wedge. Public
-> entrypoint: `src/straylight/index.ts`. Run `npm run typecheck`,
-> `npm test`, `npm run demo:recall`, or `npm run demo:recall:json`.
-> See [`docs/mvp/straylight-recall-wedge.md`](docs/mvp/straylight-recall-wedge.md)
-> for what each phase proves, [`docs/mvp/package-boundary.md`](docs/mvp/package-boundary.md)
-> for the stable API surface, and [`docs/mvp/threat-model.md`](docs/mvp/threat-model.md)
-> for fail-closed defenses.
+> **MVP status (Phase 5 + Phase 6).** Local-only, in-repo Recall
+> Wedge. Public entrypoint: `src/straylight/index.ts`. Run
+> `npm run typecheck`, `npm test`, `npm run demo:recall`,
+> `npm run demo:recall:json`, or `npm run schema:candidates`
+> (Phase 6 — writes current-shape examples to
+> `fixtures/schema-candidates/`; not canonical Hounfour schemas). See
+> [`docs/mvp/straylight-recall-wedge.md`](docs/mvp/straylight-recall-wedge.md)
+> for what each phase proves,
+> [`docs/mvp/package-boundary.md`](docs/mvp/package-boundary.md)
+> for the stable API surface,
+> [`docs/mvp/threat-model.md`](docs/mvp/threat-model.md)
+> for fail-closed defenses, and
+> [`docs/schema-candidates/`](docs/schema-candidates/) for Phase 6
+> schema-extraction prep.
 
 
 Straylight is the hidden estate architecture for intent-era agents.

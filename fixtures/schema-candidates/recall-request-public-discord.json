@@ -1,0 +1,36 @@
+{
+  "recall_request_id": "rreq_public-discord-answer-about-the--2026-05-05T12:30:00Z",
+  "actor_id": "agent:satoshi-demo",
+  "estate_id": "estate:satoshi-demo",
+  "requested_by": "operator:eileen",
+  "task": "public discord answer about the agent's answer style",
+  "environment_frame": "public_discord",
+  "risk_profile": "medium",
+  "requested_classes": [
+    "observation",
+    "preference",
+    "reflection"
+  ],
+  "mark_statuses": [
+    "contested",
+    "demoted"
+  ],
+  "exclude_statuses": [
+    "revoked",
+    "forgotten_from_recall",
+    "sealed"
+  ],
+  "include_receipt_detail": "standard",
+  "include_provenance": true,
+  "signature": {
+    "signature_id": "sig_886a541ab165",
+    "signer_id": "operator:eileen",
+    "signer_type": "operator",
+    "signature_type": "dev_signature",
+    "signed_payload_hash": "sha256:4eb54701a6b4df7c05a4ba9fb9d8cde29a23fdae144500114a39ca4613157626",
+    "signature": "dev:f0a96807be14630f410dc5d31bb91bebadca47d9ee65210f20061c8c5f3cc5fb",
+    "signed_at": "2026-05-05T12:30:00Z",
+    "key_ref": "dev-key:operator:eileen"
+  },
+  "created_at": "2026-05-05T12:30:00Z"
+}

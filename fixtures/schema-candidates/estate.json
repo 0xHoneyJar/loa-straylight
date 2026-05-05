@@ -1,0 +1,12 @@
+{
+  "estate_id": "estate:satoshi-demo",
+  "actor_id": "agent:satoshi-demo",
+  "schema_version": "0.1.0",
+  "status": "active",
+  "assertion_index_ref": "local:in-memory",
+  "keyring_id": "keyring:satoshi-demo",
+  "policy_id": "straylight.default-agent-estate.v0",
+  "audit_log_ref": "local:in-memory",
+  "created_at": "2026-05-05T00:00:00Z",
+  "updated_at": "2026-05-05T00:00:00Z"
+}

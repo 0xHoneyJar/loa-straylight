@@ -1,9 +1,13 @@
 # Straylight Recall Wedge — package boundary
 
-> Status: Phase 5. Local-only, in-repo. **Not** cross-repo integration. This
-> document describes what is *intended to be* stable so future integrations
-> can be written against a clean seam, and what is *internal* and may change
-> at any commit without notice.
+> Status: Phase 5 (boundary frozen) + Phase 6 (schema-extraction prep
+> staged). Local-only, in-repo. **Not** cross-repo integration. This
+> document describes what is *intended to be* stable so future
+> integrations can be written against a clean seam, and what is
+> *internal* and may change at any commit without notice. Phase 6 adds
+> a pre-extraction inventory under `docs/schema-candidates/` and JSON
+> shape examples under `fixtures/schema-candidates/` — see the [Phase 6
+> note](#phase-6--schema-extraction-prep) below.
 
 The wedge is a single TypeScript package (`@loa/straylight`, package-private,
 not yet published). Phase 5 hardens its public surface so downstream
@@ -278,6 +282,38 @@ are tool output, not authority. The contract:
   public_discord` (or `public_telegram`); the wedge's policy raises high /
   critical-risk recalls to `needs_review` in those frames.
 - Freeside MUST treat any `RecallPack`'s `marked` items as do-not-quote.
+
+## Phase 6 — schema extraction prep
+
+Phase 6 stages the candidates that will eventually be extracted into
+`loa-hounfour` *without performing the extraction*. It does not change
+the public API surface above, does not introduce a Hounfour dependency,
+does not write to any sibling repo, and does not add a generic
+schema-generation pipeline. It only:
+
+- pins which Straylight types are extraction candidates and what stays
+  in the wedge
+  ([`docs/schema-candidates/hounfour-schema-extraction-prep.md`](../schema-candidates/hounfour-schema-extraction-prep.md))
+- pins the class-validation vs policy-validation boundary in writing
+  ([`docs/schema-candidates/class-vs-policy-boundary.md`](../schema-candidates/class-vs-policy-boundary.md))
+- ships representative current-shape JSON examples under
+  [`fixtures/schema-candidates/`](../../fixtures/schema-candidates/)
+- ships a deterministic helper at
+  [`scripts/export-schema-candidates.ts`](../../scripts/export-schema-candidates.ts)
+  (`npm run schema:candidates`) that re-emits those examples from the
+  public API
+- ships a conformance test
+  ([`tests/schema-candidates.test.ts`](../../tests/schema-candidates.test.ts))
+  that pins fixture parseability, required fields, public-API export
+  presence, the class-vs-policy separation, and the absence of any
+  cross-repo / framework-internal imports in Phase 6 sources
+
+The fixtures are **not** canonical Hounfour schemas. They are local
+examples of current object shape, useful as pre-extraction review
+input. The actual schema move is reserved future work in
+`loa-hounfour`; see
+[`docs/schema-candidates/README.md`](../schema-candidates/README.md)
+for what Phase 6 is and is not.
 
 ## Versioning
 
