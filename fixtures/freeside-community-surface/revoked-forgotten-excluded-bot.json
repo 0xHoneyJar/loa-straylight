@@ -1,0 +1,197 @@
+{
+  "case_name": "revoked_forgotten_excluded_bot",
+  "expected_allowed": false,
+  "reason": "Freeside's Discord bot adapter surfaces a public_discord recall with both revoked and forgotten material excluded — dispositionFor refuses status='revoked' and status='forgotten_from_recall' outside audit_review. Neither assertion appears in included or marked; the bot reply surfaces excluded_summary entries. The audit chain still shows both governance records; revocation and forget are not erasure.",
+  "input": {
+    "adapter": "discord",
+    "adapter_event": "discord:bot.recall",
+    "environment_frame": "public_discord",
+    "caller": {
+      "tenant_id": "tenant:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "discord": {
+        "guild_id": "guild:freeside-demo",
+        "channel_id": "channel:community",
+        "channel_visibility": "public"
+      },
+      "signer": {
+        "signer_id": "operator:eileen",
+        "signer_type": "operator"
+      }
+    },
+    "seeded_revoked_assertion": {
+      "assertion_id": "asrt_ecaec6fbad5a",
+      "estate_id": "estate:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "assertion_class": "observation",
+      "status": "revoked",
+      "body": {
+        "text": "Freeside-handoff: a revoked observation a bot must exclude from public_discord."
+      },
+      "body_hash": "sha256:658a63a2a6e49bd206e36c8b2e97003841b185923cb827a7decff5bef4579cf3",
+      "schema_version": "0.1.0",
+      "provenance": [
+        {
+          "provenance_id": "prov:fixture-default",
+          "source_type": "operator_input",
+          "observed_at": "2026-05-05T11:00:00Z",
+          "captured_by": "operator:eileen",
+          "evidence_summary": "fixture default operator-input provenance"
+        }
+      ],
+      "privacy_scope": "public",
+      "risk_level": "low",
+      "signatures": [
+        {
+          "signature_id": "sig_3243e3f0c8e7",
+          "signer_id": "operator:eileen",
+          "signer_type": "operator",
+          "signature_type": "dev_signature",
+          "signed_payload_hash": "sha256:7f94eecc4a2c2e5fa6b0cd5e94f4a27e40e69f8ee1f55093a9d5b9d52380c9cb",
+          "signature": "dev:92bceb7c8848f0860ce5e450ef86faf4a697f6d43640e0ce0976be4348ffd746",
+          "signed_at": "2026-05-05T10:17:00Z",
+          "key_ref": "dev-key:operator:eileen"
+        }
+      ],
+      "created_at": "2026-05-05T10:17:00Z",
+      "updated_at": "2026-05-05T10:17:00Z"
+    },
+    "seeded_forgotten_assertion": {
+      "assertion_id": "asrt_d39567ecc251",
+      "estate_id": "estate:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "assertion_class": "observation",
+      "status": "forgotten_from_recall",
+      "body": {
+        "text": "Freeside-handoff: a forgotten observation a bot must exclude from ordinary recall."
+      },
+      "body_hash": "sha256:bc16a8f7d3de9cee88ef78d75a2c0fafc200324ca31d91cb65df145d3bda1eb9",
+      "schema_version": "0.1.0",
+      "provenance": [
+        {
+          "provenance_id": "prov:fixture-default",
+          "source_type": "operator_input",
+          "observed_at": "2026-05-05T11:00:00Z",
+          "captured_by": "operator:eileen",
+          "evidence_summary": "fixture default operator-input provenance"
+        }
+      ],
+      "privacy_scope": "public",
+      "risk_level": "low",
+      "signatures": [
+        {
+          "signature_id": "sig_369541d1b5e8",
+          "signer_id": "operator:eileen",
+          "signer_type": "operator",
+          "signature_type": "dev_signature",
+          "signed_payload_hash": "sha256:ebfb2370fb5a74f0bd3d90c4c7b8263a4b1d4950ed6b0509e23313ea6bb1908c",
+          "signature": "dev:89c4fd8365a7301646342c13c5f151a46e287c3b3a336a331d132c4ae92fa0fa",
+          "signed_at": "2026-05-05T10:20:00Z",
+          "key_ref": "dev-key:operator:eileen"
+        }
+      ],
+      "created_at": "2026-05-05T10:20:00Z",
+      "updated_at": "2026-05-05T10:20:00Z"
+    },
+    "recall_request_id": "rreq_freeside-revoked-forgotten-excluded-bot",
+    "now": "2026-05-05T11:25:00Z"
+  },
+  "expected_output": {
+    "served_pack": {
+      "recall_pack_id": "rpack_4a890dda8414",
+      "recall_request_id": "rreq_freeside-revoked-forgotten-excluded-bot",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "included": [
+        {
+          "assertion_id": "asrt_c9268f1ba772",
+          "assertion_class": "observation",
+          "status": "active",
+          "summary": "Freeside-handoff: active companion a bot may include in public_discord.",
+          "body_ref": "assertion:asrt_c9268f1ba772",
+          "provenance_refs": [
+            "prov:fixture-default"
+          ],
+          "use_instruction": "usable"
+        }
+      ],
+      "marked": [],
+      "redacted": [],
+      "excluded_summary": [
+        {
+          "reason": "status_forgotten_from_recall",
+          "count": 1
+        },
+        {
+          "reason": "status_revoked",
+          "count": 1
+        }
+      ],
+      "policy_decision": {
+        "decision": "allow",
+        "policy_id": "straylight.default-agent-estate.v0",
+        "policy_version": "0.1.0",
+        "signer_competence_result": {
+          "allowed": true,
+          "reason": "competent_signer_present",
+          "matched_rule_id": "rule:recall-default",
+          "signer_id": "operator:eileen",
+          "signer_role": "operator",
+          "signature_id": "sig_b27a7747eb05",
+          "competent_signer_ids": [
+            "operator:eileen"
+          ],
+          "quorum_required": 1,
+          "quorum_present": 1,
+          "requires_review": false
+        },
+        "reasons": [
+          "signer_operator_competent_for_recall_public_discord"
+        ],
+        "decided_at": "2026-05-05T11:25:00Z"
+      },
+      "receipt_id": "rcpt_4d35911b2b62",
+      "pack_hash": "sha256:cd47542c58b96f7049ff3a2dd32efc69a0e3c9e37555b65a11854ddf93c935d2",
+      "created_at": "2026-05-05T11:25:00Z"
+    },
+    "served_receipt": {
+      "receipt_id": "rcpt_4d35911b2b62",
+      "recall_request_id": "rreq_freeside-revoked-forgotten-excluded-bot",
+      "recall_pack_id": "rpack_4a890dda8414",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "filters_applied": [
+        "environment_frame:public_discord",
+        "risk_profile:medium",
+        "requested_classes:observation",
+        "exclude_statuses:revoked,forgotten_from_recall,sealed",
+        "mark_statuses:contested,demoted"
+      ],
+      "included_assertion_ids": [
+        "asrt_c9268f1ba772"
+      ],
+      "marked_assertion_ids": [],
+      "redacted_count": 0,
+      "excluded_counts_by_reason": {
+        "status_revoked": 1,
+        "status_forgotten_from_recall": 1
+      },
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "requester_signature_ref": "sig_b27a7747eb05",
+      "pack_hash": "sha256:cd47542c58b96f7049ff3a2dd32efc69a0e3c9e37555b65a11854ddf93c935d2",
+      "receipt_hash": "sha256:4d56801793753c1d58b2320ec4f966b380040e332ecfe82084993c76d9e6b35b",
+      "created_at": "2026-05-05T11:25:00Z",
+      "detail_level": "standard"
+    },
+    "revoked_in_included_count": 0,
+    "revoked_in_marked_count": 0,
+    "forgotten_in_included_count": 0,
+    "forgotten_in_marked_count": 0,
+    "deny_reasons": [
+      "revoked_excluded_outside_audit_review",
+      "forgotten_excluded_outside_audit_review"
+    ],
+    "audit_chain_event_count": 4,
+    "notes": "Per threat-model T3 / T4: revoked and forgotten material are excluded outside audit_review and never quotable as fact. The bot adapter MUST surface a redacted notice ('this material is no longer active'), never the body."
+  }
+}

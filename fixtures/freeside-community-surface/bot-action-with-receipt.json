@@ -1,0 +1,117 @@
+{
+  "case_name": "bot_action_with_receipt",
+  "expected_allowed": true,
+  "reason": "A bot-initiated action (sending a Discord message under a previously-granted capability) enters the wedge as a candidate `action_trace` assertion signed by the runtime. The wedge's rule:admit-action-trace-runtime allows runtime / operator signers; admission succeeds. The wedge emits a TransitionReceipt + assertion_admitted audit event. Freeside's bot surface renders the action result alongside the receipt id; the audit chain shows what the bot did and under whose capability.",
+  "input": {
+    "adapter": "discord",
+    "adapter_event": "discord:bot.action",
+    "environment_frame": "public_discord",
+    "caller": {
+      "tenant_id": "tenant:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "signer": {
+        "signer_id": "runtime:finn",
+        "signer_type": "runtime"
+      },
+      "discord": {
+        "guild_id": "guild:freeside-demo",
+        "channel_id": "channel:community",
+        "channel_visibility": "public"
+      }
+    },
+    "candidate_envelope": {
+      "estate_id": "estate:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "assertion_class": "action_trace",
+      "body": {
+        "action": "discord.bot.send_message",
+        "target": "discord://guild/freeside-demo/channel/community",
+        "summary": "Bot replied to community-feedback thread with governed recall pack reference.",
+        "result": "success",
+        "capability_ref": "asrt_b7a9607e2e51"
+      },
+      "schema_version": "0.1.0",
+      "provenance": [
+        {
+          "provenance_id": "prov:fixture-default",
+          "source_type": "operator_input",
+          "observed_at": "2026-05-05T11:00:00Z",
+          "captured_by": "operator:eileen",
+          "evidence_summary": "fixture default operator-input provenance"
+        }
+      ],
+      "privacy_scope": "tenant",
+      "risk_level": "low",
+      "signatures": [
+        {
+          "signature_id": "sig_a7d0c3e7e496",
+          "signer_id": "runtime:finn",
+          "signer_type": "runtime",
+          "signature_type": "dev_signature",
+          "signed_payload_hash": "sha256:8f61ea955960308618ebfbb127b8313b8e9e3a9ca09da223787d46b92e978775",
+          "signature": "dev:d59c7396763384a10655435d63b93699eae4aff4afdcae2c4f4ff36f7caa2e2b",
+          "signed_at": "2026-05-05T10:35:00Z",
+          "key_ref": "dev-key:runtime:finn"
+        }
+      ]
+    },
+    "candidate_assertion_class": "action_trace",
+    "action_summary": "discord.bot.send_message",
+    "now": "2026-05-05T10:35:00Z"
+  },
+  "expected_output": {
+    "admission_decision": "allow",
+    "admitted_assertion": {
+      "assertion_id": "asrt_50767a5e0abb",
+      "estate_id": "estate:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "assertion_class": "action_trace",
+      "status": "active",
+      "body": {
+        "action": "discord.bot.send_message",
+        "target": "discord://guild/freeside-demo/channel/community",
+        "summary": "Bot replied to community-feedback thread with governed recall pack reference.",
+        "result": "success",
+        "capability_ref": "asrt_b7a9607e2e51"
+      },
+      "body_hash": "sha256:203df7a86f95bea799e11bf40fac28a91fab083afbc156fb4e9b17a49feccb41",
+      "schema_version": "0.1.0",
+      "provenance": [
+        {
+          "provenance_id": "prov:fixture-default",
+          "source_type": "operator_input",
+          "observed_at": "2026-05-05T11:00:00Z",
+          "captured_by": "operator:eileen",
+          "evidence_summary": "fixture default operator-input provenance"
+        }
+      ],
+      "privacy_scope": "tenant",
+      "risk_level": "low",
+      "signatures": [
+        {
+          "signature_id": "sig_a7d0c3e7e496",
+          "signer_id": "runtime:finn",
+          "signer_type": "runtime",
+          "signature_type": "dev_signature",
+          "signed_payload_hash": "sha256:8f61ea955960308618ebfbb127b8313b8e9e3a9ca09da223787d46b92e978775",
+          "signature": "dev:d59c7396763384a10655435d63b93699eae4aff4afdcae2c4f4ff36f7caa2e2b",
+          "signed_at": "2026-05-05T10:35:00Z",
+          "key_ref": "dev-key:runtime:finn"
+        }
+      ],
+      "created_at": "2026-05-05T10:35:00Z",
+      "updated_at": "2026-05-05T10:35:00Z"
+    },
+    "transition_receipt_summary": {
+      "receipt_id": "trcpt_7310ab9c2efb",
+      "receipt_kind": "admission",
+      "transition_id": "trn_9490a6905487",
+      "transition_type": "admit_assertion",
+      "decision": "allow",
+      "audit_event_ref": "aud_5e306f881a7c",
+      "receipt_hash": "sha256:0cb01e9f5298f4ada1124d9448b96c07d2e8d329546aa6b930a7464d5573b080"
+    },
+    "audit_event_id": "aud_5e306f881a7c",
+    "notes": "Every bot action that mutates state runs through Finn's transition gate (or the wedge's, in single-process deployments). The 'every action has a receipt' discipline is load-bearing through Freeside; an action without a receipt is an ungoverned mutation."
+  }
+}

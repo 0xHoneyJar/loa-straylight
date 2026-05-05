@@ -3,40 +3,49 @@
 **Continuity-under-authorization for persistent AI agents: signed memory, governed recall, challenge, revocation, and commitments.**
 
 > **MVP status (Phase 5 + Phase 6 + Phase 7 + Phase 8 + Phase 9 +
-> Phase 10 + Phase 12).** Local-only, in-repo Recall Wedge. Public
-> entrypoint: `src/straylight/index.ts`. Run `npm run typecheck`,
-> `npm test`, `npm run demo:recall`, `npm run demo:recall:json`,
-> `npm run schema:candidates` (Phase 6 — writes current-shape
-> examples to `fixtures/schema-candidates/`; not canonical Hounfour
-> schemas), `npm run hounfour:conformance` (Phase 8 — writes local
-> Hounfour conformance vectors to `fixtures/hounfour-conformance/`;
-> not canonical Hounfour schemas, intended as future Hounfour test
-> inputs), `npm run hounfour:handoff` (Phase 9 — prints the
-> Hounfour extraction issue / PR handoff packet under
-> `docs/handoffs/`; this is **handoff prep**, not Hounfour
-> integration), `npm run finn:enforcement` (Phase 10 — writes
-> local Finn runtime-enforcement fixtures to
-> `fixtures/finn-runtime-enforcement/`; not official Finn fixtures,
-> intended as future Finn test inputs; this is **handoff prep**, not
-> Finn integration), or `npm run dixie:recall` (Phase 12 — writes
-> local Dixie governed-recall / BFF / inspection fixtures to
-> `fixtures/dixie-governed-recall/`; not official Dixie fixtures,
-> intended as future Dixie BFF test inputs; this is **handoff prep**,
-> not Dixie integration). See
+> Phase 10 + Phase 12 + Phase 14).** Local-only, in-repo Recall
+> Wedge. Public entrypoint: `src/straylight/index.ts`. Run `npm
+> run typecheck`, `npm test`, `npm run demo:recall`, `npm run
+> demo:recall:json`, `npm run schema:candidates` (Phase 6 —
+> writes current-shape examples to `fixtures/schema-candidates/`;
+> not canonical Hounfour schemas), `npm run hounfour:conformance`
+> (Phase 8 — writes local Hounfour conformance vectors to
+> `fixtures/hounfour-conformance/`; not canonical Hounfour
+> schemas, intended as future Hounfour test inputs), `npm run
+> hounfour:handoff` (Phase 9 — prints the Hounfour extraction
+> issue / PR handoff packet under `docs/handoffs/`; this is
+> **handoff prep**, not Hounfour integration), `npm run
+> finn:enforcement` (Phase 10 — writes local Finn
+> runtime-enforcement fixtures to
+> `fixtures/finn-runtime-enforcement/`; not official Finn
+> fixtures, intended as future Finn test inputs; this is
+> **handoff prep**, not Finn integration), `npm run dixie:recall`
+> (Phase 12 — writes local Dixie governed-recall / BFF /
+> inspection fixtures to `fixtures/dixie-governed-recall/`; not
+> official Dixie fixtures, intended as future Dixie BFF test
+> inputs; this is **handoff prep**, not Dixie integration), or
+> `npm run freeside:surface` (Phase 14 — writes local Freeside
+> community / app surface fixtures to
+> `fixtures/freeside-community-surface/`; not official Freeside
+> fixtures, intended as future Freeside community / bot / admin
+> test inputs; this is **handoff prep**, not Freeside
+> integration). See
 > [`docs/mvp/straylight-recall-wedge.md`](docs/mvp/straylight-recall-wedge.md)
 > for what each phase proves,
 > [`docs/mvp/package-boundary.md`](docs/mvp/package-boundary.md)
 > for the stable API surface,
 > [`docs/mvp/threat-model.md`](docs/mvp/threat-model.md)
 > for fail-closed defenses,
-> [`docs/schema-candidates/`](docs/schema-candidates/) for Phase 6 / 7 / 8
-> schema-extraction prep, and
+> [`docs/schema-candidates/`](docs/schema-candidates/) for Phase
+> 6 / 7 / 8 schema-extraction prep, and
 > [`docs/handoffs/`](docs/handoffs/) for the Phase 9 Hounfour
 > extraction handoff packet, the Phase 10 Finn runtime-enforcement
-> handoff packet, and the Phase 12 Dixie governed-recall / BFF
-> handoff packet (issue drafts + PR checklists + mapping tables +
-> boundary docs — none of which is filed against `loa-hounfour`,
-> `loa-finn`, or `loa-dixie` yet).
+> handoff packet, the Phase 12 Dixie governed-recall / BFF
+> handoff packet, and the Phase 14 Freeside community / app
+> surface handoff packet (issue drafts + PR checklists + mapping
+> tables + boundary docs — none of which is filed against
+> `loa-hounfour`, `loa-finn`, `loa-dixie`, or `loa-freeside`
+> yet).
 
 
 Straylight is the hidden estate architecture for intent-era agents.

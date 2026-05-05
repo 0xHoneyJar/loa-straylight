@@ -1,0 +1,45 @@
+{
+  "case_name": "denied_bot_memory_as_recall",
+  "expected_allowed": false,
+  "reason": "Freeside MUST NOT promote bot-side conversation buffers, vector-store hits, or message scrollback into a RecallPack. A Discord conversation buffer is bot context, not governed recall. A RecallPack only exists if the request ran through the runtime gate, the policy lane returned a non-deny decision, the disposition matrix was applied, and a RecallReceipt was emitted and persisted.",
+  "input": {
+    "adapter": "discord",
+    "adapter_event": "discord:bot.context_request",
+    "environment_frame": "public_discord",
+    "caller": {
+      "tenant_id": "tenant:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "discord": {
+        "guild_id": "guild:freeside-demo",
+        "channel_id": "channel:community",
+        "channel_visibility": "public"
+      }
+    },
+    "bot_memory_hit_list": [
+      {
+        "source": "discord_message",
+        "message_id": "msg:0001",
+        "similarity": 0.91,
+        "text": "last week the agent said this in #community-feedback"
+      },
+      {
+        "source": "discord_message",
+        "message_id": "msg:0002",
+        "similarity": 0.88,
+        "text": "and this in #community-help"
+      }
+    ],
+    "now": "2026-05-05T11:00:00Z"
+  },
+  "expected_output": {
+    "intake_decision": "denied",
+    "deny_reason": "bot_memory_is_not_governed_recall",
+    "rendered_as": "bot_context",
+    "bot_context_affordance": {
+      "label": "bot context (not governed recall)",
+      "warning": "These are platform-side message hits; they have NOT passed class validation, policy validation, signer competence, or receipt emission. They are NOT estate truth.",
+      "governed_recall_alternative": "POST a RecallRequest through the bot recall surface to receive a RecallPack + RecallReceipt."
+    },
+    "notes": "Bot memory may PROPOSE candidate assertions through the admission gate, but it never IS a governed recall. Freeside's bot adapter MUST surface bot context with a clear 'not governed recall' affordance; rendering it as a RecallPack would re-create the ungoverned-RAG failure mode the wedge exists to prevent."
+  }
+}

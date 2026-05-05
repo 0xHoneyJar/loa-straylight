@@ -1,0 +1,64 @@
+{
+  "case_name": "feedback_signal_as_candidate",
+  "expected_allowed": false,
+  "reason": "A Discord feedback event enters the wedge as a candidate feedback_signal assertion — built per Hounfour's class shape (or, until Hounfour ships, the wedge's re-exported types) with provenance.source_type='discord_event'. The candidate runs through class validation and policy admission; the wedge's keyring currently has NO competence rule for feedback_signal admission, so admission fails closed with no_competence_rule_for_transition. The fixture pins the fail-closed rule: platform events enter as candidates, not as memory truth, and even as candidates they fail closed when no rule authorizes the admission.",
+  "input": {
+    "adapter": "discord",
+    "adapter_event": "discord:event.ingest",
+    "environment_frame": "public_discord",
+    "platform_event": {
+      "discord": {
+        "guild_id": "guild:freeside-demo",
+        "channel_id": "channel:community-feedback",
+        "message_id": "msg:0001",
+        "event_type": "reaction_add",
+        "reaction": "👍"
+      }
+    },
+    "candidate_envelope": {
+      "estate_id": "estate:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "assertion_class": "feedback_signal",
+      "body": {
+        "summary": "community member upvoted agent reply in #community-feedback",
+        "score": 1,
+        "platform": "discord"
+      },
+      "schema_version": "0.1.0",
+      "provenance": [
+        {
+          "provenance_id": "prov:freeside-discord-event",
+          "source_type": "discord_event",
+          "observed_at": "2026-05-05T10:25:00Z",
+          "captured_by": "freeside:discord-adapter",
+          "evidence_summary": "public Discord channel #community feedback message",
+          "source_uri": "discord://guild/freeside-demo/channel/community-feedback/message/0001"
+        }
+      ],
+      "privacy_scope": "tenant",
+      "risk_level": "low",
+      "signatures": [
+        {
+          "signature_id": "sig_94f37993dcb1",
+          "signer_id": "runtime:finn",
+          "signer_type": "runtime",
+          "signature_type": "dev_signature",
+          "signed_payload_hash": "sha256:888e161221d72e36b890ccfc2a4d4ebb9ec846a8c0a0f68c6cf99e7c678175d8",
+          "signature": "dev:8fd42fc016ba5827f60bed8e077bfc2bda386429507ea24e6f4c10abad1c381c",
+          "signed_at": "2026-05-05T10:25:00Z",
+          "key_ref": "dev-key:runtime:finn"
+        }
+      ]
+    },
+    "now": "2026-05-05T10:25:00Z"
+  },
+  "expected_output": {
+    "admission_decision": "deny",
+    "admission_reason": [
+      "policy_unavailable_for_transition"
+    ],
+    "candidate_provenance_source_type": "discord_event",
+    "candidate_assertion_class": "feedback_signal",
+    "notes": "Per arch spec §22.7.G2: Discord/Telegram/social/economic feedback signals enter as candidate `feedback_signal`, not as memory truth. The wedge currently fails closed because no competence rule covers feedback_signal admission. Until Hounfour ships a feedback_signal schema and Finn / the wedge ship a competence rule, Freeside MUST NOT admit feedback signals as memory."
+  }
+}

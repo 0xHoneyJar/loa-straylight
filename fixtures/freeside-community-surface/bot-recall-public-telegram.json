@@ -1,0 +1,136 @@
+{
+  "case_name": "bot_recall_public_telegram",
+  "expected_allowed": true,
+  "reason": "Freeside's Telegram bot adapter builds a RecallRequest envelope per the wedge's validateRecallRequest shape, attaches environment_frame=public_telegram, runs cross-tenant boundary checks, and forwards to the runtime gate. The bot reply renders the served RecallPack + RecallReceipt; private bodies stay excluded.",
+  "input": {
+    "adapter": "telegram",
+    "adapter_event": "telegram:bot.recall",
+    "environment_frame": "public_telegram",
+    "caller": {
+      "tenant_id": "tenant:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "telegram": {
+        "chat_id": "chat:freeside-demo-public",
+        "chat_visibility": "public"
+      },
+      "signer": {
+        "signer_id": "operator:eileen",
+        "signer_type": "operator"
+      }
+    },
+    "request_envelope": {
+      "recall_request_id": "rreq_freeside-bot-recall-public-telegram",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "requested_by": "operator:eileen",
+      "task": "freeside-handoff: public_telegram bot recall, healthy estate",
+      "environment_frame": "public_telegram",
+      "risk_profile": "medium",
+      "requested_classes": [
+        "observation"
+      ],
+      "mark_statuses": [
+        "contested",
+        "demoted"
+      ],
+      "exclude_statuses": [
+        "revoked",
+        "forgotten_from_recall",
+        "sealed"
+      ],
+      "include_receipt_detail": "standard",
+      "include_provenance": true,
+      "signature": {
+        "signature_id": "sig_fbfd76714db9",
+        "signer_id": "operator:eileen",
+        "signer_type": "operator",
+        "signature_type": "dev_signature",
+        "signed_payload_hash": "sha256:9050ec1cac4bc943f157d10a4438d6820cf60cd2122c3aeb207e93f5ca0c601d",
+        "signature": "dev:076f857ddae5eff669071eaab4d9f7d7f688135a311754f0f4a1d1f48b1548d7",
+        "signed_at": "2026-05-05T11:05:00Z",
+        "key_ref": "dev-key:operator:eileen"
+      },
+      "created_at": "2026-05-05T11:05:00Z"
+    },
+    "now": "2026-05-05T11:05:00Z"
+  },
+  "expected_output": {
+    "intake_decision": "accepted",
+    "served_pack": {
+      "recall_pack_id": "rpack_040e3db133e9",
+      "recall_request_id": "rreq_freeside-bot-recall-public-telegram",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "included": [
+        {
+          "assertion_id": "asrt_463da29b3587",
+          "assertion_class": "observation",
+          "status": "active",
+          "summary": "Freeside-handoff: public observation, a Telegram bot may quote this.",
+          "body_ref": "assertion:asrt_463da29b3587",
+          "provenance_refs": [
+            "prov:fixture-default"
+          ],
+          "use_instruction": "usable"
+        }
+      ],
+      "marked": [],
+      "redacted": [],
+      "excluded_summary": [],
+      "policy_decision": {
+        "decision": "allow",
+        "policy_id": "straylight.default-agent-estate.v0",
+        "policy_version": "0.1.0",
+        "signer_competence_result": {
+          "allowed": true,
+          "reason": "competent_signer_present",
+          "matched_rule_id": "rule:recall-default",
+          "signer_id": "operator:eileen",
+          "signer_role": "operator",
+          "signature_id": "sig_fbfd76714db9",
+          "competent_signer_ids": [
+            "operator:eileen"
+          ],
+          "quorum_required": 1,
+          "quorum_present": 1,
+          "requires_review": false
+        },
+        "reasons": [
+          "signer_operator_competent_for_recall_public_telegram"
+        ],
+        "decided_at": "2026-05-05T11:05:00Z"
+      },
+      "receipt_id": "rcpt_8346096f31d2",
+      "pack_hash": "sha256:dc36e5bdbb055bdfa5b0934cd0fd28697ce957e9b3bbefa721d4e93dd3af1405",
+      "created_at": "2026-05-05T11:05:00Z"
+    },
+    "served_receipt": {
+      "receipt_id": "rcpt_8346096f31d2",
+      "recall_request_id": "rreq_freeside-bot-recall-public-telegram",
+      "recall_pack_id": "rpack_040e3db133e9",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "filters_applied": [
+        "environment_frame:public_telegram",
+        "risk_profile:medium",
+        "requested_classes:observation",
+        "exclude_statuses:revoked,forgotten_from_recall,sealed",
+        "mark_statuses:contested,demoted"
+      ],
+      "included_assertion_ids": [
+        "asrt_463da29b3587"
+      ],
+      "marked_assertion_ids": [],
+      "redacted_count": 0,
+      "excluded_counts_by_reason": {},
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "requester_signature_ref": "sig_fbfd76714db9",
+      "pack_hash": "sha256:dc36e5bdbb055bdfa5b0934cd0fd28697ce957e9b3bbefa721d4e93dd3af1405",
+      "receipt_hash": "sha256:e49a4395173510feb4e643bd7aa32368551cb3224d06d8b2c3d1fd93f2fcfa83",
+      "created_at": "2026-05-05T11:05:00Z",
+      "detail_level": "standard"
+    },
+    "receipt_pack_hash_matches": true,
+    "notes": "Telegram-side audit_review surfaces are NOT exposed; review-queue UI lives in Dixie, not Freeside. The bot reply renders only what the wedge / Finn / Dixie returned."
+  }
+}

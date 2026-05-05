@@ -1,0 +1,119 @@
+{
+  "case_name": "admin_capability_grant",
+  "expected_allowed": true,
+  "reason": "A community admin (reviewer signer) grants a scoped Discord bot capability via a candidate `permission` assertion. The wedge's rule:admit-permission-reviewer-only allows reviewer / operator signers to admit permission. Admission succeeds; the wedge emits a TransitionReceipt + assertion_admitted audit event. Freeside's admin surface renders both. Bypassing the gate (e.g. via a Freeside-internal capability table that is not reflected in the actor's estate) would re-create the ungoverned-permission failure mode.",
+  "input": {
+    "adapter": "rest",
+    "adapter_event": "POST /admin/capability/grant",
+    "environment_frame": "private_operator",
+    "caller_frame_intent": "tenant_admin",
+    "caller": {
+      "tenant_id": "tenant:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "signer": {
+        "signer_id": "reviewer:dixie",
+        "signer_type": "reviewer"
+      }
+    },
+    "candidate_envelope": {
+      "estate_id": "estate:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "assertion_class": "permission",
+      "body": {
+        "capability": "discord.bot.send_message",
+        "scope": "community:freeside-demo",
+        "granted_to": "agent:satoshi-demo",
+        "granted_by": "reviewer:dixie",
+        "conditions": {
+          "rate_limit_per_minute": 5,
+          "public_only": true
+        }
+      },
+      "schema_version": "0.1.0",
+      "provenance": [
+        {
+          "provenance_id": "prov:fixture-default",
+          "source_type": "operator_input",
+          "observed_at": "2026-05-05T11:00:00Z",
+          "captured_by": "operator:eileen",
+          "evidence_summary": "fixture default operator-input provenance"
+        }
+      ],
+      "privacy_scope": "tenant",
+      "risk_level": "medium",
+      "signatures": [
+        {
+          "signature_id": "sig_a45a85b36ea3",
+          "signer_id": "reviewer:dixie",
+          "signer_type": "reviewer",
+          "signature_type": "dev_signature",
+          "signed_payload_hash": "sha256:ea4203a37425214e62cf0cab5c26ae101800b9b88cbba6aca15b212bd5632c8e",
+          "signature": "dev:c7724da999531b3e665a60b7ec3dd8a93b53d7fd00acf25257edf8545bb791ad",
+          "signed_at": "2026-05-05T10:30:00Z",
+          "key_ref": "dev-key:reviewer:dixie"
+        }
+      ]
+    },
+    "candidate_assertion_class": "permission",
+    "granted_capability": "discord.bot.send_message",
+    "now": "2026-05-05T10:30:00Z"
+  },
+  "expected_output": {
+    "admission_decision": "allow",
+    "admitted_assertion": {
+      "assertion_id": "asrt_b7a9607e2e51",
+      "estate_id": "estate:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "assertion_class": "permission",
+      "status": "active",
+      "body": {
+        "capability": "discord.bot.send_message",
+        "scope": "community:freeside-demo",
+        "granted_to": "agent:satoshi-demo",
+        "granted_by": "reviewer:dixie",
+        "conditions": {
+          "rate_limit_per_minute": 5,
+          "public_only": true
+        }
+      },
+      "body_hash": "sha256:f43f93b378186ba4cb84f1f0b36cf4cbd2212809b2dd2b26d8f64ba5b7f4880c",
+      "schema_version": "0.1.0",
+      "provenance": [
+        {
+          "provenance_id": "prov:fixture-default",
+          "source_type": "operator_input",
+          "observed_at": "2026-05-05T11:00:00Z",
+          "captured_by": "operator:eileen",
+          "evidence_summary": "fixture default operator-input provenance"
+        }
+      ],
+      "privacy_scope": "tenant",
+      "risk_level": "medium",
+      "signatures": [
+        {
+          "signature_id": "sig_a45a85b36ea3",
+          "signer_id": "reviewer:dixie",
+          "signer_type": "reviewer",
+          "signature_type": "dev_signature",
+          "signed_payload_hash": "sha256:ea4203a37425214e62cf0cab5c26ae101800b9b88cbba6aca15b212bd5632c8e",
+          "signature": "dev:c7724da999531b3e665a60b7ec3dd8a93b53d7fd00acf25257edf8545bb791ad",
+          "signed_at": "2026-05-05T10:30:00Z",
+          "key_ref": "dev-key:reviewer:dixie"
+        }
+      ],
+      "created_at": "2026-05-05T10:30:00Z",
+      "updated_at": "2026-05-05T10:30:00Z"
+    },
+    "transition_receipt_summary": {
+      "receipt_id": "trcpt_ca3b88a7b58f",
+      "receipt_kind": "admission",
+      "transition_id": "trn_5f15fc592430",
+      "transition_type": "admit_assertion",
+      "decision": "allow",
+      "audit_event_ref": "aud_7805a28558f8",
+      "receipt_hash": "sha256:05ffac6495c4cda0718989299c22f1c8bf3503bb02e5b93dc111e4cc7797e460"
+    },
+    "audit_event_id": "aud_7805a28558f8",
+    "notes": "Per arch spec §22.7.G3: community admin can grant scoped bot capability with policy and audit. The permission assertion enters the actor's estate and becomes inspectable via Dixie's assertion_status_inspection surface; Freeside renders the grant outcome to the admin."
+  }
+}
