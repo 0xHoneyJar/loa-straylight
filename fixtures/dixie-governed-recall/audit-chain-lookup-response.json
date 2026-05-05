@@ -1,0 +1,86 @@
+{
+  "case_name": "audit_chain_lookup_response",
+  "expected_allowed": true,
+  "reason": "Dixie's audit-chain lookup surface returns AuditEvent[] in chain order plus a verifyChain result. When the chain is broken, the BFF surfaces the break index and reason — never suppresses. The fixture pins a healthy chain; the verifyChain result is { ok: true }.",
+  "input": {
+    "bff_route": "GET /estate/:estate_id/audit",
+    "estate_id": "estate:satoshi-demo",
+    "environment_frame": "audit_review",
+    "now": "2026-05-05T11:40:00Z"
+  },
+  "expected_output": {
+    "estate_id": "estate:satoshi-demo",
+    "events": [
+      {
+        "audit_event_id": "aud_0ddc1156c2c4",
+        "event_type": "assertion_admitted",
+        "actor_id": "agent:satoshi-demo",
+        "estate_id": "estate:satoshi-demo",
+        "transition_id": "trn_360fa03d9d6b",
+        "assertion_refs": [
+          "asrt_02c935e295ef"
+        ],
+        "result_hash": "sha256:dcb6b8b0fefb77cd8f73bc2c5c3f23cad50c5dec26a060609fec6b08f4584129",
+        "signer_refs": [
+          "runtime:finn"
+        ],
+        "policy_decision_ref": "straylight.default-agent-estate.v0",
+        "audit_hash": "sha256:7e70de9154e19ba34887f468cd0230a95088eb969bbe17fb98230b6208f80ef2",
+        "created_at": "2026-05-05T10:00:00Z",
+        "payload": {
+          "class": "observation",
+          "status": "active"
+        }
+      },
+      {
+        "audit_event_id": "aud_44f54f8fb611",
+        "event_type": "assertion_admitted",
+        "actor_id": "agent:satoshi-demo",
+        "estate_id": "estate:satoshi-demo",
+        "transition_id": "trn_187d973fc845",
+        "assertion_refs": [
+          "asrt_13d25f21989f"
+        ],
+        "result_hash": "sha256:113b3b4d44307ceefd59b56baf304d1699166e51cb51b372e9b35797e77402c5",
+        "signer_refs": [
+          "operator:eileen"
+        ],
+        "policy_decision_ref": "straylight.default-agent-estate.v0",
+        "previous_audit_hash": "sha256:7e70de9154e19ba34887f468cd0230a95088eb969bbe17fb98230b6208f80ef2",
+        "audit_hash": "sha256:df4f08319439802a1c6c80a4ae0ffafd9b05fdd110f1a693bd4b2dd915d4e61a",
+        "created_at": "2026-05-05T10:05:00Z",
+        "payload": {
+          "class": "preference",
+          "status": "active"
+        }
+      },
+      {
+        "audit_event_id": "aud_ba5f25e45938",
+        "event_type": "recall_pack_emitted",
+        "actor_id": "agent:satoshi-demo",
+        "estate_id": "estate:satoshi-demo",
+        "request_hash": "sha256:cbb5906587e24af7e2a091e348216a39d07dec3bfbc150bbe20eba610809f5e8",
+        "result_hash": "sha256:e7bc7de685a72d13de17d9cd14fc161dd730309ca0110eb20e374f14af2c40d1",
+        "signer_refs": [
+          "operator:eileen"
+        ],
+        "policy_decision_ref": "straylight.default-agent-estate.v0",
+        "previous_audit_hash": "sha256:df4f08319439802a1c6c80a4ae0ffafd9b05fdd110f1a693bd4b2dd915d4e61a",
+        "audit_hash": "sha256:00a1bd1cb18419708df43e810e38819fa34a9dafbd34fdc1b8526664ded50f4c",
+        "created_at": "2026-05-05T11:00:00Z",
+        "payload": {
+          "included_count": 2,
+          "marked_count": 0,
+          "excluded_summary": [],
+          "redacted": [],
+          "detail": "standard"
+        }
+      }
+    ],
+    "verify_chain_result": {
+      "ok": true
+    },
+    "events_count": 3,
+    "notes": "The BFF surfaces verifyChain output unchanged. A broken chain renders the break index + reason; the BFF MUST NOT suppress or fabricate a healthy result."
+  }
+}

@@ -1,0 +1,135 @@
+{
+  "case_name": "denied_private_assertion_public_context",
+  "expected_allowed": false,
+  "reason": "Dixie's BFF surfaces the served pack with the actor_private body excluded — privacyDispositionForFrame in public_discord refuses actor_private material. The private assertion is NOT in included, NOT in marked; it appears only in excluded_summary as private_excluded_from_public_frame. The BFF MUST surface the exclusion summary, never the body.",
+  "input": {
+    "bff_route": "GET /recall/:request_id",
+    "recall_request_id": "rreq_dixie-private-public-context",
+    "environment_frame": "public_discord",
+    "seeded_private_assertion": {
+      "assertion_id": "asrt_74d506c00510",
+      "estate_id": "estate:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "assertion_class": "observation",
+      "status": "active",
+      "body": {
+        "text": "Dixie-handoff: a private observation Dixie must NOT leak to public_discord."
+      },
+      "body_hash": "sha256:2c35a6cfcc8306a92eade335b6bef41c45eeeeecfd5d941440bbdbb5596f673e",
+      "schema_version": "0.1.0",
+      "provenance": [
+        {
+          "provenance_id": "prov:fixture-default",
+          "source_type": "operator_input",
+          "observed_at": "2026-05-05T11:00:00Z",
+          "captured_by": "operator:eileen",
+          "evidence_summary": "fixture default operator-input provenance"
+        }
+      ],
+      "privacy_scope": "actor_private",
+      "risk_level": "medium",
+      "signatures": [
+        {
+          "signature_id": "sig_5c7049164c7c",
+          "signer_id": "operator:eileen",
+          "signer_type": "operator",
+          "signature_type": "dev_signature",
+          "signed_payload_hash": "sha256:03af4e804c05a46af80b03d5a8cdffdbf3634553b4517650f69d9dd234b3194c",
+          "signature": "dev:2e56389c832974e53e8be5cab9424d246508678b7f893905c321a8fd4260c472",
+          "signed_at": "2026-05-05T10:10:00Z",
+          "key_ref": "dev-key:operator:eileen"
+        }
+      ],
+      "created_at": "2026-05-05T10:10:00Z",
+      "updated_at": "2026-05-05T10:10:00Z"
+    },
+    "now": "2026-05-05T11:05:00Z"
+  },
+  "expected_output": {
+    "served_pack": {
+      "recall_pack_id": "rpack_fd78c2fae9e1",
+      "recall_request_id": "rreq_dixie-private-public-context",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "included": [
+        {
+          "assertion_id": "asrt_f36a96019e68",
+          "assertion_class": "observation",
+          "status": "active",
+          "summary": "Dixie-handoff: public counterpart Dixie may include.",
+          "body_ref": "assertion:asrt_f36a96019e68",
+          "provenance_refs": [
+            "prov:fixture-default"
+          ],
+          "use_instruction": "usable"
+        }
+      ],
+      "marked": [],
+      "redacted": [],
+      "excluded_summary": [
+        {
+          "reason": "privacy_actor_private_in_public_frame",
+          "count": 1
+        }
+      ],
+      "policy_decision": {
+        "decision": "allow",
+        "policy_id": "straylight.default-agent-estate.v0",
+        "policy_version": "0.1.0",
+        "signer_competence_result": {
+          "allowed": true,
+          "reason": "competent_signer_present",
+          "matched_rule_id": "rule:recall-default",
+          "signer_id": "operator:eileen",
+          "signer_role": "operator",
+          "signature_id": "sig_28f4e9846a9a",
+          "competent_signer_ids": [
+            "operator:eileen"
+          ],
+          "quorum_required": 1,
+          "quorum_present": 1,
+          "requires_review": false
+        },
+        "reasons": [
+          "signer_operator_competent_for_recall_public_discord"
+        ],
+        "decided_at": "2026-05-05T11:05:00Z"
+      },
+      "receipt_id": "rcpt_9f68b48b53f4",
+      "pack_hash": "sha256:4331cfd8d9a21b91d342e1f1d2a97b47f5f99ed32de48d9ca6f3fe0bcce82e5a",
+      "created_at": "2026-05-05T11:05:00Z"
+    },
+    "served_receipt": {
+      "receipt_id": "rcpt_9f68b48b53f4",
+      "recall_request_id": "rreq_dixie-private-public-context",
+      "recall_pack_id": "rpack_fd78c2fae9e1",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "filters_applied": [
+        "environment_frame:public_discord",
+        "risk_profile:medium",
+        "requested_classes:observation",
+        "exclude_statuses:revoked,forgotten_from_recall,sealed",
+        "mark_statuses:contested,demoted"
+      ],
+      "included_assertion_ids": [
+        "asrt_f36a96019e68"
+      ],
+      "marked_assertion_ids": [],
+      "redacted_count": 0,
+      "excluded_counts_by_reason": {
+        "privacy_actor_private_in_public_frame": 1
+      },
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "requester_signature_ref": "sig_28f4e9846a9a",
+      "pack_hash": "sha256:4331cfd8d9a21b91d342e1f1d2a97b47f5f99ed32de48d9ca6f3fe0bcce82e5a",
+      "receipt_hash": "sha256:a8b371845a915eba3a841d7fe3ba52ea2d43909a2d9594d9a3ad239634f4363c",
+      "created_at": "2026-05-05T11:05:00Z",
+      "detail_level": "standard"
+    },
+    "private_assertion_in_included": false,
+    "private_assertion_in_marked": false,
+    "deny_reason": "private_excluded_from_public_frame",
+    "notes": "The BFF MUST NOT expose actor_private bodies in public_discord under any circumstance. Provenance refs on actor_private assertions are also excluded."
+  }
+}

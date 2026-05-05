@@ -1,0 +1,40 @@
+{
+  "case_name": "estate_summary_response",
+  "expected_allowed": true,
+  "reason": "Dixie's estate-summary surface returns actor / estate / keyring meta + assertion counts. Counts respect privacy_scope: public_discord views do not expose actor_private counts. Keyring private material (signer-private envelopes) NEVER travels through the summary; only the role list is surfaced.",
+  "input": {
+    "bff_route": "GET /estate/:estate_id/summary",
+    "estate_id": "estate:satoshi-demo",
+    "environment_frame": "private_operator",
+    "environment_frame_intent": "tenant_dashboard",
+    "now": "2026-05-05T11:45:00Z"
+  },
+  "expected_output": {
+    "summary": {
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "estate_status": "active",
+      "keyring_id": "keyring:satoshi-demo",
+      "signer_roles": [
+        "operator",
+        "reviewer",
+        "runtime"
+      ],
+      "counts_by_class": {
+        "observation": 1,
+        "preference": 1
+      },
+      "counts_by_status": {
+        "active": 2
+      },
+      "counts_by_privacy_scope": {
+        "public": 2
+      },
+      "counts_by_risk_level": {
+        "low": 2
+      },
+      "total_assertions": 2
+    },
+    "notes": "The summary view is read-only; no receipt is emitted on a summary call. The view itself is provenance for the operator console. Privacy-scope counts respect the caller frame."
+  }
+}

@@ -1,0 +1,101 @@
+{
+  "case_name": "recall_response_with_receipt",
+  "expected_allowed": true,
+  "reason": "Dixie's BFF MUST render the served RecallPack alongside its matching RecallReceipt. The receipt's pack_hash matches the served pack, and the receipt's receipt_hash is content-addressed. A pack rendered without its receipt is a runtime bug; the BFF refuses to render in that case.",
+  "input": {
+    "bff_route": "GET /recall/:request_id",
+    "recall_request_id": "rreq_dixie-public-discord-intake",
+    "environment_frame": "public_discord",
+    "now": "2026-05-05T11:00:00Z"
+  },
+  "expected_output": {
+    "served_pack": {
+      "recall_pack_id": "rpack_080317940fae",
+      "recall_request_id": "rreq_dixie-public-discord-intake",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "included": [
+        {
+          "assertion_id": "asrt_02c935e295ef",
+          "assertion_class": "observation",
+          "status": "active",
+          "summary": "Dixie-handoff: public observation, an operator may quote this.",
+          "body_ref": "assertion:asrt_02c935e295ef",
+          "provenance_refs": [
+            "prov:fixture-default"
+          ],
+          "use_instruction": "usable"
+        },
+        {
+          "assertion_id": "asrt_13d25f21989f",
+          "assertion_class": "preference",
+          "status": "active",
+          "summary": "Dixie-handoff: agent prefers concise replies in public Discord.",
+          "body_ref": "assertion:asrt_13d25f21989f",
+          "provenance_refs": [
+            "prov:fixture-default"
+          ],
+          "use_instruction": "usable"
+        }
+      ],
+      "marked": [],
+      "redacted": [],
+      "excluded_summary": [],
+      "policy_decision": {
+        "decision": "allow",
+        "policy_id": "straylight.default-agent-estate.v0",
+        "policy_version": "0.1.0",
+        "signer_competence_result": {
+          "allowed": true,
+          "reason": "competent_signer_present",
+          "matched_rule_id": "rule:recall-default",
+          "signer_id": "operator:eileen",
+          "signer_role": "operator",
+          "signature_id": "sig_7d6760888617",
+          "competent_signer_ids": [
+            "operator:eileen"
+          ],
+          "quorum_required": 1,
+          "quorum_present": 1,
+          "requires_review": false
+        },
+        "reasons": [
+          "signer_operator_competent_for_recall_public_discord"
+        ],
+        "decided_at": "2026-05-05T11:00:00Z"
+      },
+      "receipt_id": "rcpt_d06936519984",
+      "pack_hash": "sha256:e7bc7de685a72d13de17d9cd14fc161dd730309ca0110eb20e374f14af2c40d1",
+      "created_at": "2026-05-05T11:00:00Z"
+    },
+    "served_receipt": {
+      "receipt_id": "rcpt_d06936519984",
+      "recall_request_id": "rreq_dixie-public-discord-intake",
+      "recall_pack_id": "rpack_080317940fae",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "filters_applied": [
+        "environment_frame:public_discord",
+        "risk_profile:medium",
+        "requested_classes:observation,preference",
+        "exclude_statuses:revoked,forgotten_from_recall,sealed",
+        "mark_statuses:contested,demoted"
+      ],
+      "included_assertion_ids": [
+        "asrt_02c935e295ef",
+        "asrt_13d25f21989f"
+      ],
+      "marked_assertion_ids": [],
+      "redacted_count": 0,
+      "excluded_counts_by_reason": {},
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "requester_signature_ref": "sig_7d6760888617",
+      "pack_hash": "sha256:e7bc7de685a72d13de17d9cd14fc161dd730309ca0110eb20e374f14af2c40d1",
+      "receipt_hash": "sha256:6c645e6ea5cbae86e94d31d016c0776d89c3aea5f31c42ef3e1145ad9f34ddaa",
+      "created_at": "2026-05-05T11:00:00Z",
+      "detail_level": "standard"
+    },
+    "receipt_pack_hash_matches": true,
+    "notes": "The BFF surfaces the included / marked / redacted / excluded_summary discipline intact. Provenance refs travel via included[].provenance_refs."
+  }
+}

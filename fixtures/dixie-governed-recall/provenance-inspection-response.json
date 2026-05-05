@@ -1,0 +1,27 @@
+{
+  "case_name": "provenance_inspection_response",
+  "expected_allowed": true,
+  "reason": "Dixie's provenance-inspection surface returns the assertion's provenance[] records — provenance_id, source_type, observed_at, captured_by, evidence_summary — and respects the parent's privacy_scope. A public assertion's provenance is exposed in public_discord; an actor_private parent's provenance would NOT travel to public_discord (the BFF would surface an exclusion entry instead).",
+  "input": {
+    "bff_route": "GET /assertion/:assertion_id/provenance",
+    "assertion_id": "asrt_02c935e295ef",
+    "environment_frame": "public_discord",
+    "now": "2026-05-05T11:35:00Z"
+  },
+  "expected_output": {
+    "assertion_id": "asrt_02c935e295ef",
+    "assertion_class": "observation",
+    "privacy_scope": "public",
+    "exposed_in_caller_frame": true,
+    "provenance_records": [
+      {
+        "provenance_id": "prov:fixture-default",
+        "source_type": "operator_input",
+        "observed_at": "2026-05-05T11:00:00Z",
+        "captured_by": "operator:eileen",
+        "evidence_summary": "fixture default operator-input provenance"
+      }
+    ],
+    "notes": "Provenance walk is the audit-side trace of why an assertion entered the estate. The BFF MUST NOT synthesize provenance refs; it walks Assertion.provenance[] only."
+  }
+}

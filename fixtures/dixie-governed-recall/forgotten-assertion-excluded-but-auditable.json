@@ -1,0 +1,232 @@
+{
+  "case_name": "forgotten_assertion_excluded_but_auditable",
+  "expected_allowed": false,
+  "reason": "Dixie's BFF surfaces a public_discord recall with forgotten material excluded (forgotten_excluded_outside_audit_review) and surfaces an audit_review recall with the same material as marked (use_instruction = mark_as_contested or do_not_use_quote_only per the wedge's marker matrix). The forget transition receipt remains in the audit chain. Forget is unavailable to ordinary recall, not erased.",
+  "input": {
+    "bff_route_public": "GET /recall/:request_id",
+    "bff_route_audit": "GET /recall/:request_id",
+    "public_recall_request_id": "rreq_dixie-forgotten-excluded-public",
+    "audit_recall_request_id": "rreq_dixie-forgotten-marked-audit",
+    "seeded_forgotten_assertion": {
+      "assertion_id": "asrt_c4921e52c155",
+      "estate_id": "estate:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "assertion_class": "observation",
+      "status": "forgotten_from_recall",
+      "body": {
+        "text": "Dixie-handoff: a forgotten observation Dixie must exclude from ordinary recall."
+      },
+      "body_hash": "sha256:a9878a596f9774704098daaee87e5dd75621433c37963d103f966e9fa101a4f0",
+      "schema_version": "0.1.0",
+      "provenance": [
+        {
+          "provenance_id": "prov:fixture-default",
+          "source_type": "operator_input",
+          "observed_at": "2026-05-05T11:00:00Z",
+          "captured_by": "operator:eileen",
+          "evidence_summary": "fixture default operator-input provenance"
+        }
+      ],
+      "privacy_scope": "public",
+      "risk_level": "low",
+      "signatures": [
+        {
+          "signature_id": "sig_0b6b7dfa0419",
+          "signer_id": "operator:eileen",
+          "signer_type": "operator",
+          "signature_type": "dev_signature",
+          "signed_payload_hash": "sha256:dbe08d85201c207b0d66bd21120756ab54a69a8f2b531b0f52ee841a923e5aba",
+          "signature": "dev:20e051c0a261a19be9416e3f2217c66a69e958a25f82cf00178e6763fd0d9b05",
+          "signed_at": "2026-05-05T10:20:00Z",
+          "key_ref": "dev-key:operator:eileen"
+        }
+      ],
+      "created_at": "2026-05-05T10:20:00Z",
+      "updated_at": "2026-05-05T10:20:00Z"
+    },
+    "public_environment_frame": "public_discord",
+    "audit_environment_frame": "audit_review",
+    "now_public": "2026-05-05T11:20:00Z",
+    "now_audit": "2026-05-05T11:25:00Z"
+  },
+  "expected_output": {
+    "public_served_pack": {
+      "recall_pack_id": "rpack_284327f9bc61",
+      "recall_request_id": "rreq_dixie-forgotten-excluded-public",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "included": [
+        {
+          "assertion_id": "asrt_8424e448d5c5",
+          "assertion_class": "observation",
+          "status": "active",
+          "summary": "Dixie-handoff: active companion Dixie may include in public_discord.",
+          "body_ref": "assertion:asrt_8424e448d5c5",
+          "provenance_refs": [
+            "prov:fixture-default"
+          ],
+          "use_instruction": "usable"
+        }
+      ],
+      "marked": [],
+      "redacted": [],
+      "excluded_summary": [
+        {
+          "reason": "status_forgotten_from_recall",
+          "count": 1
+        }
+      ],
+      "policy_decision": {
+        "decision": "allow",
+        "policy_id": "straylight.default-agent-estate.v0",
+        "policy_version": "0.1.0",
+        "signer_competence_result": {
+          "allowed": true,
+          "reason": "competent_signer_present",
+          "matched_rule_id": "rule:recall-default",
+          "signer_id": "operator:eileen",
+          "signer_role": "operator",
+          "signature_id": "sig_09ce9d3c4fd1",
+          "competent_signer_ids": [
+            "operator:eileen"
+          ],
+          "quorum_required": 1,
+          "quorum_present": 1,
+          "requires_review": false
+        },
+        "reasons": [
+          "signer_operator_competent_for_recall_public_discord"
+        ],
+        "decided_at": "2026-05-05T11:20:00Z"
+      },
+      "receipt_id": "rcpt_fad245d04906",
+      "pack_hash": "sha256:936546aed95ac45a8eec87bd0f6366af6c6dc25c73adb557b74dede7ec0da1d6",
+      "created_at": "2026-05-05T11:20:00Z"
+    },
+    "public_served_receipt": {
+      "receipt_id": "rcpt_fad245d04906",
+      "recall_request_id": "rreq_dixie-forgotten-excluded-public",
+      "recall_pack_id": "rpack_284327f9bc61",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "filters_applied": [
+        "environment_frame:public_discord",
+        "risk_profile:medium",
+        "requested_classes:observation",
+        "exclude_statuses:revoked,forgotten_from_recall,sealed",
+        "mark_statuses:contested,demoted"
+      ],
+      "included_assertion_ids": [
+        "asrt_8424e448d5c5"
+      ],
+      "marked_assertion_ids": [],
+      "redacted_count": 0,
+      "excluded_counts_by_reason": {
+        "status_forgotten_from_recall": 1
+      },
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "requester_signature_ref": "sig_09ce9d3c4fd1",
+      "pack_hash": "sha256:936546aed95ac45a8eec87bd0f6366af6c6dc25c73adb557b74dede7ec0da1d6",
+      "receipt_hash": "sha256:3791e172e6633f6730be218b8ce12a0d6e426f4b987987e654673e6d2b77500e",
+      "created_at": "2026-05-05T11:20:00Z",
+      "detail_level": "standard"
+    },
+    "public_forgotten_in_included": false,
+    "public_forgotten_in_marked": false,
+    "public_deny_reason": "forgotten_excluded_outside_audit_review",
+    "audit_served_pack": {
+      "recall_pack_id": "rpack_0979c9da064d",
+      "recall_request_id": "rreq_dixie-forgotten-marked-audit",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "included": [
+        {
+          "assertion_id": "asrt_8424e448d5c5",
+          "assertion_class": "observation",
+          "status": "active",
+          "summary": "Dixie-handoff: active companion Dixie may include in public_discord.",
+          "body_ref": "assertion:asrt_8424e448d5c5",
+          "provenance_refs": [
+            "prov:fixture-default"
+          ],
+          "use_instruction": "usable"
+        }
+      ],
+      "marked": [
+        {
+          "assertion_id": "asrt_c4921e52c155",
+          "assertion_class": "observation",
+          "status": "forgotten_from_recall",
+          "summary": "Dixie-handoff: a forgotten observation Dixie must exclude from ordinary recall.",
+          "body_ref": "assertion:asrt_c4921e52c155",
+          "provenance_refs": [
+            "prov:fixture-default"
+          ],
+          "use_instruction": "do_not_use_for_action"
+        }
+      ],
+      "redacted": [],
+      "excluded_summary": [],
+      "policy_decision": {
+        "decision": "allow",
+        "policy_id": "straylight.default-agent-estate.v0",
+        "policy_version": "0.1.0",
+        "signer_competence_result": {
+          "allowed": true,
+          "reason": "competent_signer_present",
+          "matched_rule_id": "rule:recall-default",
+          "signer_id": "reviewer:dixie",
+          "signer_role": "reviewer",
+          "signature_id": "sig_cd9639e2c26e",
+          "competent_signer_ids": [
+            "reviewer:dixie"
+          ],
+          "quorum_required": 1,
+          "quorum_present": 1,
+          "requires_review": false
+        },
+        "reasons": [
+          "signer_reviewer_competent_for_recall_audit_review"
+        ],
+        "decided_at": "2026-05-05T11:25:00Z"
+      },
+      "receipt_id": "rcpt_d2bdf5539c3d",
+      "pack_hash": "sha256:3077d5703d52ce2302d55f7ae83a356deca081bb1a9cc88a293fbd3360a8ca3f",
+      "created_at": "2026-05-05T11:25:00Z"
+    },
+    "audit_served_receipt": {
+      "receipt_id": "rcpt_d2bdf5539c3d",
+      "recall_request_id": "rreq_dixie-forgotten-marked-audit",
+      "recall_pack_id": "rpack_0979c9da064d",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "filters_applied": [
+        "environment_frame:audit_review",
+        "risk_profile:high",
+        "requested_classes:observation",
+        "mark_statuses:contested,demoted,revoked,forgotten_from_recall",
+        "include_statuses:active,contested,demoted,revoked,forgotten_from_recall"
+      ],
+      "included_assertion_ids": [
+        "asrt_8424e448d5c5"
+      ],
+      "marked_assertion_ids": [
+        "asrt_c4921e52c155"
+      ],
+      "redacted_count": 0,
+      "excluded_counts_by_reason": {},
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "requester_signature_ref": "sig_cd9639e2c26e",
+      "pack_hash": "sha256:3077d5703d52ce2302d55f7ae83a356deca081bb1a9cc88a293fbd3360a8ca3f",
+      "receipt_hash": "sha256:b2ab04bf4ff9959f49f206998b560039e90c4985380ca54d5dafe539d9862a29",
+      "created_at": "2026-05-05T11:25:00Z",
+      "detail_level": "debug"
+    },
+    "audit_forgotten_in_included_count": 0,
+    "audit_forgotten_in_marked_count": 1,
+    "audit_chain_event_types_for_forgotten": [
+      "assertion_admitted"
+    ],
+    "notes": "Forgotten material is excluded outside audit_review and rendered as marked in audit_review. The BFF MUST surface both halves consistently across the recall, status, and audit-chain views."
+  }
+}

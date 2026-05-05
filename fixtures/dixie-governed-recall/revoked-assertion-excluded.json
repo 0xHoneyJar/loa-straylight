@@ -1,0 +1,135 @@
+{
+  "case_name": "revoked_assertion_excluded",
+  "expected_allowed": false,
+  "reason": "Dixie's BFF surfaces the served pack with the revoked assertion excluded — dispositionFor refuses status: 'revoked' outside audit_review. The revoked assertion is NOT in included, NOT in marked; the BFF surfaces excluded_summary with reason revoked_excluded_outside_audit_review. The audit chain still shows the revocation; revocation is not erasure.",
+  "input": {
+    "bff_route": "GET /recall/:request_id",
+    "recall_request_id": "rreq_dixie-revoked-excluded",
+    "environment_frame": "public_discord",
+    "seeded_revoked_assertion": {
+      "assertion_id": "asrt_bd6c8936f2e0",
+      "estate_id": "estate:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "assertion_class": "observation",
+      "status": "revoked",
+      "body": {
+        "text": "Dixie-handoff: a revoked observation Dixie must exclude from public_discord."
+      },
+      "body_hash": "sha256:2a111c0b742d9c655dead8037cf0f202ad728d2354ac9efb109b5ddfe7cb89e2",
+      "schema_version": "0.1.0",
+      "provenance": [
+        {
+          "provenance_id": "prov:fixture-default",
+          "source_type": "operator_input",
+          "observed_at": "2026-05-05T11:00:00Z",
+          "captured_by": "operator:eileen",
+          "evidence_summary": "fixture default operator-input provenance"
+        }
+      ],
+      "privacy_scope": "public",
+      "risk_level": "low",
+      "signatures": [
+        {
+          "signature_id": "sig_fda847303f1d",
+          "signer_id": "operator:eileen",
+          "signer_type": "operator",
+          "signature_type": "dev_signature",
+          "signed_payload_hash": "sha256:249af7d96bd6ea6c2b8ad0934d546c4176786a9cf61081b6d73c7f0021f3e0d0",
+          "signature": "dev:f27fbb7214d26d4d7dcc943f9b8569b269367f0999a7aa11124f3e39a9cc01ca",
+          "signed_at": "2026-05-05T10:15:00Z",
+          "key_ref": "dev-key:operator:eileen"
+        }
+      ],
+      "created_at": "2026-05-05T10:15:00Z",
+      "updated_at": "2026-05-05T10:15:00Z"
+    },
+    "now": "2026-05-05T11:15:00Z"
+  },
+  "expected_output": {
+    "served_pack": {
+      "recall_pack_id": "rpack_09819edeec3e",
+      "recall_request_id": "rreq_dixie-revoked-excluded",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "included": [
+        {
+          "assertion_id": "asrt_eaf2eff4a1f1",
+          "assertion_class": "observation",
+          "status": "active",
+          "summary": "Dixie-handoff: active companion Dixie may include.",
+          "body_ref": "assertion:asrt_eaf2eff4a1f1",
+          "provenance_refs": [
+            "prov:fixture-default"
+          ],
+          "use_instruction": "usable"
+        }
+      ],
+      "marked": [],
+      "redacted": [],
+      "excluded_summary": [
+        {
+          "reason": "status_revoked",
+          "count": 1
+        }
+      ],
+      "policy_decision": {
+        "decision": "allow",
+        "policy_id": "straylight.default-agent-estate.v0",
+        "policy_version": "0.1.0",
+        "signer_competence_result": {
+          "allowed": true,
+          "reason": "competent_signer_present",
+          "matched_rule_id": "rule:recall-default",
+          "signer_id": "operator:eileen",
+          "signer_role": "operator",
+          "signature_id": "sig_5039a8bac5a5",
+          "competent_signer_ids": [
+            "operator:eileen"
+          ],
+          "quorum_required": 1,
+          "quorum_present": 1,
+          "requires_review": false
+        },
+        "reasons": [
+          "signer_operator_competent_for_recall_public_discord"
+        ],
+        "decided_at": "2026-05-05T11:15:00Z"
+      },
+      "receipt_id": "rcpt_af31726f07bb",
+      "pack_hash": "sha256:27a99b149f49b544cc9809706897ceb0faed55cdecb16ca61bf2eb11e89b605d",
+      "created_at": "2026-05-05T11:15:00Z"
+    },
+    "served_receipt": {
+      "receipt_id": "rcpt_af31726f07bb",
+      "recall_request_id": "rreq_dixie-revoked-excluded",
+      "recall_pack_id": "rpack_09819edeec3e",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "filters_applied": [
+        "environment_frame:public_discord",
+        "risk_profile:medium",
+        "requested_classes:observation",
+        "exclude_statuses:revoked,forgotten_from_recall,sealed",
+        "mark_statuses:contested,demoted"
+      ],
+      "included_assertion_ids": [
+        "asrt_eaf2eff4a1f1"
+      ],
+      "marked_assertion_ids": [],
+      "redacted_count": 0,
+      "excluded_counts_by_reason": {
+        "status_revoked": 1
+      },
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "requester_signature_ref": "sig_5039a8bac5a5",
+      "pack_hash": "sha256:27a99b149f49b544cc9809706897ceb0faed55cdecb16ca61bf2eb11e89b605d",
+      "receipt_hash": "sha256:d0a4e48da7e7b530907c55a4137a947bb905030e2a92c11e7ab796690dff5713",
+      "created_at": "2026-05-05T11:15:00Z",
+      "detail_level": "standard"
+    },
+    "revoked_assertion_in_included": false,
+    "revoked_assertion_in_marked": false,
+    "deny_reason": "revoked_excluded_outside_audit_review",
+    "notes": "The BFF MUST NOT render a revoked assertion as usable in any frame other than audit_review. The revocation transition receipt remains in the audit chain so the BFF estate-summary view shows the revocation count."
+  }
+}
