@@ -1,0 +1,37 @@
+{
+  "assertion_id": "asrt_0cbf8876243f",
+  "estate_id": "estate:satoshi-demo",
+  "actor_id": "agent:satoshi-demo",
+  "assertion_class": "observation",
+  "status": "active",
+  "body": {
+    "text": "User asked the agent about its preferred answer style."
+  },
+  "body_hash": "sha256:c094b9e999cb5e3740ceaf48c4a5054d29e331bf655a8e0bac982cc891024013",
+  "schema_version": "0.1.0",
+  "provenance": [
+    {
+      "provenance_id": "prov:fixture-default",
+      "source_type": "operator_input",
+      "observed_at": "2026-05-05T11:00:00Z",
+      "captured_by": "operator:eileen",
+      "evidence_summary": "fixture default operator-input provenance"
+    }
+  ],
+  "privacy_scope": "public",
+  "risk_level": "low",
+  "signatures": [
+    {
+      "signature_id": "sig_f9b9e7e16e60",
+      "signer_id": "runtime:finn",
+      "signer_type": "runtime",
+      "signature_type": "dev_signature",
+      "signed_payload_hash": "sha256:2424dcf8b2085ef2b6ebeab8de543e9ed22998ac068e5fcfe750d3ef3352c0d6",
+      "signature": "dev:370ed06d91f91a09b888127a06549d03bfba0351a0c7ce62c4a3549c7efdd984",
+      "signed_at": "2026-05-05T10:00:00Z",
+      "key_ref": "dev-key:runtime:finn"
+    }
+  ],
+  "created_at": "2026-05-05T10:00:00Z",
+  "updated_at": "2026-05-05T10:00:00Z"
+}

@@ -1,0 +1,25 @@
+{
+  "commitment_id": "cmt_5ff93e9547c2",
+  "actor_id": "agent:satoshi-demo",
+  "estate_id": "estate:satoshi-demo",
+  "commitment_type": "recall_receipt",
+  "root_hash": "sha256:f0b6aa0ec8ce0cc2e7dcf87dca96a44d232fe0c29b1d2699e9688777561e71b5",
+  "included_refs": [
+    "rcpt_10b96ce672eb",
+    "rpack_f4d2fc94e79b",
+    "rreq_public-discord-answer-about-the--2026-05-05T12:30:00Z"
+  ],
+  "schema_version": "0.1.0",
+  "created_by": "operator:eileen",
+  "signature": {
+    "signature_id": "sig_a40a098b7f41",
+    "signer_id": "operator:eileen",
+    "signer_type": "operator",
+    "signature_type": "dev_signature",
+    "signed_payload_hash": "sha256:9ae50564b221cdfd044eea12482f96605a82926cd4d4703516a91260d7445fce",
+    "signature": "dev:f20071bbc78aa310b61029291b70977016d6dc0c4f24fceeb667fbb7638ea821",
+    "signed_at": "2026-05-05T13:00:00Z",
+    "key_ref": "dev-key:operator:eileen"
+  },
+  "created_at": "2026-05-05T13:00:00Z"
+}

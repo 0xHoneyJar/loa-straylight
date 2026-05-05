@@ -1,0 +1,40 @@
+{
+  "assertion_id": "asrt_75c575485990",
+  "estate_id": "estate:satoshi-demo",
+  "actor_id": "agent:satoshi-demo",
+  "assertion_class": "reflection",
+  "status": "contested",
+  "body": {
+    "text": "Single weak observation may not justify treating user as untrustworthy."
+  },
+  "body_hash": "sha256:35e268fcfbb09d991855f663195d48230e47bf44678da1c39423db1814356c52",
+  "schema_version": "0.1.0",
+  "provenance": [
+    {
+      "provenance_id": "prov:fixture-default",
+      "source_type": "operator_input",
+      "observed_at": "2026-05-05T11:00:00Z",
+      "captured_by": "operator:eileen",
+      "evidence_summary": "fixture default operator-input provenance"
+    }
+  ],
+  "privacy_scope": "tenant",
+  "risk_level": "medium",
+  "signatures": [
+    {
+      "signature_id": "sig_87bb28448101",
+      "signer_id": "runtime:finn",
+      "signer_type": "runtime",
+      "signature_type": "dev_signature",
+      "signed_payload_hash": "sha256:bbe596bdf96bb4b6577b3a85568b7ddc403375e8ecc86c99585c5ae5a0fceabe",
+      "signature": "dev:8f836b6aba9515e4f9bd68b79a9fa9fbecb3f27d9a5322146cf3d6c72fd4cb8b",
+      "signed_at": "2026-05-05T10:10:00Z",
+      "key_ref": "dev-key:runtime:finn"
+    }
+  ],
+  "created_at": "2026-05-05T10:10:00Z",
+  "updated_at": "2026-05-05T11:00:00Z",
+  "challenged_by_refs": [
+    "chal_c4487c2a7f65"
+  ]
+}

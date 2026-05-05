@@ -1,0 +1,38 @@
+{
+  "assertion_id": "asrt_d411f71192ea",
+  "estate_id": "estate:satoshi-demo",
+  "actor_id": "agent:satoshi-demo",
+  "assertion_class": "preference",
+  "status": "revoked",
+  "body": {
+    "text": "Stale preference scheduled to be revoked."
+  },
+  "body_hash": "sha256:fc754fd643c7730c053971784b6cf72fa837591161186e0330aa1604d14a8e1e",
+  "schema_version": "0.1.0",
+  "provenance": [
+    {
+      "provenance_id": "prov:fixture-default",
+      "source_type": "operator_input",
+      "observed_at": "2026-05-05T11:00:00Z",
+      "captured_by": "operator:eileen",
+      "evidence_summary": "fixture default operator-input provenance"
+    }
+  ],
+  "privacy_scope": "public",
+  "risk_level": "low",
+  "signatures": [
+    {
+      "signature_id": "sig_1d885c98c53f",
+      "signer_id": "operator:eileen",
+      "signer_type": "operator",
+      "signature_type": "dev_signature",
+      "signed_payload_hash": "sha256:e7f3837270fbce19c0453835a39d57b13d3bc7a899da4eed18958a9abafc37b5",
+      "signature": "dev:1f6938d943efd5f00ba169d2acac231b6e4a7b777f5fb63e7962e1b4c955def9",
+      "signed_at": "2026-05-05T10:20:00Z",
+      "key_ref": "dev-key:operator:eileen"
+    }
+  ],
+  "created_at": "2026-05-05T10:20:00Z",
+  "updated_at": "2026-05-05T11:30:00Z",
+  "revoked_by_ref": "rvk_30547d02bd48"
+}

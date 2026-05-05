@@ -1,0 +1,58 @@
+{
+  "recall_pack_id": "rpack_f4d2fc94e79b",
+  "recall_request_id": "rreq_public-discord-answer-about-the--2026-05-05T12:30:00Z",
+  "actor_id": "agent:satoshi-demo",
+  "estate_id": "estate:satoshi-demo",
+  "included": [
+    {
+      "assertion_id": "asrt_0cbf8876243f",
+      "assertion_class": "observation",
+      "status": "active",
+      "summary": "User asked the agent about its preferred answer style.",
+      "body_ref": "assertion:asrt_0cbf8876243f",
+      "provenance_refs": [
+        "prov:fixture-default"
+      ],
+      "use_instruction": "usable"
+    }
+  ],
+  "marked": [],
+  "redacted": [
+    {
+      "reason": "privacy_tenant_in_public_frame",
+      "count": 1
+    }
+  ],
+  "excluded_summary": [
+    {
+      "reason": "status_revoked",
+      "count": 1
+    }
+  ],
+  "policy_decision": {
+    "decision": "allow",
+    "policy_id": "straylight.default-agent-estate.v0",
+    "policy_version": "0.1.0",
+    "signer_competence_result": {
+      "allowed": true,
+      "reason": "competent_signer_present",
+      "matched_rule_id": "rule:recall-default",
+      "signer_id": "operator:eileen",
+      "signer_role": "operator",
+      "signature_id": "sig_886a541ab165",
+      "competent_signer_ids": [
+        "operator:eileen"
+      ],
+      "quorum_required": 1,
+      "quorum_present": 1,
+      "requires_review": false
+    },
+    "reasons": [
+      "signer_operator_competent_for_recall_public_discord"
+    ],
+    "decided_at": "2026-05-05T12:30:00Z"
+  },
+  "receipt_id": "rcpt_10b96ce672eb",
+  "pack_hash": "sha256:8bccdaf8a4e055eeb87ae7ad5ea79adf89d2bc6b102eec37cd6aca8e0b965f2c",
+  "created_at": "2026-05-05T12:30:00Z"
+}

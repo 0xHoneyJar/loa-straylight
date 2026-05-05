@@ -1,0 +1,28 @@
+{
+  "receipt_id": "rcpt_10b96ce672eb",
+  "recall_request_id": "rreq_public-discord-answer-about-the--2026-05-05T12:30:00Z",
+  "recall_pack_id": "rpack_f4d2fc94e79b",
+  "actor_id": "agent:satoshi-demo",
+  "estate_id": "estate:satoshi-demo",
+  "filters_applied": [
+    "environment_frame:public_discord",
+    "risk_profile:medium",
+    "requested_classes:observation,preference,reflection",
+    "exclude_statuses:revoked,forgotten_from_recall,sealed",
+    "mark_statuses:contested,demoted"
+  ],
+  "included_assertion_ids": [
+    "asrt_0cbf8876243f"
+  ],
+  "marked_assertion_ids": [],
+  "redacted_count": 1,
+  "excluded_counts_by_reason": {
+    "status_revoked": 1
+  },
+  "policy_decision_ref": "straylight.default-agent-estate.v0",
+  "requester_signature_ref": "sig_886a541ab165",
+  "pack_hash": "sha256:8bccdaf8a4e055eeb87ae7ad5ea79adf89d2bc6b102eec37cd6aca8e0b965f2c",
+  "receipt_hash": "sha256:0a6ed5f83c02e22afe2d234b6984a9e5d3478a2503b201592f66fb3d61a5a302",
+  "created_at": "2026-05-05T12:30:00Z",
+  "detail_level": "standard"
+}

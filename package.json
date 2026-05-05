@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "demo:recall": "vite-node scripts/demo-recall-wedge.ts",
-    "demo:recall:json": "vite-node scripts/demo-recall-wedge.ts -- --json --out=.run/recall-demo.json"
+    "demo:recall:json": "vite-node scripts/demo-recall-wedge.ts -- --json --out=.run/recall-demo.json",
+    "schema:candidates": "vite-node scripts/export-schema-candidates.ts"
   },
   "engines": {
     "node": ">=20"
