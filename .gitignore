@@ -162,3 +162,7 @@ node_modules/
 dist/
 coverage/
 .vitest/
+
+# Local Loa / Claude runtime artifacts
+.run/
+grimoires/loa/analytics/
