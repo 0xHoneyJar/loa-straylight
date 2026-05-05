@@ -1,0 +1,159 @@
+{
+  "case_name": "allowed_recall_contested_marked",
+  "expected_allowed": true,
+  "reason": "executeRecall returns the contested assertion in `marked`, never `included`. dispositionFor returns 'mark' for status: 'contested' regardless of whether mark_statuses lists it; useInstructionForMark maps the mark to 'mark_as_contested'. The pack's `included` does NOT contain the contested item. Finn's runtime gate MUST preserve this marking.",
+  "input": {
+    "gate": "recall_request",
+    "request": {
+      "recall_request_id": "rreq_finn-contested-marked",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "requested_by": "operator:eileen",
+      "task": "finn-handoff: public_discord recall, contested must be marked",
+      "environment_frame": "public_discord",
+      "risk_profile": "medium",
+      "requested_classes": [
+        "observation"
+      ],
+      "mark_statuses": [
+        "contested",
+        "demoted"
+      ],
+      "exclude_statuses": [
+        "revoked",
+        "forgotten_from_recall",
+        "sealed"
+      ],
+      "include_receipt_detail": "standard",
+      "include_provenance": true,
+      "signature": {
+        "signature_id": "sig_6c7a3f02f933",
+        "signer_id": "operator:eileen",
+        "signer_type": "operator",
+        "signature_type": "dev_signature",
+        "signed_payload_hash": "sha256:a0eb853a37030b3cff50e04f4289e4e35c19fa87cca04fa0ee30f97e7c045da6",
+        "signature": "dev:99339a6a0895153d72fa13c173deae29cebcf7df9cba762c16c1041c6a911454",
+        "signed_at": "2026-05-05T11:05:00Z",
+        "key_ref": "dev-key:operator:eileen"
+      },
+      "created_at": "2026-05-05T11:05:00Z"
+    },
+    "seeded_contested_assertion": {
+      "assertion_id": "asrt_aa23446e8093",
+      "estate_id": "estate:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "assertion_class": "observation",
+      "status": "contested",
+      "body": {
+        "text": "Finn-handoff: a contested observation Finn must surface as marked, never usable."
+      },
+      "body_hash": "sha256:e4d7725956225c2ad4b98d48e26bf958c2140a4fb0003fc01457e5f4d6016e60",
+      "schema_version": "0.1.0",
+      "provenance": [
+        {
+          "provenance_id": "prov:fixture-default",
+          "source_type": "operator_input",
+          "observed_at": "2026-05-05T11:00:00Z",
+          "captured_by": "operator:eileen",
+          "evidence_summary": "fixture default operator-input provenance"
+        }
+      ],
+      "privacy_scope": "public",
+      "risk_level": "low",
+      "signatures": [
+        {
+          "signature_id": "sig_4d09f8d7cc8e",
+          "signer_id": "operator:eileen",
+          "signer_type": "operator",
+          "signature_type": "dev_signature",
+          "signed_payload_hash": "sha256:e8930618fce58ff6ee95e98c5a74f59ec40489b25f15d30a76d8465906402f9c",
+          "signature": "dev:432542c7fbc45764c1bdd7ab00a9c19076558508425984cc9693a67eb375d9d8",
+          "signed_at": "2026-05-05T10:25:00Z",
+          "key_ref": "dev-key:operator:eileen"
+        }
+      ],
+      "created_at": "2026-05-05T10:25:00Z",
+      "updated_at": "2026-05-05T10:25:00Z"
+    },
+    "now": "2026-05-05T11:05:00Z"
+  },
+  "expected_output": {
+    "served_pack": {
+      "recall_pack_id": "rpack_7085f01c2935",
+      "recall_request_id": "rreq_finn-contested-marked",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "included": [],
+      "marked": [
+        {
+          "assertion_id": "asrt_aa23446e8093",
+          "assertion_class": "observation",
+          "status": "contested",
+          "summary": "Finn-handoff: a contested observation Finn must surface as marked, never usable.",
+          "body_ref": "assertion:asrt_aa23446e8093",
+          "provenance_refs": [
+            "prov:fixture-default"
+          ],
+          "use_instruction": "mark_as_contested"
+        }
+      ],
+      "redacted": [],
+      "excluded_summary": [],
+      "policy_decision": {
+        "decision": "allow",
+        "policy_id": "straylight.default-agent-estate.v0",
+        "policy_version": "0.1.0",
+        "signer_competence_result": {
+          "allowed": true,
+          "reason": "competent_signer_present",
+          "matched_rule_id": "rule:recall-default",
+          "signer_id": "operator:eileen",
+          "signer_role": "operator",
+          "signature_id": "sig_6c7a3f02f933",
+          "competent_signer_ids": [
+            "operator:eileen"
+          ],
+          "quorum_required": 1,
+          "quorum_present": 1,
+          "requires_review": false
+        },
+        "reasons": [
+          "signer_operator_competent_for_recall_public_discord"
+        ],
+        "decided_at": "2026-05-05T11:05:00Z"
+      },
+      "receipt_id": "rcpt_b769d01282df",
+      "pack_hash": "sha256:2ae83e8432237b89593163f2bf1faf6130d70181ece2d460e64c1a5e1cb5d117",
+      "created_at": "2026-05-05T11:05:00Z"
+    },
+    "served_receipt": {
+      "receipt_id": "rcpt_b769d01282df",
+      "recall_request_id": "rreq_finn-contested-marked",
+      "recall_pack_id": "rpack_7085f01c2935",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "filters_applied": [
+        "environment_frame:public_discord",
+        "risk_profile:medium",
+        "requested_classes:observation",
+        "exclude_statuses:revoked,forgotten_from_recall,sealed",
+        "mark_statuses:contested,demoted"
+      ],
+      "included_assertion_ids": [],
+      "marked_assertion_ids": [
+        "asrt_aa23446e8093"
+      ],
+      "redacted_count": 0,
+      "excluded_counts_by_reason": {},
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "requester_signature_ref": "sig_6c7a3f02f933",
+      "pack_hash": "sha256:2ae83e8432237b89593163f2bf1faf6130d70181ece2d460e64c1a5e1cb5d117",
+      "receipt_hash": "sha256:df88855576c313a49ce77169d80ff56ec9d746e2b1975ff9a0ea5fc2a1a4ad06",
+      "created_at": "2026-05-05T11:05:00Z",
+      "detail_level": "standard"
+    },
+    "contested_in_marked_count": 1,
+    "contested_in_included_count": 0,
+    "notes": "A contested assertion is ALWAYS marked, never silently included. The marked item carries use_instruction = mark_as_contested. Finn MUST treat the marked discipline as binding: marked items are never tool inputs."
+  }
+}

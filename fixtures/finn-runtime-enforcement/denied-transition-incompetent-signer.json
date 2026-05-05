@@ -1,0 +1,63 @@
+{
+  "case_name": "denied_transition_incompetent_signer",
+  "expected_allowed": false,
+  "reason": "policyForAdmitAssertion returns decision: 'deny' for a runtime trying to admit `identity`. The signature envelope is self-consistent — the runtime really did sign the payload — but the runtime role is not in rule:admit-identity-reviewer-only's required_signer_roles. evaluateCompetence returns allowed: false, signer_role_forbidden:<role>. This is the load-bearing pin against the 'valid signature is signer competence' conflation.",
+  "input": {
+    "gate": "admit_assertion",
+    "candidate": {
+      "estate_id": "estate:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "assertion_class": "identity",
+      "body": {
+        "attribute": "role",
+        "value": "finn-handoff demo agent"
+      },
+      "schema_version": "0.1.0",
+      "provenance": [
+        {
+          "provenance_id": "prov:fixture-default",
+          "source_type": "operator_input",
+          "observed_at": "2026-05-05T11:00:00Z",
+          "captured_by": "operator:eileen",
+          "evidence_summary": "fixture default operator-input provenance"
+        }
+      ],
+      "privacy_scope": "tenant",
+      "risk_level": "high",
+      "signatures": [
+        {
+          "signature_id": "sig_8fdc488c4fc5",
+          "signer_id": "runtime:finn",
+          "signer_type": "runtime",
+          "signature_type": "dev_signature",
+          "signed_payload_hash": "sha256:d16bb2b7bcfda7cdb2530a5dd5c0b48eff796af09b7d425ead3dbb171ce84e31",
+          "signature": "dev:5d8ae9edf6f77aef2645e831dac332a63ccd58229b064deacdc50a6889a9a24e",
+          "signed_at": "2026-05-05T10:10:00Z",
+          "key_ref": "dev-key:runtime:finn"
+        }
+      ]
+    },
+    "keyring_id": "keyring:satoshi-demo",
+    "now": "2026-05-05T10:10:00Z"
+  },
+  "expected_output": {
+    "decision": "deny",
+    "policy_decision": {
+      "decision": "deny",
+      "policy_id": "straylight.default-agent-estate.v0",
+      "policy_version": "0.1.0",
+      "signer_competence_result": {
+        "allowed": false,
+        "reason": "signer_role_forbidden:runtime",
+        "matched_rule_id": "rule:admit-identity-reviewer-only"
+      },
+      "reasons": [
+        "competence:signer_role_forbidden:runtime"
+      ],
+      "decided_at": "2026-05-05T10:10:00Z"
+    },
+    "deny_reason": "signer_role_forbidden_or_not_required",
+    "emitted_audit_event_type": "transition_denied",
+    "notes": "A signature whose envelope is self-consistent does NOT imply signer competence. Finn MUST run evaluateCompetence even after verifyEnvelopeSelfConsistency returns true."
+  }
+}

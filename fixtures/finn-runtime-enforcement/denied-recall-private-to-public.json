@@ -1,0 +1,167 @@
+{
+  "case_name": "denied_recall_private_to_public",
+  "expected_allowed": false,
+  "reason": "executeRecall in environment_frame: 'public_discord' applies privacyDispositionForFrame, which excludes assertions with privacy_scope: 'actor_private' from public frames. The private assertion is NOT in the served pack's `included` and NOT in `marked`; it appears only in the exclusion summary. Finn's runtime gate MUST preserve this exclusion.",
+  "input": {
+    "gate": "recall_request",
+    "request": {
+      "recall_request_id": "rreq_finn-private-to-public-exclusion",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "requested_by": "operator:eileen",
+      "task": "finn-handoff: public_discord recall, must exclude private",
+      "environment_frame": "public_discord",
+      "risk_profile": "medium",
+      "requested_classes": [
+        "observation"
+      ],
+      "mark_statuses": [
+        "contested",
+        "demoted"
+      ],
+      "exclude_statuses": [
+        "revoked",
+        "forgotten_from_recall",
+        "sealed"
+      ],
+      "include_receipt_detail": "standard",
+      "include_provenance": true,
+      "signature": {
+        "signature_id": "sig_0329222d147f",
+        "signer_id": "operator:eileen",
+        "signer_type": "operator",
+        "signature_type": "dev_signature",
+        "signed_payload_hash": "sha256:2c3269c9f33498e163a8fa6b3bd4beceb52f2f71b3c458dfedfd10ff7e46fabc",
+        "signature": "dev:7200617ec49f649e0ce59a283422d335d6771a485db8dae6048bd23da9117cbc",
+        "signed_at": "2026-05-05T11:10:00Z",
+        "key_ref": "dev-key:operator:eileen"
+      },
+      "created_at": "2026-05-05T11:10:00Z"
+    },
+    "seeded_private_assertion": {
+      "assertion_id": "asrt_e1cf32191ef1",
+      "estate_id": "estate:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "assertion_class": "observation",
+      "status": "active",
+      "body": {
+        "text": "Finn-handoff: a private observation Finn must NOT leak to public_discord."
+      },
+      "body_hash": "sha256:6c4db96143611114ac786fe64c3406c3ec4245b199a7366796e98ab1fbbf4456",
+      "schema_version": "0.1.0",
+      "provenance": [
+        {
+          "provenance_id": "prov:fixture-default",
+          "source_type": "operator_input",
+          "observed_at": "2026-05-05T11:00:00Z",
+          "captured_by": "operator:eileen",
+          "evidence_summary": "fixture default operator-input provenance"
+        }
+      ],
+      "privacy_scope": "actor_private",
+      "risk_level": "medium",
+      "signatures": [
+        {
+          "signature_id": "sig_1b6448641a4d",
+          "signer_id": "operator:eileen",
+          "signer_type": "operator",
+          "signature_type": "dev_signature",
+          "signed_payload_hash": "sha256:4a6e226569630d6b8af3cddc8b47485126a377031691864fc1db2454b21f62aa",
+          "signature": "dev:e3f696ff00c2531c00aba508d1712e74ceb2fbf5656cf86c8ddc9a7dfa41a3a3",
+          "signed_at": "2026-05-05T10:15:00Z",
+          "key_ref": "dev-key:operator:eileen"
+        }
+      ],
+      "created_at": "2026-05-05T10:15:00Z",
+      "updated_at": "2026-05-05T10:15:00Z"
+    },
+    "now": "2026-05-05T11:10:00Z"
+  },
+  "expected_output": {
+    "served_pack": {
+      "recall_pack_id": "rpack_03d8c26ec0c0",
+      "recall_request_id": "rreq_finn-private-to-public-exclusion",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "included": [
+        {
+          "assertion_id": "asrt_faf4cf5b3374",
+          "assertion_class": "observation",
+          "status": "active",
+          "summary": "Finn-handoff: public counterpart Finn may include.",
+          "body_ref": "assertion:asrt_faf4cf5b3374",
+          "provenance_refs": [
+            "prov:fixture-default"
+          ],
+          "use_instruction": "usable"
+        }
+      ],
+      "marked": [],
+      "redacted": [],
+      "excluded_summary": [
+        {
+          "reason": "privacy_actor_private_in_public_frame",
+          "count": 1
+        }
+      ],
+      "policy_decision": {
+        "decision": "allow",
+        "policy_id": "straylight.default-agent-estate.v0",
+        "policy_version": "0.1.0",
+        "signer_competence_result": {
+          "allowed": true,
+          "reason": "competent_signer_present",
+          "matched_rule_id": "rule:recall-default",
+          "signer_id": "operator:eileen",
+          "signer_role": "operator",
+          "signature_id": "sig_0329222d147f",
+          "competent_signer_ids": [
+            "operator:eileen"
+          ],
+          "quorum_required": 1,
+          "quorum_present": 1,
+          "requires_review": false
+        },
+        "reasons": [
+          "signer_operator_competent_for_recall_public_discord"
+        ],
+        "decided_at": "2026-05-05T11:10:00Z"
+      },
+      "receipt_id": "rcpt_626c0a3a1984",
+      "pack_hash": "sha256:268a99b0a0b8fdff2645337d5c15e0db7a61e82e5cab88eb0e71d12ab23c694d",
+      "created_at": "2026-05-05T11:10:00Z"
+    },
+    "served_receipt": {
+      "receipt_id": "rcpt_626c0a3a1984",
+      "recall_request_id": "rreq_finn-private-to-public-exclusion",
+      "recall_pack_id": "rpack_03d8c26ec0c0",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "filters_applied": [
+        "environment_frame:public_discord",
+        "risk_profile:medium",
+        "requested_classes:observation",
+        "exclude_statuses:revoked,forgotten_from_recall,sealed",
+        "mark_statuses:contested,demoted"
+      ],
+      "included_assertion_ids": [
+        "asrt_faf4cf5b3374"
+      ],
+      "marked_assertion_ids": [],
+      "redacted_count": 0,
+      "excluded_counts_by_reason": {
+        "privacy_actor_private_in_public_frame": 1
+      },
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "requester_signature_ref": "sig_0329222d147f",
+      "pack_hash": "sha256:268a99b0a0b8fdff2645337d5c15e0db7a61e82e5cab88eb0e71d12ab23c694d",
+      "receipt_hash": "sha256:7232cca783a436e0f1dbe3737ff7e6fb27b05d1246d4efee5ad78148c6b15398",
+      "created_at": "2026-05-05T11:10:00Z",
+      "detail_level": "standard"
+    },
+    "private_assertion_in_included": false,
+    "private_assertion_in_marked": false,
+    "deny_reason": "private_excluded_from_public_frame",
+    "notes": "The recall succeeds (with the private item excluded). Finn MUST NOT include actor_private or sealed material in any frame other than audit_review. This fixture demonstrates the exclusion summary path."
+  }
+}

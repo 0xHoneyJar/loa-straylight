@@ -1,0 +1,105 @@
+{
+  "case_name": "allowed_transition_admit_observation",
+  "expected_allowed": true,
+  "reason": "Finn's runtime gate runs class validation, then policyForAdmitAssertion, then evaluateCompetence. The runtime signer is on the keyring with status 'active' and the runtime role is in rule:admit-observation-runtime's required_signer_roles. The candidate class-validates. Decision: allow.",
+  "input": {
+    "gate": "admit_assertion",
+    "candidate": {
+      "estate_id": "estate:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "assertion_class": "observation",
+      "body": {
+        "text": "Finn-handoff: a runtime-signed observation Finn should admit."
+      },
+      "schema_version": "0.1.0",
+      "provenance": [
+        {
+          "provenance_id": "prov:fixture-default",
+          "source_type": "operator_input",
+          "observed_at": "2026-05-05T11:00:00Z",
+          "captured_by": "operator:eileen",
+          "evidence_summary": "fixture default operator-input provenance"
+        }
+      ],
+      "privacy_scope": "public",
+      "risk_level": "low",
+      "signatures": [
+        {
+          "signature_id": "sig_3f6c2125d7cc",
+          "signer_id": "runtime:finn",
+          "signer_type": "runtime",
+          "signature_type": "dev_signature",
+          "signed_payload_hash": "sha256:c4b77333e73bcd6dbfe3db1e6f6dbebd99a78e3a5b4f12029840a9df6ce6bbbb",
+          "signature": "dev:8186e85beccd8e68654105d205f3b1cde1e099b4ddee58ea674b98a2beaf137a",
+          "signed_at": "2026-05-05T10:00:00Z",
+          "key_ref": "dev-key:runtime:finn"
+        }
+      ]
+    },
+    "keyring_id": "keyring:satoshi-demo",
+    "now": "2026-05-05T10:00:00Z"
+  },
+  "expected_output": {
+    "decision": "allow",
+    "admitted_assertion": {
+      "assertion_id": "asrt_d8168d504959",
+      "estate_id": "estate:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "assertion_class": "observation",
+      "status": "active",
+      "body": {
+        "text": "Finn-handoff: a runtime-signed observation Finn should admit."
+      },
+      "body_hash": "sha256:0d2ce5e85fde3e698c4f76bcd04b385fb26190ef30d165f166d8ca1f5ecb56ac",
+      "schema_version": "0.1.0",
+      "provenance": [
+        {
+          "provenance_id": "prov:fixture-default",
+          "source_type": "operator_input",
+          "observed_at": "2026-05-05T11:00:00Z",
+          "captured_by": "operator:eileen",
+          "evidence_summary": "fixture default operator-input provenance"
+        }
+      ],
+      "privacy_scope": "public",
+      "risk_level": "low",
+      "signatures": [
+        {
+          "signature_id": "sig_3f6c2125d7cc",
+          "signer_id": "runtime:finn",
+          "signer_type": "runtime",
+          "signature_type": "dev_signature",
+          "signed_payload_hash": "sha256:c4b77333e73bcd6dbfe3db1e6f6dbebd99a78e3a5b4f12029840a9df6ce6bbbb",
+          "signature": "dev:8186e85beccd8e68654105d205f3b1cde1e099b4ddee58ea674b98a2beaf137a",
+          "signed_at": "2026-05-05T10:00:00Z",
+          "key_ref": "dev-key:runtime:finn"
+        }
+      ],
+      "created_at": "2026-05-05T10:00:00Z",
+      "updated_at": "2026-05-05T10:00:00Z"
+    },
+    "audit_event": {
+      "audit_event_id": "aud_f3dfda1161ef",
+      "event_type": "assertion_admitted",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "transition_id": "trn_4e97327c2fee",
+      "assertion_refs": [
+        "asrt_d8168d504959"
+      ],
+      "result_hash": "sha256:0d2ce5e85fde3e698c4f76bcd04b385fb26190ef30d165f166d8ca1f5ecb56ac",
+      "signer_refs": [
+        "runtime:finn"
+      ],
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "audit_hash": "sha256:9a825ffd5f6d1f8a8d4852c09f253ab700ad04c121cd9e5aa7c6b3344e0f7e00",
+      "created_at": "2026-05-05T10:00:00Z",
+      "payload": {
+        "class": "observation",
+        "status": "active"
+      }
+    },
+    "receipt_required": false,
+    "notes": "On admit success, the runtime gate emits an `admission` TransitionReceipt and an `assertion_admitted` AuditEvent. The fixture pins both so PR-A can compare its runtime output against the wedge."
+  }
+}

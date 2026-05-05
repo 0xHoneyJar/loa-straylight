@@ -1,0 +1,122 @@
+{
+  "case_name": "audit_receipt_required",
+  "expected_allowed": true,
+  "reason": "Every served recall MUST emit a RecallReceipt. The receipt's pack_hash matches the served pack and the receipt_hash is content-addressed. detail_level (minimal / standard / debug) is applied AFTER pack assembly. A pack served without a persisted receipt is a runtime bug.",
+  "input": {
+    "gate": "recall_request",
+    "request": {
+      "recall_request_id": "rreq_finn-audit-receipt-required",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "requested_by": "operator:eileen",
+      "task": "finn-handoff: receipt is mandatory on every served pack",
+      "environment_frame": "public_discord",
+      "risk_profile": "medium",
+      "requested_classes": [
+        "observation"
+      ],
+      "mark_statuses": [
+        "contested",
+        "demoted"
+      ],
+      "exclude_statuses": [
+        "revoked",
+        "forgotten_from_recall",
+        "sealed"
+      ],
+      "include_receipt_detail": "standard",
+      "include_provenance": true,
+      "signature": {
+        "signature_id": "sig_6ec8287dce08",
+        "signer_id": "operator:eileen",
+        "signer_type": "operator",
+        "signature_type": "dev_signature",
+        "signed_payload_hash": "sha256:61016620a6478adaf8749046827e9a67971fac629f4d2dc799dc9691f36440e1",
+        "signature": "dev:d0b9b374ea9d50ac64cc8be1146f411ec8036690e2ec76de480e811546e8bc87",
+        "signed_at": "2026-05-05T11:00:00Z",
+        "key_ref": "dev-key:operator:eileen"
+      },
+      "created_at": "2026-05-05T11:00:00Z"
+    },
+    "now": "2026-05-05T11:00:00Z"
+  },
+  "expected_output": {
+    "served_pack": {
+      "recall_pack_id": "rpack_c2a170c3f4f5",
+      "recall_request_id": "rreq_finn-audit-receipt-required",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "included": [
+        {
+          "assertion_id": "asrt_fe9ef72b184f",
+          "assertion_class": "observation",
+          "status": "active",
+          "summary": "Finn-handoff: receipt-required canonical observation.",
+          "body_ref": "assertion:asrt_fe9ef72b184f",
+          "provenance_refs": [
+            "prov:fixture-default"
+          ],
+          "use_instruction": "usable"
+        }
+      ],
+      "marked": [],
+      "redacted": [],
+      "excluded_summary": [],
+      "policy_decision": {
+        "decision": "allow",
+        "policy_id": "straylight.default-agent-estate.v0",
+        "policy_version": "0.1.0",
+        "signer_competence_result": {
+          "allowed": true,
+          "reason": "competent_signer_present",
+          "matched_rule_id": "rule:recall-default",
+          "signer_id": "operator:eileen",
+          "signer_role": "operator",
+          "signature_id": "sig_6ec8287dce08",
+          "competent_signer_ids": [
+            "operator:eileen"
+          ],
+          "quorum_required": 1,
+          "quorum_present": 1,
+          "requires_review": false
+        },
+        "reasons": [
+          "signer_operator_competent_for_recall_public_discord"
+        ],
+        "decided_at": "2026-05-05T11:00:00Z"
+      },
+      "receipt_id": "rcpt_7c9a7a74ac57",
+      "pack_hash": "sha256:d2e1a506b62ce96e5edf8c3937307a74189f7cc7c7f42b9e3ea0166967c36285",
+      "created_at": "2026-05-05T11:00:00Z"
+    },
+    "served_receipt": {
+      "receipt_id": "rcpt_7c9a7a74ac57",
+      "recall_request_id": "rreq_finn-audit-receipt-required",
+      "recall_pack_id": "rpack_c2a170c3f4f5",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "filters_applied": [
+        "environment_frame:public_discord",
+        "risk_profile:medium",
+        "requested_classes:observation",
+        "exclude_statuses:revoked,forgotten_from_recall,sealed",
+        "mark_statuses:contested,demoted"
+      ],
+      "included_assertion_ids": [
+        "asrt_fe9ef72b184f"
+      ],
+      "marked_assertion_ids": [],
+      "redacted_count": 0,
+      "excluded_counts_by_reason": {},
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "requester_signature_ref": "sig_6ec8287dce08",
+      "pack_hash": "sha256:d2e1a506b62ce96e5edf8c3937307a74189f7cc7c7f42b9e3ea0166967c36285",
+      "receipt_hash": "sha256:81e4aa893d9f5a633aded0f810d8b05719ea02e015a9dceb6325106d5d577a4a",
+      "created_at": "2026-05-05T11:00:00Z",
+      "detail_level": "standard"
+    },
+    "receipt_pack_hash_matches": true,
+    "receipt_required": true,
+    "notes": "Finn MUST persist the receipt durably and make it retrievable by receipt_id. detail_level (minimal/standard/debug) is applied after the pack is built so callers cannot probe via detail differences."
+  }
+}

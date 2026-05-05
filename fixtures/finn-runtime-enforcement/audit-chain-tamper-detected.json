@@ -1,0 +1,58 @@
+{
+  "case_name": "audit_chain_tamper_detected",
+  "expected_allowed": false,
+  "reason": "AuditLog.verifyChain walks the chain and recomputes each event's audit_hash over its content + the prior event's audit_hash. Mutating audit_hash to an all-zero digest breaks the link from that row forward. verifyChain returns { ok: false, broken_at, reason: 'previous_audit_hash_mismatch' } (or equivalent). Finn's runtime gate MUST treat a broken chain as a signal to refuse new transitions on the affected estate until reconciled.",
+  "input": {
+    "gate": "audit_chain_verification",
+    "estate_id": "estate:satoshi-demo",
+    "good_event": {
+      "audit_event_id": "aud_f3dfda1161ef",
+      "event_type": "assertion_admitted",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "transition_id": "trn_4e97327c2fee",
+      "assertion_refs": [
+        "asrt_d8168d504959"
+      ],
+      "result_hash": "sha256:0d2ce5e85fde3e698c4f76bcd04b385fb26190ef30d165f166d8ca1f5ecb56ac",
+      "signer_refs": [
+        "runtime:finn"
+      ],
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "audit_hash": "sha256:9a825ffd5f6d1f8a8d4852c09f253ab700ad04c121cd9e5aa7c6b3344e0f7e00",
+      "created_at": "2026-05-05T10:00:00Z",
+      "payload": {
+        "class": "observation",
+        "status": "active"
+      }
+    },
+    "tampered_event": {
+      "audit_event_id": "aud_f3dfda1161ef",
+      "event_type": "assertion_admitted",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "transition_id": "trn_4e97327c2fee",
+      "assertion_refs": [
+        "asrt_d8168d504959"
+      ],
+      "result_hash": "sha256:0d2ce5e85fde3e698c4f76bcd04b385fb26190ef30d165f166d8ca1f5ecb56ac",
+      "signer_refs": [
+        "runtime:finn"
+      ],
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "audit_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "created_at": "2026-05-05T10:00:00Z",
+      "payload": {
+        "class": "observation",
+        "status": "active"
+      }
+    },
+    "now": "2026-05-05T10:00:00Z"
+  },
+  "expected_output": {
+    "verify_chain_ok": false,
+    "broken_reason_family": "previous_audit_hash_mismatch",
+    "deny_reason": "audit_chain_broken",
+    "notes": "The wedge's position is 'make tampering visible'. Finn's position MUST be 'block new transitions on the affected estate until an operator reconciles' — per finn-runtime-boundary.md R6."
+  }
+}
