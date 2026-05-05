@@ -1,0 +1,28 @@
+{
+  "case_name": "valid_audit_event_chain_consistent",
+  "expected_valid": true,
+  "validation_layer": "audit_validation",
+  "reason": "audit_hash matches sha256(canonicalize(previous_audit_hash, event_type, transition_id, assertion_refs, signer_refs, payload, created_at)); the chain link is intact.",
+  "subject": "audit_event",
+  "payload": {
+    "audit_event_id": "aud_a5b4500fa969",
+    "event_type": "assertion_admitted",
+    "actor_id": "agent:satoshi-demo",
+    "estate_id": "estate:satoshi-demo",
+    "transition_id": "trn_6fa3a4fd5e2e",
+    "assertion_refs": [
+      "asrt_6c74618c57e0"
+    ],
+    "result_hash": "sha256:0185cd1d2b9579c0092051f0579c3bde7c86fbf55b5be4e6da82f5c7fe9bda2a",
+    "signer_refs": [
+      "runtime:finn"
+    ],
+    "policy_decision_ref": "straylight.default-agent-estate.v0",
+    "audit_hash": "sha256:ed3580fa7a83ffc22481f63321ee9fae0dad61c9bf76a7962c7beedf3673c1ea",
+    "created_at": "2026-05-05T10:00:00Z",
+    "payload": {
+      "class": "observation",
+      "status": "active"
+    }
+  }
+}

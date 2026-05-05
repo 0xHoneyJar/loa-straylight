@@ -1,0 +1,41 @@
+{
+  "case_name": "valid_recall_request_public_discord",
+  "expected_valid": true,
+  "validation_layer": "class_validation",
+  "reason": "Structurally legible RecallRequest: actor_id / estate_id / task / environment_frame / risk_profile / signature all present and well-typed.",
+  "subject": "recall_request",
+  "payload": {
+    "recall_request_id": "rreq_public-discord-conformance-recal-2026-05-05T12:30:00Z",
+    "actor_id": "agent:satoshi-demo",
+    "estate_id": "estate:satoshi-demo",
+    "requested_by": "operator:eileen",
+    "task": "public discord conformance recall",
+    "environment_frame": "public_discord",
+    "risk_profile": "medium",
+    "requested_classes": [
+      "observation"
+    ],
+    "mark_statuses": [
+      "contested",
+      "demoted"
+    ],
+    "exclude_statuses": [
+      "revoked",
+      "forgotten_from_recall",
+      "sealed"
+    ],
+    "include_receipt_detail": "standard",
+    "include_provenance": true,
+    "signature": {
+      "signature_id": "sig_b1776bf3fae2",
+      "signer_id": "operator:eileen",
+      "signer_type": "operator",
+      "signature_type": "dev_signature",
+      "signed_payload_hash": "sha256:dc5353c4c298855c636f4ec451a81cc3657b38554798fa651684b304ce2ab332",
+      "signature": "dev:aeed2958b340a9a3eae2c7972146be6962ffef2ce4e7f49f2d78bbbe8192e327",
+      "signed_at": "2026-05-05T12:30:00Z",
+      "key_ref": "dev-key:operator:eileen"
+    },
+    "created_at": "2026-05-05T12:30:00Z"
+  }
+}

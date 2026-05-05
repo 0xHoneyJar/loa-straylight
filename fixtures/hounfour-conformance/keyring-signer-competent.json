@@ -1,0 +1,38 @@
+{
+  "case_name": "keyring_signer_competent_for_admit_observation",
+  "expected_valid": true,
+  "validation_layer": "keyring_validation",
+  "reason": "Signature envelope is self-consistent AND the signer's role is in the matched rule's required_signer_roles. Both gates clear: the signature would also pass verifyEnvelopeSelfConsistency, and evaluateCompetence returns allowed: true. Signature validity alone would not be sufficient; competence is the gate.",
+  "subject": "signer_competence",
+  "payload": {
+    "transition_type": "admit_assertion",
+    "assertion_class": "observation",
+    "signer_id": "runtime:finn",
+    "signer_role": "runtime",
+    "signature_envelope": {
+      "signature_id": "sig_577e87117f7c",
+      "signer_id": "runtime:finn",
+      "signer_type": "runtime",
+      "signature_type": "dev_signature",
+      "signed_payload_hash": "sha256:4cc20ea19d8fce7805a844ab46e92e33f9259af601e93ec591822295208f6e4e",
+      "signature": "dev:74dd22c41f4c294ebc4d6858b5765566ae6d81b6efd3b619d3b7c1fcc3f34eb3",
+      "signed_at": "2026-05-05T10:00:00Z",
+      "key_ref": "dev-key:runtime:finn"
+    },
+    "signature_self_consistent": true,
+    "signer_competence_result": {
+      "allowed": true,
+      "reason": "competent_signer_present",
+      "matched_rule_id": "rule:admit-observation-runtime",
+      "signer_id": "runtime:finn",
+      "signer_role": "runtime",
+      "signature_id": "sig_577e87117f7c",
+      "competent_signer_ids": [
+        "runtime:finn"
+      ],
+      "quorum_required": 1,
+      "quorum_present": 1,
+      "requires_review": false
+    }
+  }
+}

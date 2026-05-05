@@ -1,0 +1,29 @@
+{
+  "case_name": "keyring_signer_incompetent_role_not_in_required_roles",
+  "expected_valid": false,
+  "validation_layer": "keyring_validation",
+  "reason": "Signature envelope is self-consistent (the signer really did sign the payload), but the signer's role (runtime) is not in the required_signer_roles for admit_assertion of class identity (rule:admit-identity-reviewer-only). evaluateCompetence returns allowed: false. This vector exists specifically to pin: a structurally valid signature does NOT imply signer competence.",
+  "subject": "signer_competence",
+  "payload": {
+    "transition_type": "admit_assertion",
+    "assertion_class": "identity",
+    "signer_id": "runtime:finn",
+    "signer_role": "runtime",
+    "signature_envelope": {
+      "signature_id": "sig_8d62cc70c204",
+      "signer_id": "runtime:finn",
+      "signer_type": "runtime",
+      "signature_type": "dev_signature",
+      "signed_payload_hash": "sha256:21d7cd86975ab3634ed0feb093ededd54f812b6b219e8c108c7d3898cde9ce3d",
+      "signature": "dev:58a4f4e21c0d7b8766c9a680c7e7079b4a6c9cf4fd5dd33cbfb0b86232f4a7fc",
+      "signed_at": "2026-05-05T10:00:00Z",
+      "key_ref": "dev-key:runtime:finn"
+    },
+    "signature_self_consistent": true,
+    "signer_competence_result": {
+      "allowed": false,
+      "reason": "signer_role_forbidden:runtime",
+      "matched_rule_id": "rule:admit-identity-reviewer-only"
+    }
+  }
+}

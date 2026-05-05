@@ -1,0 +1,28 @@
+{
+  "case_name": "invalid_audit_event_tampered_hash",
+  "expected_valid": false,
+  "validation_layer": "audit_validation",
+  "reason": "audit_hash has been mutated to an all-zero digest; recomputing sha256 over the canonical event content does not match the stored audit_hash, so AuditLog.verifyChain fails. Audit-chain integrity is the documented failure mode here, not class shape.",
+  "subject": "audit_event",
+  "payload": {
+    "audit_event_id": "aud_a5b4500fa969",
+    "event_type": "assertion_admitted",
+    "actor_id": "agent:satoshi-demo",
+    "estate_id": "estate:satoshi-demo",
+    "transition_id": "trn_6fa3a4fd5e2e",
+    "assertion_refs": [
+      "asrt_6c74618c57e0"
+    ],
+    "result_hash": "sha256:0185cd1d2b9579c0092051f0579c3bde7c86fbf55b5be4e6da82f5c7fe9bda2a",
+    "signer_refs": [
+      "runtime:finn"
+    ],
+    "policy_decision_ref": "straylight.default-agent-estate.v0",
+    "audit_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "created_at": "2026-05-05T10:00:00Z",
+    "payload": {
+      "class": "observation",
+      "status": "active"
+    }
+  }
+}
