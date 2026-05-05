@@ -1,11 +1,15 @@
 # Straylight schema candidates
 
 > Status: Phase 6 (inventory + boundary + fixtures), Phase 7
-> (extraction handoff), and Phase 8 (local Hounfour conformance
-> vectors). **Pre-extraction prep, in-repo only.** Nothing in this
+> (extraction handoff), Phase 8 (local Hounfour conformance
+> vectors), and Phase 9 (Hounfour extraction issue / PR handoff
+> packet). **Pre-extraction prep, in-repo only.** Nothing in this
 > directory is a canonical Hounfour schema. Nothing in this directory
 > is a cross-repo integration artifact. Nothing in this directory
 > imports from a sibling repo or installs Hounfour as a dependency.
+> Phase 9 is **handoff prep** — it stages the issue and PR checklist
+> a future `loa-hounfour` change will consume; it does **not**
+> perform the extraction, file the issue, or open the PR.
 
 ## What this directory is
 
@@ -42,6 +46,20 @@ performing the extraction*. It contains:
   under [`fixtures/hounfour-conformance/`](../../fixtures/hounfour-conformance/).
   Written by `npm run hounfour:conformance`. **Not** canonical
   Hounfour schemas; intended as future Hounfour test inputs.
+- [`docs/handoffs/`](../handoffs/) — Phase 9 handoff packet for the
+  future `loa-hounfour` issue and PR. Three documents:
+  [`hounfour-schema-extraction-issue.md`](../handoffs/hounfour-schema-extraction-issue.md)
+  (GitHub-issue-ready handoff with title, summary, schema list,
+  acceptance criteria, no-go boundaries),
+  [`hounfour-schema-extraction-pr-checklist.md`](../handoffs/hounfour-schema-extraction-pr-checklist.md)
+  (the review checklist that a future PR-A and PR-B should clear),
+  and
+  [`hounfour-extraction-mapping.md`](../handoffs/hounfour-extraction-mapping.md)
+  (the table mapping each Straylight primitive to a proposed
+  Hounfour schema name, file path, classification, validation
+  layer, and conformance fixture). The summary is reproducible
+  via `npm run hounfour:handoff`. **Phase 9 stages the packet —
+  it does not file the issue, open the PR, or start integration.**
 
 The matching JSON example shapes live one directory up at
 [`fixtures/schema-candidates/`](../../fixtures/schema-candidates/) (Phase 6
@@ -73,12 +91,13 @@ can read them as plain files.
   exactly as they were. The wedge passes the same `npm test`,
   `npm run demo:recall`, and `npm run demo:recall:json` checks.
 
-## Intended next step (out of scope for Phase 6 and Phase 7)
+## Intended next step (out of scope for Phase 6, 7, 8, and 9)
 
-Review this inventory, the class-vs-policy boundary, and the Phase 7
-extraction plan, then *in a separate change in a separate
-repository*, extract the chosen candidates into `loa-hounfour` as
-canonical schemas. At that point:
+Review this inventory, the class-vs-policy boundary, the Phase 7
+extraction plan, the Phase 8 conformance vectors, and the Phase 9
+handoff packet under [`docs/handoffs/`](../handoffs/), then *in a
+separate change in a separate repository*, extract the chosen
+candidates into `loa-hounfour` as canonical schemas. At that point:
 
 1. `loa-hounfour` becomes the schema source of truth for the candidate
    types listed here.
@@ -92,3 +111,18 @@ canonical schemas. At that point:
 Until that change ships, treat everything here as **pre-extraction
 prep, frozen in time**. Edits are fine while the wedge evolves; cross-
 repo wiring is not.
+
+## Phase 9 — Hounfour extraction issue / PR handoff packet
+
+Phase 9 stages the artifacts a future `loa-hounfour` change will
+consume. The packet lives under [`docs/handoffs/`](../handoffs/)
+and contains the issue handoff, the PR review checklist, and the
+extraction mapping table. None of these documents file the issue,
+open the PR, or start cross-repo integration; they are the
+**inputs** for that work, written and committed inside
+`loa-straylight` so the future change can pick them up cleanly.
+
+Run `npm run hounfour:handoff` to print the packet's document paths
+and conformance vector counts. The script is local-only, does not
+import from `loa-hounfour` or any sibling repo, and does not claim
+that integration is complete.

@@ -2,23 +2,30 @@
 
 **Continuity-under-authorization for persistent AI agents: signed memory, governed recall, challenge, revocation, and commitments.**
 
-> **MVP status (Phase 5 + Phase 6 + Phase 7 + Phase 8).** Local-only,
-> in-repo Recall Wedge. Public entrypoint: `src/straylight/index.ts`.
-> Run `npm run typecheck`, `npm test`, `npm run demo:recall`,
-> `npm run demo:recall:json`, `npm run schema:candidates` (Phase 6 —
-> writes current-shape examples to `fixtures/schema-candidates/`; not
-> canonical Hounfour schemas), or `npm run hounfour:conformance`
-> (Phase 8 — writes local Hounfour conformance vectors to
-> `fixtures/hounfour-conformance/`; not canonical Hounfour schemas,
-> intended as future Hounfour test inputs). See
+> **MVP status (Phase 5 + Phase 6 + Phase 7 + Phase 8 + Phase 9).**
+> Local-only, in-repo Recall Wedge. Public entrypoint:
+> `src/straylight/index.ts`. Run `npm run typecheck`, `npm test`,
+> `npm run demo:recall`, `npm run demo:recall:json`,
+> `npm run schema:candidates` (Phase 6 — writes current-shape
+> examples to `fixtures/schema-candidates/`; not canonical Hounfour
+> schemas), `npm run hounfour:conformance` (Phase 8 — writes local
+> Hounfour conformance vectors to `fixtures/hounfour-conformance/`;
+> not canonical Hounfour schemas, intended as future Hounfour test
+> inputs), or `npm run hounfour:handoff` (Phase 9 — prints the
+> Hounfour extraction issue / PR handoff packet under
+> `docs/handoffs/`; this is **handoff prep**, not Hounfour
+> integration). See
 > [`docs/mvp/straylight-recall-wedge.md`](docs/mvp/straylight-recall-wedge.md)
 > for what each phase proves,
 > [`docs/mvp/package-boundary.md`](docs/mvp/package-boundary.md)
 > for the stable API surface,
 > [`docs/mvp/threat-model.md`](docs/mvp/threat-model.md)
-> for fail-closed defenses, and
+> for fail-closed defenses,
 > [`docs/schema-candidates/`](docs/schema-candidates/) for Phase 6 / 7 / 8
-> schema-extraction prep.
+> schema-extraction prep, and
+> [`docs/handoffs/`](docs/handoffs/) for the Phase 9 Hounfour
+> extraction handoff packet (issue draft + PR checklist + mapping
+> table — none of which is filed against `loa-hounfour` yet).
 
 
 Straylight is the hidden estate architecture for intent-era agents.
