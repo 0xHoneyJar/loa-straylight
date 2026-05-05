@@ -1,0 +1,11 @@
+{
+  "actor_id": "agent:satoshi-demo",
+  "actor_type": "agent",
+  "estate_id": "estate:satoshi-demo",
+  "keyring_id": "keyring:satoshi-demo",
+  "status": "active",
+  "controller_refs": ["operator:eileen"],
+  "schema_version": "0.1.0",
+  "created_at": "2026-05-05T00:00:00Z",
+  "updated_at": "2026-05-05T00:00:00Z"
+}

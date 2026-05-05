@@ -1,0 +1,50 @@
+// Public surface of the Straylight Recall Wedge MVP package.
+
+export * from './types.js';
+export { canonicalize, sha256, shortHash } from './canonical.js';
+export { contentId, payloadHash, makeIdSource } from './ids.js';
+export {
+  devSign,
+  devSignatureFor,
+  verifyDevSignature,
+  verifyEnvelopeSelfConsistency,
+  assertionSignedPayload,
+  recallSignedPayload,
+  DEV_SIGNATURE_PREFIX,
+} from './signatures.js';
+export {
+  validateCandidateAssertion,
+  validateRecallRequest,
+} from './validators/class-validator.js';
+export {
+  resolveSigner,
+  isSignerCurrentlyValid,
+  evaluateCompetence,
+  listActiveSignerRoles,
+} from './keyring.js';
+export {
+  policyForAdmitAssertion,
+  policyForTransition,
+  policyForRecallRequest,
+  dispositionFor,
+  DEFAULT_POLICY_ID,
+  DEFAULT_POLICY_VERSION,
+} from './policy.js';
+export { AuditLog } from './audit.js';
+export { EstateStore } from './estate.js';
+export type {
+  EstateStoreInit,
+  AdmitOutcome,
+  ChallengeOutcome,
+  RevokeOutcome,
+  ForgetOutcome,
+} from './estate.js';
+export { PolicyEngineError } from './policy.js';
+export { executeRecall } from './recall.js';
+export type { RecallOutcome } from './recall.js';
+export { computeCommitmentRoot, commitmentForRecallReceipt } from './commitment.js';
+export { InMemoryStorage } from './storage/in-memory.js';
+export { JsonlStorage } from './storage/jsonl.js';
+export type { JsonlStorageOptions } from './storage/jsonl.js';
+export type { StorageAdapter, EstateBundle } from './storage/types.js';
+export { loadBundle, saveBundle } from './storage/types.js';
