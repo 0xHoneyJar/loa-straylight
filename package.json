@@ -14,7 +14,8 @@
     "schema:candidates": "vite-node scripts/export-schema-candidates.ts",
     "hounfour:conformance": "vite-node scripts/export-hounfour-conformance.ts",
     "hounfour:handoff": "vite-node scripts/print-hounfour-handoff-summary.ts",
-    "finn:enforcement": "vite-node scripts/export-finn-enforcement-fixtures.ts"
+    "finn:enforcement": "vite-node scripts/export-finn-enforcement-fixtures.ts",
+    "dixie:recall": "vite-node scripts/export-dixie-governed-recall-fixtures.ts"
   },
   "engines": {
     "node": ">=20"

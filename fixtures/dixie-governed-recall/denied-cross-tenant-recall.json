@@ -1,0 +1,68 @@
+{
+  "case_name": "denied_cross_tenant_recall",
+  "expected_allowed": false,
+  "reason": "Dixie's BFF refuses cross-tenant recall at intake. The caller's signer is not on the target estate's keyring, and the caller's tenant boundary does not match the target's tenant. The BFF emits a Dixie-side audit log entry referencing the wedge's recall_denied event. The wedge / Finn are the second line of defense — both layers refuse.",
+  "input": {
+    "bff_route": "POST /recall",
+    "environment_frame": "private_operator",
+    "caller_frame_intent": "tenant_dashboard",
+    "caller": {
+      "tenant_id": "tenant:other-actor",
+      "actor_id": "agent:other-actor",
+      "signer": {
+        "signer_id": "operator:not-on-keyring",
+        "signer_type": "operator"
+      }
+    },
+    "request_envelope": {
+      "recall_request_id": "rreq_dixie-cross-tenant-refused",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "requested_by": "operator:not-on-keyring",
+      "task": "dixie-handoff: cross-tenant recall, must be refused at intake",
+      "environment_frame": "private_operator",
+      "risk_profile": "medium",
+      "requested_classes": [
+        "observation"
+      ],
+      "mark_statuses": [
+        "contested",
+        "demoted"
+      ],
+      "exclude_statuses": [
+        "revoked",
+        "forgotten_from_recall",
+        "sealed"
+      ],
+      "include_receipt_detail": "standard",
+      "include_provenance": true,
+      "signature": {
+        "signature_id": "sig_cfccc68368ba",
+        "signer_id": "operator:not-on-keyring",
+        "signer_type": "operator",
+        "signature_type": "dev_signature",
+        "signed_payload_hash": "sha256:f1aeef4bfbc803c96490a0b412cbabdea2e626c0b3c4603298ab580d9d64811b",
+        "signature": "dev:8a0a804a2a01c0be3f98cb71efe4132c0b966971d8d187cbe5f90776c6015712",
+        "signed_at": "2026-05-05T11:10:00Z",
+        "key_ref": "dev-key:not-on-keyring"
+      },
+      "created_at": "2026-05-05T11:10:00Z"
+    },
+    "now": "2026-05-05T11:10:00Z"
+  },
+  "expected_output": {
+    "intake_decision": "denied",
+    "deny_reason": "cross_tenant_recall_refused",
+    "bff_audit_entry": {
+      "event_type": "dixie_recall_intake_denied",
+      "recall_request_id": "rreq_dixie-cross-tenant-refused",
+      "target_estate_id": "estate:satoshi-demo",
+      "caller_tenant_id": "tenant:other-actor",
+      "caller_signer_id": "operator:not-on-keyring",
+      "reason": "cross_tenant_recall_refused",
+      "references_wedge_event_type": "recall_denied",
+      "now": "2026-05-05T11:10:00Z"
+    },
+    "notes": "Cross-tenant prevention is a Dixie-layer responsibility (first line of defense). The wedge / Finn refuse at the runtime gate (second line). Both must refuse for the boundary to hold."
+  }
+}

@@ -1,0 +1,127 @@
+{
+  "case_name": "contested_assertion_marked",
+  "expected_allowed": true,
+  "reason": "Dixie's BFF renders contested assertions as marked, never silently included. dispositionFor returns 'mark' for status: 'contested' regardless of mark_statuses; useInstructionForMark maps the mark to mark_as_contested. The BFF surfaces the marked item in a 'contested' UI affordance — not as quotable context.",
+  "input": {
+    "bff_route": "GET /recall/:request_id",
+    "recall_request_id": "rreq_dixie-contested-marked",
+    "environment_frame": "public_discord",
+    "seeded_contested_assertion": {
+      "assertion_id": "asrt_83e4ff161123",
+      "estate_id": "estate:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "assertion_class": "observation",
+      "status": "contested",
+      "body": {
+        "text": "Dixie-handoff: a contested observation Dixie must surface as marked, never usable."
+      },
+      "body_hash": "sha256:615ee938e9315dee60b06ea9d53948978f84b1c600ced1c271757f430eba7e88",
+      "schema_version": "0.1.0",
+      "provenance": [
+        {
+          "provenance_id": "prov:fixture-default",
+          "source_type": "operator_input",
+          "observed_at": "2026-05-05T11:00:00Z",
+          "captured_by": "operator:eileen",
+          "evidence_summary": "fixture default operator-input provenance"
+        }
+      ],
+      "privacy_scope": "public",
+      "risk_level": "low",
+      "signatures": [
+        {
+          "signature_id": "sig_f808abc9dda3",
+          "signer_id": "operator:eileen",
+          "signer_type": "operator",
+          "signature_type": "dev_signature",
+          "signed_payload_hash": "sha256:e79771171bb566a2cd7fbb2f8a75d3c1fd3523ac9893170dc46766ce0a3ce544",
+          "signature": "dev:3089590370c11db91e11796ab0fe7ccd08124abd5d3e1d6215d6ce69ef8d2e6c",
+          "signed_at": "2026-05-05T10:25:00Z",
+          "key_ref": "dev-key:operator:eileen"
+        }
+      ],
+      "created_at": "2026-05-05T10:25:00Z",
+      "updated_at": "2026-05-05T10:25:00Z"
+    },
+    "now": "2026-05-05T11:30:00Z"
+  },
+  "expected_output": {
+    "served_pack": {
+      "recall_pack_id": "rpack_bbfc07e40421",
+      "recall_request_id": "rreq_dixie-contested-marked",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "included": [],
+      "marked": [
+        {
+          "assertion_id": "asrt_83e4ff161123",
+          "assertion_class": "observation",
+          "status": "contested",
+          "summary": "Dixie-handoff: a contested observation Dixie must surface as marked, never usable.",
+          "body_ref": "assertion:asrt_83e4ff161123",
+          "provenance_refs": [
+            "prov:fixture-default"
+          ],
+          "use_instruction": "mark_as_contested"
+        }
+      ],
+      "redacted": [],
+      "excluded_summary": [],
+      "policy_decision": {
+        "decision": "allow",
+        "policy_id": "straylight.default-agent-estate.v0",
+        "policy_version": "0.1.0",
+        "signer_competence_result": {
+          "allowed": true,
+          "reason": "competent_signer_present",
+          "matched_rule_id": "rule:recall-default",
+          "signer_id": "operator:eileen",
+          "signer_role": "operator",
+          "signature_id": "sig_e0ae75446ad0",
+          "competent_signer_ids": [
+            "operator:eileen"
+          ],
+          "quorum_required": 1,
+          "quorum_present": 1,
+          "requires_review": false
+        },
+        "reasons": [
+          "signer_operator_competent_for_recall_public_discord"
+        ],
+        "decided_at": "2026-05-05T11:30:00Z"
+      },
+      "receipt_id": "rcpt_2c7ab1c3974b",
+      "pack_hash": "sha256:79cd1ddf96cf9e06b68ceba963cc0c8cb011df801971345376076219e1f52c94",
+      "created_at": "2026-05-05T11:30:00Z"
+    },
+    "served_receipt": {
+      "receipt_id": "rcpt_2c7ab1c3974b",
+      "recall_request_id": "rreq_dixie-contested-marked",
+      "recall_pack_id": "rpack_bbfc07e40421",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "filters_applied": [
+        "environment_frame:public_discord",
+        "risk_profile:medium",
+        "requested_classes:observation",
+        "exclude_statuses:revoked,forgotten_from_recall,sealed",
+        "mark_statuses:contested,demoted"
+      ],
+      "included_assertion_ids": [],
+      "marked_assertion_ids": [
+        "asrt_83e4ff161123"
+      ],
+      "redacted_count": 0,
+      "excluded_counts_by_reason": {},
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "requester_signature_ref": "sig_e0ae75446ad0",
+      "pack_hash": "sha256:79cd1ddf96cf9e06b68ceba963cc0c8cb011df801971345376076219e1f52c94",
+      "receipt_hash": "sha256:d6be34b101acb12631afa6130137565dc24d33161e76100013e006b7ae728b1c",
+      "created_at": "2026-05-05T11:30:00Z",
+      "detail_level": "standard"
+    },
+    "contested_in_included_count": 0,
+    "contested_in_marked_count": 1,
+    "notes": "The marked discipline is binding through the BFF. A contested assertion MUST always carry use_instruction = mark_as_contested; the BFF MUST NOT promote it to usable context."
+  }
+}

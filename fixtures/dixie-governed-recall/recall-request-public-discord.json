@@ -1,0 +1,92 @@
+{
+  "case_name": "recall_request_public_discord",
+  "expected_allowed": true,
+  "reason": "Dixie's BFF intake builds a RecallRequest envelope per the wedge's validateRecallRequest shape, runs cross-tenant boundary checks (caller's signer / actor matches the target estate), and forwards the request to the runtime gate. The fixture pins the intake-accept envelope.",
+  "input": {
+    "bff_route": "POST /recall",
+    "environment_frame": "public_discord",
+    "caller": {
+      "tenant_id": "tenant:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "signer": {
+        "signer_id": "operator:eileen",
+        "signer_type": "operator"
+      }
+    },
+    "request_envelope": {
+      "recall_request_id": "rreq_dixie-public-discord-intake",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "requested_by": "operator:eileen",
+      "task": "dixie-handoff: public_discord recall, healthy estate",
+      "environment_frame": "public_discord",
+      "risk_profile": "medium",
+      "requested_classes": [
+        "observation",
+        "preference"
+      ],
+      "mark_statuses": [
+        "contested",
+        "demoted"
+      ],
+      "exclude_statuses": [
+        "revoked",
+        "forgotten_from_recall",
+        "sealed"
+      ],
+      "include_receipt_detail": "standard",
+      "include_provenance": true,
+      "signature": {
+        "signature_id": "sig_7d6760888617",
+        "signer_id": "operator:eileen",
+        "signer_type": "operator",
+        "signature_type": "dev_signature",
+        "signed_payload_hash": "sha256:b94191074fb84199becd68e1307f4afa4eed6b55bd28c7901d13d69cc6b54e62",
+        "signature": "dev:28ae7e9f7cb2cf8ec51a77cbe7f646e44f20e0db9e3a880925fc8400e4fcbe12",
+        "signed_at": "2026-05-05T11:00:00Z",
+        "key_ref": "dev-key:operator:eileen"
+      },
+      "created_at": "2026-05-05T11:00:00Z"
+    },
+    "now": "2026-05-05T11:00:00Z"
+  },
+  "expected_output": {
+    "intake_decision": "accepted",
+    "forwarded_request": {
+      "recall_request_id": "rreq_dixie-public-discord-intake",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "requested_by": "operator:eileen",
+      "task": "dixie-handoff: public_discord recall, healthy estate",
+      "environment_frame": "public_discord",
+      "risk_profile": "medium",
+      "requested_classes": [
+        "observation",
+        "preference"
+      ],
+      "mark_statuses": [
+        "contested",
+        "demoted"
+      ],
+      "exclude_statuses": [
+        "revoked",
+        "forgotten_from_recall",
+        "sealed"
+      ],
+      "include_receipt_detail": "standard",
+      "include_provenance": true,
+      "signature": {
+        "signature_id": "sig_7d6760888617",
+        "signer_id": "operator:eileen",
+        "signer_type": "operator",
+        "signature_type": "dev_signature",
+        "signed_payload_hash": "sha256:b94191074fb84199becd68e1307f4afa4eed6b55bd28c7901d13d69cc6b54e62",
+        "signature": "dev:28ae7e9f7cb2cf8ec51a77cbe7f646e44f20e0db9e3a880925fc8400e4fcbe12",
+        "signed_at": "2026-05-05T11:00:00Z",
+        "key_ref": "dev-key:operator:eileen"
+      },
+      "created_at": "2026-05-05T11:00:00Z"
+    },
+    "notes": "Intake validates the envelope, enforces cross-tenant boundary, then forwards to the runtime gate. The BFF MUST NOT short-circuit class / policy / competence layers downstream."
+  }
+}
