@@ -117,6 +117,31 @@ Validate locally:
 npm run freeside:surface
 ```
 
+## Phase 15 — Cross-repo coordination
+
+Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
+Phase 15 (this section) adds the in-repo coordination artifacts
+that sit *across* those packets — which sibling-repo issues exist,
+in what order their PRs should be opened, and which sequences are
+explicitly forbidden.
+
+| Document | Purpose |
+|---|---|
+| [`cross-repo-handoff-index.md`](./cross-repo-handoff-index.md) | Index of the four filed sibling issues (Hounfour, Finn, Dixie, Freeside), the local Straylight handoff packet that backs each one, and the local fixture directory each one points at. Restates that sibling-repo PRs require teammate review before merge. |
+| [`cross-repo-implementation-order.md`](./cross-repo-implementation-order.md) | Recommended sibling-repo implementation order — Hounfour → Finn → Dixie → Freeside — with the dependency rationale for why Hounfour leads, why Finn cannot wire ahead of Hounfour without explicit stubs, why Dixie depends on Finn, why Freeside is last, and what work can run in parallel safely. |
+| [`cross-repo-no-go-sequence.md`](./cross-repo-no-go-sequence.md) | The no-go rules every sibling-repo PR must respect (no Finn ahead of Hounfour, no Dixie BFF as generic retrieval, no Freeside before Dixie / Finn settle, no merge without teammate review, no sibling-side primitive redefinition, no fixtures as production contracts). |
+
+Phase 15 is **coordination only**: it adds docs (and an optional
+helper script printing the same index), files no sibling-repo
+issues, opens no sibling-repo PRs, edits no sibling repo, and
+changes no Phase 0–14 behavior.
+
+Validate locally:
+
+```bash
+npm run handoffs:index
+```
+
 ## What this directory is *not*
 
 - **Not** Hounfour integration. Phase 9 stages the contract; the
@@ -129,6 +154,11 @@ npm run freeside:surface
 - **Not** Freeside integration. Phase 14 stages the contract;
   the community / bot / admin / tenant / Discord / Telegram /
   REST / NATS module ships later in `loa-freeside`.
+- **Not** sibling-repo coordination beyond an in-repo index.
+  Phase 15 stages the cross-repo handoff index, implementation
+  order, and no-go sequence inside `loa-straylight`; filing,
+  opening, reviewing, or merging any sibling-repo PR remains a
+  separate, future, sibling-repo event under teammate review.
 - **Not** a license to begin sibling work ahead of the schedule.
   Until the sibling repo's PR lands, the wedge owns every primitive
   the packets describe.
