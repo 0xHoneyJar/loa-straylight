@@ -1,0 +1,167 @@
+{
+  "case_name": "denied_recall_revoked_assertion",
+  "expected_allowed": false,
+  "reason": "executeRecall applies dispositionFor, which excludes status: 'revoked' from any frame other than audit_review. The revoked assertion is NOT in the served pack's `included` and NOT in `marked`. Finn's runtime gate MUST preserve this exclusion.",
+  "input": {
+    "gate": "recall_request",
+    "request": {
+      "recall_request_id": "rreq_finn-revoked-exclusion",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "requested_by": "operator:eileen",
+      "task": "finn-handoff: public_discord recall, must exclude revoked",
+      "environment_frame": "public_discord",
+      "risk_profile": "medium",
+      "requested_classes": [
+        "observation"
+      ],
+      "mark_statuses": [
+        "contested",
+        "demoted"
+      ],
+      "exclude_statuses": [
+        "revoked",
+        "forgotten_from_recall",
+        "sealed"
+      ],
+      "include_receipt_detail": "standard",
+      "include_provenance": true,
+      "signature": {
+        "signature_id": "sig_a50b86c3146a",
+        "signer_id": "operator:eileen",
+        "signer_type": "operator",
+        "signature_type": "dev_signature",
+        "signed_payload_hash": "sha256:b5e97c396a2dd0cb5df55913d42e819bf82be1b0289636f4bfc5129c6b773d0f",
+        "signature": "dev:b386018b264807fe8362a6372d6ec5bb3da137098e05006cfe92cbcd74289c35",
+        "signed_at": "2026-05-05T11:15:00Z",
+        "key_ref": "dev-key:operator:eileen"
+      },
+      "created_at": "2026-05-05T11:15:00Z"
+    },
+    "seeded_revoked_assertion": {
+      "assertion_id": "asrt_c70a035d0b07",
+      "estate_id": "estate:satoshi-demo",
+      "actor_id": "agent:satoshi-demo",
+      "assertion_class": "observation",
+      "status": "revoked",
+      "body": {
+        "text": "Finn-handoff: a revoked observation Finn must exclude from public_discord."
+      },
+      "body_hash": "sha256:b6113a8993d07394d0b1e7bd35f14abcfb818204b982df1c49b72c5fa486b139",
+      "schema_version": "0.1.0",
+      "provenance": [
+        {
+          "provenance_id": "prov:fixture-default",
+          "source_type": "operator_input",
+          "observed_at": "2026-05-05T11:00:00Z",
+          "captured_by": "operator:eileen",
+          "evidence_summary": "fixture default operator-input provenance"
+        }
+      ],
+      "privacy_scope": "public",
+      "risk_level": "low",
+      "signatures": [
+        {
+          "signature_id": "sig_a5d670ddcd51",
+          "signer_id": "operator:eileen",
+          "signer_type": "operator",
+          "signature_type": "dev_signature",
+          "signed_payload_hash": "sha256:82950ad1b1f5af8a07c70a9c0dbffffdaa4c34b3c41adfe530d9d6596ee78ea6",
+          "signature": "dev:c6c3ea6e7da4017138aae39d7767067aee9716c0cdd5873144937b53db1702e3",
+          "signed_at": "2026-05-05T10:20:00Z",
+          "key_ref": "dev-key:operator:eileen"
+        }
+      ],
+      "created_at": "2026-05-05T10:20:00Z",
+      "updated_at": "2026-05-05T10:20:00Z"
+    },
+    "now": "2026-05-05T11:15:00Z"
+  },
+  "expected_output": {
+    "served_pack": {
+      "recall_pack_id": "rpack_f59905c02ee1",
+      "recall_request_id": "rreq_finn-revoked-exclusion",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "included": [
+        {
+          "assertion_id": "asrt_cc918fdcd4d1",
+          "assertion_class": "observation",
+          "status": "active",
+          "summary": "Finn-handoff: active companion Finn may include.",
+          "body_ref": "assertion:asrt_cc918fdcd4d1",
+          "provenance_refs": [
+            "prov:fixture-default"
+          ],
+          "use_instruction": "usable"
+        }
+      ],
+      "marked": [],
+      "redacted": [],
+      "excluded_summary": [
+        {
+          "reason": "status_revoked",
+          "count": 1
+        }
+      ],
+      "policy_decision": {
+        "decision": "allow",
+        "policy_id": "straylight.default-agent-estate.v0",
+        "policy_version": "0.1.0",
+        "signer_competence_result": {
+          "allowed": true,
+          "reason": "competent_signer_present",
+          "matched_rule_id": "rule:recall-default",
+          "signer_id": "operator:eileen",
+          "signer_role": "operator",
+          "signature_id": "sig_a50b86c3146a",
+          "competent_signer_ids": [
+            "operator:eileen"
+          ],
+          "quorum_required": 1,
+          "quorum_present": 1,
+          "requires_review": false
+        },
+        "reasons": [
+          "signer_operator_competent_for_recall_public_discord"
+        ],
+        "decided_at": "2026-05-05T11:15:00Z"
+      },
+      "receipt_id": "rcpt_06b309acee97",
+      "pack_hash": "sha256:68be160d1c85f33b69bb52246f74c08d0e9982f4848dffd61bdcc248ab72d5d1",
+      "created_at": "2026-05-05T11:15:00Z"
+    },
+    "served_receipt": {
+      "receipt_id": "rcpt_06b309acee97",
+      "recall_request_id": "rreq_finn-revoked-exclusion",
+      "recall_pack_id": "rpack_f59905c02ee1",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "filters_applied": [
+        "environment_frame:public_discord",
+        "risk_profile:medium",
+        "requested_classes:observation",
+        "exclude_statuses:revoked,forgotten_from_recall,sealed",
+        "mark_statuses:contested,demoted"
+      ],
+      "included_assertion_ids": [
+        "asrt_cc918fdcd4d1"
+      ],
+      "marked_assertion_ids": [],
+      "redacted_count": 0,
+      "excluded_counts_by_reason": {
+        "status_revoked": 1
+      },
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "requester_signature_ref": "sig_a50b86c3146a",
+      "pack_hash": "sha256:68be160d1c85f33b69bb52246f74c08d0e9982f4848dffd61bdcc248ab72d5d1",
+      "receipt_hash": "sha256:9458d7c9d2118a24136e252628dc87d9b6c3026be550009b4c02c41b31074322",
+      "created_at": "2026-05-05T11:15:00Z",
+      "detail_level": "standard"
+    },
+    "revoked_assertion_in_included": false,
+    "revoked_assertion_in_marked": false,
+    "deny_reason": "revoked_excluded_outside_audit_review",
+    "notes": "The recall succeeds (with the revoked item excluded). The audit trail for the revoked assertion remains intact (revocation is not erasure). Finn MUST NOT surface a revoked item as usable in public frames."
+  }
+}

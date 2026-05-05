@@ -1,0 +1,117 @@
+{
+  "case_name": "commitment_root_changed",
+  "expected_allowed": false,
+  "reason": "Two RecallReceipts with different included material produce different commitment roots. computeCommitmentRoot hashes a canonical projection of (actor_id, estate_id, commitment_type, sorted refs, sorted payload_summaries). Any change to refs or summaries produces a different root_hash. A commitment whose root_hash cannot be reproduced from the inputs MUST NOT be anchored. Finn MUST emit `commitment_generation_failed` and hold for operator review when reproducibility fails.",
+  "input": {
+    "gate": "commitment_root_generation",
+    "receipt_a": {
+      "receipt_id": "rcpt_7c9a7a74ac57",
+      "recall_request_id": "rreq_finn-audit-receipt-required",
+      "recall_pack_id": "rpack_c2a170c3f4f5",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "filters_applied": [
+        "environment_frame:public_discord",
+        "risk_profile:medium",
+        "requested_classes:observation",
+        "exclude_statuses:revoked,forgotten_from_recall,sealed",
+        "mark_statuses:contested,demoted"
+      ],
+      "included_assertion_ids": [
+        "asrt_fe9ef72b184f"
+      ],
+      "marked_assertion_ids": [],
+      "redacted_count": 0,
+      "excluded_counts_by_reason": {},
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "requester_signature_ref": "sig_6ec8287dce08",
+      "pack_hash": "sha256:d2e1a506b62ce96e5edf8c3937307a74189f7cc7c7f42b9e3ea0166967c36285",
+      "receipt_hash": "sha256:81e4aa893d9f5a633aded0f810d8b05719ea02e015a9dceb6325106d5d577a4a",
+      "created_at": "2026-05-05T11:00:00Z",
+      "detail_level": "standard"
+    },
+    "receipt_b": {
+      "receipt_id": "rcpt_b769d01282df",
+      "recall_request_id": "rreq_finn-contested-marked",
+      "recall_pack_id": "rpack_7085f01c2935",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "filters_applied": [
+        "environment_frame:public_discord",
+        "risk_profile:medium",
+        "requested_classes:observation",
+        "exclude_statuses:revoked,forgotten_from_recall,sealed",
+        "mark_statuses:contested,demoted"
+      ],
+      "included_assertion_ids": [],
+      "marked_assertion_ids": [
+        "asrt_aa23446e8093"
+      ],
+      "redacted_count": 0,
+      "excluded_counts_by_reason": {},
+      "policy_decision_ref": "straylight.default-agent-estate.v0",
+      "requester_signature_ref": "sig_6c7a3f02f933",
+      "pack_hash": "sha256:2ae83e8432237b89593163f2bf1faf6130d70181ece2d460e64c1a5e1cb5d117",
+      "receipt_hash": "sha256:df88855576c313a49ce77169d80ff56ec9d746e2b1975ff9a0ea5fc2a1a4ad06",
+      "created_at": "2026-05-05T11:05:00Z",
+      "detail_level": "standard"
+    },
+    "now_a": "2026-05-05T12:00:00Z",
+    "now_b": "2026-05-05T12:05:00Z"
+  },
+  "expected_output": {
+    "root_a": {
+      "commitment_id": "cmt_d1c401ec67af",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "commitment_type": "recall_receipt",
+      "root_hash": "sha256:32b46f9d067a08b74e16b6d0dfb400fb6340b32ff869e61dbed16b65018c5fad",
+      "included_refs": [
+        "rcpt_7c9a7a74ac57",
+        "rpack_c2a170c3f4f5",
+        "rreq_finn-audit-receipt-required"
+      ],
+      "schema_version": "0.1.0",
+      "created_by": "operator:eileen",
+      "signature": {
+        "signature_id": "sig_0d894334b9e1",
+        "signer_id": "operator:eileen",
+        "signer_type": "operator",
+        "signature_type": "dev_signature",
+        "signed_payload_hash": "sha256:ac7830cc8ddacdbfc12d80c9f91f58c21ec516840a9d9dcc3428e89736357777",
+        "signature": "dev:90fe963705f27e4bc1f30be494df5c85384fa67d974099f31f473a641eadfce3",
+        "signed_at": "2026-05-05T12:00:00Z",
+        "key_ref": "dev-key:operator:eileen"
+      },
+      "created_at": "2026-05-05T12:00:00Z"
+    },
+    "root_b": {
+      "commitment_id": "cmt_f35e54da068f",
+      "actor_id": "agent:satoshi-demo",
+      "estate_id": "estate:satoshi-demo",
+      "commitment_type": "recall_receipt",
+      "root_hash": "sha256:486a3867d4895a1c038b525f0738cd9da423551a318cfc54a4350d8ca7cf3bc7",
+      "included_refs": [
+        "rcpt_b769d01282df",
+        "rpack_7085f01c2935",
+        "rreq_finn-contested-marked"
+      ],
+      "schema_version": "0.1.0",
+      "created_by": "operator:eileen",
+      "signature": {
+        "signature_id": "sig_6eeb639e7b87",
+        "signer_id": "operator:eileen",
+        "signer_type": "operator",
+        "signature_type": "dev_signature",
+        "signed_payload_hash": "sha256:ade422be64674f23b68c5de17e6c6da8fba31a519cbfa1d7e25abc8485f81218",
+        "signature": "dev:08f028d49f84ae82f039159d7b4fe706ff7dda60305ae26399f8ee76a954f2c8",
+        "signed_at": "2026-05-05T12:05:00Z",
+        "key_ref": "dev-key:operator:eileen"
+      },
+      "created_at": "2026-05-05T12:05:00Z"
+    },
+    "roots_differ": true,
+    "anchor_decision_when_inputs_change": "do_not_anchor_until_reproducible",
+    "notes": "Real signature material (not dev_signature) is required before any commitment escapes Finn process. Onchain anchoring is reserved future work in loa-straylight; Finn MAY hand the root to a separate adapter once production signing is wired."
+  }
+}

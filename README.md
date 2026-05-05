@@ -2,8 +2,8 @@
 
 **Continuity-under-authorization for persistent AI agents: signed memory, governed recall, challenge, revocation, and commitments.**
 
-> **MVP status (Phase 5 + Phase 6 + Phase 7 + Phase 8 + Phase 9).**
-> Local-only, in-repo Recall Wedge. Public entrypoint:
+> **MVP status (Phase 5 + Phase 6 + Phase 7 + Phase 8 + Phase 9 +
+> Phase 10).** Local-only, in-repo Recall Wedge. Public entrypoint:
 > `src/straylight/index.ts`. Run `npm run typecheck`, `npm test`,
 > `npm run demo:recall`, `npm run demo:recall:json`,
 > `npm run schema:candidates` (Phase 6 — writes current-shape
@@ -11,10 +11,14 @@
 > schemas), `npm run hounfour:conformance` (Phase 8 — writes local
 > Hounfour conformance vectors to `fixtures/hounfour-conformance/`;
 > not canonical Hounfour schemas, intended as future Hounfour test
-> inputs), or `npm run hounfour:handoff` (Phase 9 — prints the
+> inputs), `npm run hounfour:handoff` (Phase 9 — prints the
 > Hounfour extraction issue / PR handoff packet under
 > `docs/handoffs/`; this is **handoff prep**, not Hounfour
-> integration). See
+> integration), or `npm run finn:enforcement` (Phase 10 — writes
+> local Finn runtime-enforcement fixtures to
+> `fixtures/finn-runtime-enforcement/`; not official Finn fixtures,
+> intended as future Finn test inputs; this is **handoff prep**, not
+> Finn integration). See
 > [`docs/mvp/straylight-recall-wedge.md`](docs/mvp/straylight-recall-wedge.md)
 > for what each phase proves,
 > [`docs/mvp/package-boundary.md`](docs/mvp/package-boundary.md)
@@ -24,8 +28,10 @@
 > [`docs/schema-candidates/`](docs/schema-candidates/) for Phase 6 / 7 / 8
 > schema-extraction prep, and
 > [`docs/handoffs/`](docs/handoffs/) for the Phase 9 Hounfour
-> extraction handoff packet (issue draft + PR checklist + mapping
-> table — none of which is filed against `loa-hounfour` yet).
+> extraction handoff packet and the Phase 10 Finn runtime-enforcement
+> handoff packet (issue drafts + PR checklist + mapping tables +
+> boundary docs — none of which is filed against `loa-hounfour` or
+> `loa-finn` yet).
 
 
 Straylight is the hidden estate architecture for intent-era agents.
