@@ -8,7 +8,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "demo:recall": "vite-node scripts/demo-recall-wedge.ts"
   },
   "engines": {
     "node": ">=20"
