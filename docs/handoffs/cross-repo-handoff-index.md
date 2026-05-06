@@ -1,16 +1,18 @@
 # Cross-repo handoff index
 
-> Status: Phase 15. **Coordination artifact only, in
+> Status: Phase 16. **Coordination artifact only, in
 > `loa-straylight`.** This document is the in-repo index of the four
-> sibling-repo handoff packets staged by Phases 9 / 10 / 12 / 14. It
-> is **not** cross-repo implementation. Filing, opening, reviewing,
-> or merging the sibling-repo PRs is out of scope for Phase 15 and
-> must happen in the sibling repo, under teammate review.
+> sibling-repo handoff packets staged by Phases 9 / 10 / 12 / 14, plus
+> the Phase 16 Hounfour response-intake / rc-readiness packet. It is
+> **not** cross-repo implementation. It is **not** Hounfour
+> integration. Filing, opening, reviewing, or merging the sibling-
+> repo PRs is out of scope for this index and must happen in the
+> sibling repo, under teammate review.
 >
 > Nothing in this document imports from `loa-hounfour`, `loa-finn`,
 > `loa-dixie`, `loa-freeside`, `.loa/`, or `.claude/` framework
 > internals. Nothing here adds dependencies, edits sibling repos,
-> or changes Phase 0–14 behavior.
+> or changes Phase 0–15 behavior.
 
 ## Purpose
 
@@ -39,15 +41,37 @@ references:
 
 - **Filed sibling issue:**
   [`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70)
+- **Response status (Phase 16):** *accepted-with-adaptation*. Jani
+  responded on the Hounfour side with a per-primitive disposition
+  (9 REUSE / 4 EXTEND / ~21 ADD-NEW / 6 DEFER to cycle-005 / 1 FOLD
+  of `CandidateAssertion` into `Assertion` with `status: "candidate"`)
+  and an adaptation plan covering package version target, `$id`
+  naming, `CapabilityScope` harmonization, the 4-variant
+  `ForgetRecord` model, and `safeCanonicalize` (NFC + RFC 8785 +
+  100 KB cap). Hounfour integration is **pending v8.5.0-rc.1**:
+  Straylight will not flip imports until the rc.1 tag exists and
+  has been validated through the shadow-integration checklist
+  below. See:
+  - [`docs/handoffs/hounfour-response-intake.md`](./hounfour-response-intake.md)
+    — disposition counts and "accepted-with-adaptation" framing.
+  - [`docs/handoffs/hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md)
+    — per-delta accepted-with-adaptation table.
+  - [`docs/handoffs/hounfour-rc-shadow-integration-checklist.md`](./hounfour-rc-shadow-integration-checklist.md)
+    — future v8.5.0-rc.1 shadow-integration window plan.
 - **Local handoff packet (Phase 9):**
   - [`docs/handoffs/hounfour-schema-extraction-issue.md`](./hounfour-schema-extraction-issue.md)
   - [`docs/handoffs/hounfour-schema-extraction-pr-checklist.md`](./hounfour-schema-extraction-pr-checklist.md)
   - [`docs/handoffs/hounfour-extraction-mapping.md`](./hounfour-extraction-mapping.md)
+- **Response-intake / rc-readiness packet (Phase 16):**
+  - [`docs/handoffs/hounfour-response-intake.md`](./hounfour-response-intake.md)
+  - [`docs/handoffs/hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md)
+  - [`docs/handoffs/hounfour-rc-shadow-integration-checklist.md`](./hounfour-rc-shadow-integration-checklist.md)
 - **Local fixture directories:**
   - [`fixtures/hounfour-conformance/`](../../fixtures/hounfour-conformance/)
   - [`fixtures/schema-candidates/`](../../fixtures/schema-candidates/)
 - **Local validate command:** `npm run hounfour:handoff` /
-  `npm run hounfour:conformance`
+  `npm run hounfour:conformance` /
+  `npm run hounfour:rc-readiness` (Phase 16, optional helper)
 
 ### Finn — runtime enforcement boundary
 

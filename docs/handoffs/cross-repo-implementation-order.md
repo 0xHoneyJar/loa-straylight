@@ -1,12 +1,23 @@
 # Cross-repo implementation order
 
-> Status: Phase 15. **Coordination artifact only, in
+> Status: Phase 16. **Coordination artifact only, in
 > `loa-straylight`.** This document recommends the order in which
 > the four sibling-repo PRs (Hounfour, Finn, Dixie, Freeside)
 > should be opened, reviewed, and merged. It is **not** cross-repo
-> implementation. Filing or merging the sibling-repo PRs is out of
-> scope for Phase 15 and must happen in the sibling repo, under
-> teammate review.
+> implementation. It is **not** Hounfour integration. Filing or
+> merging the sibling-repo PRs is out of scope and must happen in
+> the sibling repo, under teammate review.
+>
+> Phase 16 update: the Hounfour extraction is now under way in
+> Hounfour cycle-004, accepted-with-adaptation per Jani's response
+> on [`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70).
+> Straylight should not flip any import to
+> `@0xhoneyjar/loa-hounfour` until **v8.5.0-rc.1** ships and the
+> rc shadow-integration checklist passes — see
+> [`hounfour-response-intake.md`](./hounfour-response-intake.md),
+> [`hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md),
+> and
+> [`hounfour-rc-shadow-integration-checklist.md`](./hounfour-rc-shadow-integration-checklist.md).
 >
 > Companion docs:
 > [`cross-repo-handoff-index.md`](./cross-repo-handoff-index.md)
@@ -61,6 +72,41 @@ either:
 
 Both paths are observable failure modes. Shipping Hounfour first
 keeps shape in the class lane where it belongs.
+
+#### Phase 16 update: Hounfour extraction is in Hounfour cycle-004; Straylight waits for v8.5.0-rc.1
+
+Jani's response on issue #70 places the Hounfour extraction in
+**Hounfour cycle-004**, with the canonical surface targeting the
+`@0xhoneyjar/loa-hounfour@^8.5.0` line and a v8.5.0-rc.1 release
+candidate cut from cycle-004 (see
+[`hounfour-response-intake.md`](./hounfour-response-intake.md)
+and
+[`hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md)).
+
+This does not change the implementation order — Hounfour still
+goes first — but it tightens what "first" means for Straylight:
+
+- Straylight **must not** flip any import to
+  `@0xhoneyjar/loa-hounfour` ahead of the v8.5.0-rc.1 tag, even on
+  a feature branch. The only acceptable rc-line pin is the
+  shadow-integration test branch described in
+  [`hounfour-rc-shadow-integration-checklist.md`](./hounfour-rc-shadow-integration-checklist.md),
+  which is reverted before close.
+- Straylight **must not** treat Jani's cycle-004 draft schemas as
+  canonical. Until v8.5.0-rc.1 ships and the rc shadow-integration
+  checklist passes, the wedge owns primitive semantics.
+- The downstream lanes (Finn, Dixie, Freeside) still must wait for
+  **stable schema contracts or explicit mocks** — the rc shadow
+  test branch on the Straylight side is *not* a stable schema
+  contract, even though it pins `^8.5.0-rc.1`. Finn / Dixie /
+  Freeside implementation work should continue to wait for either
+  a stable Hounfour line or an explicit, written-stub commitment
+  per the existing dependency rationale below.
+
+The intent is the same as Phase 15: keep shape in the class lane,
+keep the wedge as the source of truth until canonical Hounfour
+schemas land. The Phase 16 update only clarifies *which* Hounfour
+line / tag triggers the import flip on the Straylight side.
 
 ### Why Finn goes second (and not before Hounfour)
 
