@@ -93,6 +93,22 @@ references:
     `@0xhoneyjar` scope). The follow-up Phase 17 attempt updates
     this doc in place with the inspector's actual output once
     the package installs.
+- **Upstream-review packet (Phase 19A, docs / coordination only —
+  not on `main` as integration):**
+  - [`docs/handoffs/hounfour-v850-shadow-review-packet.md`](./hounfour-v850-shadow-review-packet.md)
+    — narrow upstream-review packet that summarizes the Phase 17B
+    + Phase 18 shadow-inspection findings into seven load-bearing
+    facts (package consumption works; resolves within `^8.5.0`;
+    the 15 net-new v8.5.x schemas are present; `Challenge` and
+    `EstateTransition` deferred to v8.6.0; `audit-event-transition`
+    is `DISCOVERY_NOTE`, not blocker; `safeCanonicalize` subpath
+    remains deferred under gate `no-confirmed-subpath`) and
+    carries a copy-ready GitHub comment for issue #70. Phase 19A
+    does not flip imports, change `package.json` /
+    `package-lock.json`, change the Hounfour dependency, modify
+    `src/straylight/hounfour-alias.ts` or
+    `src/straylight/index.ts`, wire Finn / Dixie / Freeside, edit
+    any sibling repo, or file the upstream comment on its own.
 - **Local fixture directories:**
   - [`fixtures/hounfour-conformance/`](../../fixtures/hounfour-conformance/)
   - [`fixtures/schema-candidates/`](../../fixtures/schema-candidates/)

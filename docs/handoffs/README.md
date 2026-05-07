@@ -204,6 +204,42 @@ npm install @0xhoneyjar/loa-hounfour@^8.5.0
 npm run hounfour:shadow-inspect   # added by the follow-up attempt
 ```
 
+## Phase 19A — Hounfour v8.5.x upstream-review packet
+
+Phase 19A is a **narrow upstream-coordination packet** that
+summarizes the Phase 17B + Phase 18 shadow-inspection findings
+against `@0xhoneyjar/loa-hounfour@^8.5.0` into a copy-ready
+GitHub comment for
+[`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70).
+
+**Phase 19A is not Hounfour integration.** It does not flip any
+wedge import, change `package.json` / `package-lock.json`, change
+the Hounfour dependency range or resolved patch, modify
+`src/straylight/hounfour-alias.ts`, modify
+`src/straylight/index.ts`, wire Finn / Dixie / Freeside runtime,
+inspect or edit any sibling repo, implement `Challenge` or
+`EstateTransition`, reach into unexported Hounfour internals, or
+touch `.loa/` / `.claude/`. Phase 19A is docs / coordination
+only — the canonical evidence lives in the Phase 17B + Phase 18
+findings doc and the existing vitest pins.
+
+| Document | Purpose |
+|---|---|
+| [`hounfour-v850-shadow-review-packet.md`](./hounfour-v850-shadow-review-packet.md) | Phase 19A upstream-review packet: seven load-bearing facts (package consumption works; resolves within `^8.5.0`; the 15 net-new v8.5.x schemas are present; `Challenge` and `EstateTransition` deferred to v8.6.0; `audit-event-transition` is `DISCOVERY_NOTE`, not blocker; `safeCanonicalize` subpath remains deferred under gate `no-confirmed-subpath`), an explicit "Ready-to-copy comment for issue #70" fenced block, and the explicit non-claims (no Finn / Dixie / Freeside runtime wiring; no sibling-repo inspection or fallback; alias boundary remains private). |
+
+The Phase 19A packet consumes the Phase 17B + Phase 18 findings
+under
+[`hounfour-shadow-integration-findings.md`](./hounfour-shadow-integration-findings.md),
+the Phase 16 readiness artifacts
+([`hounfour-response-intake.md`](./hounfour-response-intake.md),
+[`hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md),
+[`hounfour-rc-shadow-integration-checklist.md`](./hounfour-rc-shadow-integration-checklist.md)),
+and the existing Phase 17B + Phase 18 vitest pins under
+[`tests/hounfour-shadow-integration.test.ts`](../../tests/hounfour-shadow-integration.test.ts).
+It produces no fixture changes, no runtime changes, and no
+package changes; filing the upstream comment remains a separate,
+human-reviewed event in the sibling repo.
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
@@ -243,6 +279,11 @@ npm run handoffs:index
   is a working-tree access probe whose findings are recorded in
   [`hounfour-shadow-integration-findings.md`](./hounfour-shadow-integration-findings.md)
   and which does not, on its own, flip any wedge import.
+  **Phase 19A** is an upstream-coordination summary of Phase 17B +
+  Phase 18 staged in
+  [`hounfour-v850-shadow-review-packet.md`](./hounfour-v850-shadow-review-packet.md);
+  it is docs only and does not flip imports, change packages, or
+  file the upstream comment on its own.
 - **Not** Finn integration. Phase 10 stages the contract; the
   runtime-enforcement module ships later in `loa-finn`.
 - **Not** Dixie integration. Phase 12 stages the contract; the
