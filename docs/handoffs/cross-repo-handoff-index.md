@@ -83,12 +83,25 @@ references:
   - [`docs/handoffs/hounfour-response-intake.md`](./hounfour-response-intake.md)
   - [`docs/handoffs/hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md)
   - [`docs/handoffs/hounfour-rc-shadow-integration-checklist.md`](./hounfour-rc-shadow-integration-checklist.md)
+- **Shadow-integration / dependency-flip findings (Phase 17, in
+  progress on a separate branch — not on `main`):**
+  - [`docs/handoffs/hounfour-shadow-integration-findings.md`](./hounfour-shadow-integration-findings.md)
+    — working-tree access-probe outcome, expected
+    schema-availability comparison table, boundary-preservation
+    note, `Challenge` / `EstateTransition` deferral re-affirmed,
+    next-step gate (GitHub Packages auth provisioning for the
+    `@0xhoneyjar` scope). The follow-up Phase 17 attempt updates
+    this doc in place with the inspector's actual output once
+    the package installs.
 - **Local fixture directories:**
   - [`fixtures/hounfour-conformance/`](../../fixtures/hounfour-conformance/)
   - [`fixtures/schema-candidates/`](../../fixtures/schema-candidates/)
 - **Local validate command:** `npm run hounfour:handoff` /
   `npm run hounfour:conformance` /
-  `npm run hounfour:rc-readiness` (Phase 16, optional helper)
+  `npm run hounfour:rc-readiness` (Phase 16, optional helper).
+  The Phase 17 inspector (`npm run hounfour:shadow-inspect`) is
+  added by the follow-up Phase 17 attempt only when the
+  dependency installs.
 
 ### Finn — runtime enforcement boundary
 

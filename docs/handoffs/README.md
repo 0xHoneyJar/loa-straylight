@@ -165,6 +165,45 @@ npm run hounfour:rc-readiness
 `npm run hounfour:handoff` and `npm run handoffs:index` still
 exercise the underlying packet.)
 
+## Phase 17 — Hounfour v8.5.0 shadow-integration / dependency-flip check
+
+Phase 17 is the **separate follow-up PR** authorized by Phase 16
+to attempt the dependency flip to
+`@0xhoneyjar/loa-hounfour@^8.5.0` on a Phase-17-only branch,
+behind a Straylight-side alias / re-export module, with subpath
+imports only, and with `Challenge` / `EstateTransition` kept
+local until Hounfour v8.6.0.
+
+**Phase 17 is not Hounfour integration on `main`.** It does not
+flip any wedge import on `main`, does not wire Finn / Dixie /
+Freeside runtime, does not replace Straylight semantics with
+Hounfour semantics, does not implement `Challenge` /
+`EstateTransition`, and does not commit or open a PR. Its
+deliverable is a working-tree findings doc on the Phase 17
+branch.
+
+| Document | Purpose |
+|---|---|
+| [`hounfour-shadow-integration-findings.md`](./hounfour-shadow-integration-findings.md) | Phase 17 working-tree findings: access-gate result (e.g. 401 if GitHub Packages auth for the `@0xhoneyjar` scope has not been provisioned), the *expected* schema-availability comparison table derived from the Phase 16 adaptation-delta doc, the boundary preservation note (no change to `src/straylight/index.ts`), the explicit deferral of `Challenge` / `EstateTransition` to v8.6.0, the next-step gate (auth provisioning), and the explicit out-of-scope list. The follow-up Phase 17 attempt updates this doc in place with the inspector's actual output once the package installs. |
+
+The Phase 17 packet consumes the Phase 16 readiness artifacts
+([`hounfour-rc-shadow-integration-checklist.md`](./hounfour-rc-shadow-integration-checklist.md),
+[`hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md),
+[`hounfour-response-intake.md`](./hounfour-response-intake.md))
+and a project-scoped `.npmrc` mapping `@0xhoneyjar` to GitHub
+Packages (registry-only — no auth token in the project file).
+The dependency itself is added to `package.json` only when the
+install actually succeeds; on the access-gate failure recorded
+by this attempt, neither `package.json` nor `package-lock.json`
+is mutated.
+
+Validate locally (after auth is provisioned):
+
+```bash
+npm install @0xhoneyjar/loa-hounfour@^8.5.0
+npm run hounfour:shadow-inspect   # added by the follow-up attempt
+```
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
@@ -200,7 +239,10 @@ npm run handoffs:index
   post-intake upstream update — it is still docs / readiness
   only, not integration. The dependency flip to
   `@0xhoneyjar/loa-hounfour@^8.5.0` is **Phase 17**, a separate
-  follow-up PR on Straylight's timeline.
+  follow-up PR on Straylight's timeline; Phase 17's first attempt
+  is a working-tree access probe whose findings are recorded in
+  [`hounfour-shadow-integration-findings.md`](./hounfour-shadow-integration-findings.md)
+  and which does not, on its own, flip any wedge import.
 - **Not** Finn integration. Phase 10 stages the contract; the
   runtime-enforcement module ships later in `loa-finn`.
 - **Not** Dixie integration. Phase 12 stages the contract; the
