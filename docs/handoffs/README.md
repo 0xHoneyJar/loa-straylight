@@ -465,6 +465,73 @@ npm run typecheck
 npm test
 ```
 
+## Phase 20E — Recall Wedge closeout packet
+
+Phase 20E is a **narrow, in-repo closeout packet** staged on the
+`phase-20e-recall-wedge-closeout` branch inside `loa-straylight`
+after the Phase 20D endpoint-boundary planning packet. It closes
+the Phase 20 Recall Wedge **pre-integration** lane by summarizing
+what Phases 20A, 20B, 20C, and 20D established locally, what
+remains unimplemented, and what must be true before Phase 21
+endpoint / runtime integration begins. Phase 20E is **closeout
+only** — it is **not endpoint-wired**, **not runtime-wired**,
+**not the full Recall Wedge**, **not governed recall in Finn /
+Dixie / Freeside runtime**, and **not Hounfour-side schema work**.
+**No endpoint / runtime integration is authorized by this packet.**
+
+Phase 20E does **not** flip any wedge import, change `package.json`
+/ `package-lock.json`, change the Hounfour dependency range or
+resolved patch, modify [`../../src/straylight/`](../../src/straylight/),
+modify
+[`../../scripts/demo-recall-wedge.ts`](../../scripts/demo-recall-wedge.ts)
+or
+[`../../scripts/demo-recall-wedge.lib.ts`](../../scripts/demo-recall-wedge.lib.ts),
+wire any sibling-repo runtime, add a Dixie endpoint, add a Finn
+endpoint, edit any sibling repo, implement `Challenge` or
+`EstateTransition`, reach into unexported Hounfour internals, add a
+`safeCanonicalize` subpath import, publish a public commitment root,
+add a network surface, change persistence, or touch `.loa/` /
+`.claude/`. It does **not** commit and does **not** open a PR. It
+also does **not** add any new test, fixture, script, or `src/`
+module — the Phase 20B per-category receipt pins and the Phase 20C
+demo-shape pin already cover the local evidence this packet
+narrates.
+
+| Document | Purpose |
+|---|---|
+| [`phase-20e-recall-wedge-closeout.md`](./phase-20e-recall-wedge-closeout.md) | Phase 20E closeout summary: executive summary (closeout only; Phase 20 local Recall Wedge prep complete; no endpoint / runtime integration authorized), Phase 20 recap (20A decision-lock; 20B local `executeRecall` behavior pinned; 20C local demo / evidence output shape pinned; 20D endpoint-host boundary documented), what is locally proven (`RecallRequest` / `RecallPack` / `RecallReceipt` / `audit_review` / `audit_chain_verification` shape evidence-backed; local recall behavior pinned by tests; local demo evidence reproducible; endpoint-host candidates and integration boundary documented), what is not proven (no Dixie endpoint, no Finn runtime integration, no Freeside integration, no Hounfour Straylight schemas, no `Challenge` or `EstateTransition` implementation, no public anchor / commitment-root implementation, no production persistence wired, no governed recall in sibling-runtime production surfaces), Phase 21 entry conditions (Hounfour / Jani feedback received or teammate review approves proceeding; endpoint host selected; schema ownership boundary reaffirmed; runtime persistence / audit owner reaffirmed; non-scope remains explicit), Phase 21 non-go conditions (Hounfour feedback still pending and no teammate review approves proceeding → do not begin endpoint / runtime wiring; endpoint host still ambiguous → do not wire Dixie or Finn; schema ownership still ambiguous → do not add Hounfour schemas; `Challenge` / `EstateTransition` still deferred → do not implement them locally), explicit non-scope (no `src/` changes, no tests, no scripts, no package changes, no Dixie endpoint, no Finn endpoint, no Freeside integration, no Hounfour schemas, no `Challenge`, no `EstateTransition`, no `safeCanonicalize` work, no public anchors, no persistence wiring, no sibling repo edits), what this packet does *not* claim, and validation evidence. |
+
+The Phase 20E packet consumes the Phase 20A decision-lock packet
+([`phase-20a-recall-wedge-readiness.md`](./phase-20a-recall-wedge-readiness.md)),
+the Phase 20A-staged candidate scope
+([`phase-20b-implementation-candidate-scope.md`](./phase-20b-implementation-candidate-scope.md)),
+the Phase 20B local-scaffold packet
+([`phase-20b-recall-wedge-local-scaffold.md`](./phase-20b-recall-wedge-local-scaffold.md)),
+the Phase 20C demo / evidence packet
+([`phase-20c-recall-wedge-demo-evidence.md`](./phase-20c-recall-wedge-demo-evidence.md)),
+the Phase 20D endpoint-boundary packet
+([`phase-20d-recall-wedge-endpoint-boundary.md`](./phase-20d-recall-wedge-endpoint-boundary.md)),
+the five ADR-020-series decision-locks under
+[`../decisions/`](../decisions/), the Phase 19A upstream-review
+packet
+([`hounfour-v850-shadow-review-packet.md`](./hounfour-v850-shadow-review-packet.md))
+that pins the load-bearing pending feedback for Phase 21 entry,
+and the existing Recall Wedge implementation under
+[`../../src/straylight/`](../../src/straylight/) (read-only). It
+produces no fixture changes, no runtime changes, no script changes,
+no test additions, no package changes, and no new sibling-repo
+handoff packets. The four filed sibling-repo issue rows above
+(Hounfour / Finn / Dixie / Freeside) and the prior Phase 20A /
+Phase 20B / Phase 20C / Phase 20D in-repo rows are unchanged by
+Phase 20E.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+```
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
@@ -551,7 +618,15 @@ npm run handoffs:index
   runtime-context endpoint; it is **not endpoint-wired**, **not
   runtime-wired**, no Dixie endpoint, no Finn endpoint, no
   Freeside integration, no Hounfour schema work, and not the
-  full Recall Wedge.
+  full Recall Wedge. **Phase 20E**
+  ([`phase-20e-recall-wedge-closeout.md`](./phase-20e-recall-wedge-closeout.md))
+  is the **closeout packet** for the Phase 20 Recall Wedge
+  **pre-integration** lane — it summarizes what 20A / 20B / 20C /
+  20D established locally, what remains unimplemented, and what
+  must be true before Phase 21 endpoint / runtime integration
+  begins; it authorizes **no** endpoint / runtime integration, is
+  **not endpoint-wired** and **not runtime-wired**, adds no test /
+  fixture / script / `src/` change, and is **Phase 20E only**.
 - **Not** a license to begin sibling work ahead of the schedule.
   Until the sibling repo's PR lands, the wedge owns every primitive
   the packets describe.
