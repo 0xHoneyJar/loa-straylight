@@ -385,6 +385,100 @@ Recommended next phase (out of scope for Phase 17B):
   surface unchanged and consume the alias module only at
   internal call sites). Phase 17B defers this decision.
 
+## Phase 18: boundary hardening
+
+Phase 18 records and tests the remaining v8.5.x deltas surfaced
+by Phase 17B without changing any wedge runtime behavior. It
+hardens the inspector around the audit-event name drift, lifts
+the safeCanonicalize and Challenge / EstateTransition deferrals
+into structured report fields, and pins a static disposition
+table in code. It does **not** wire Finn / Dixie / Freeside, does
+**not** import Hounfour from `src/straylight/index.ts`, does
+**not** re-export the alias module, does **not** add package-root
+imports, and does **not** edit sibling repos.
+
+### Phase 18 decisions
+
+1. **`audit-event-transition.json` formally classified as
+   `DISCOVERY_NOTE`.** The Phase 17B inspector reported this row
+   as `MISSING` and pushed a free-text note. Phase 18 introduces
+   the `DISCOVERY_NOTE` disposition (replacing the dead Phase 17B
+   `NAME_DRIFT` placeholder), flags the row with `discoveryNote:
+   true` in `STRAYLIGHT_CANDIDATES`, and adjusts the classifier
+   to emit `DISCOVERY_NOTE` when a flagged row's expected schema
+   is absent in v8.5.x. `DISCOVERY_NOTE` is informational by
+   design and is never a blocker. The local Straylight fixture
+   shape remains unchanged in Phase 18; the resolution path
+   (rename, request, or reclassify) is still a deliberate later-
+   phase decision.
+
+2. **`safeCanonicalize` deferral promoted to a structured
+   `deferredSubpaths` entry.** The Phase 17B free-text
+   `deferredSurfaceDecisions` string is preserved for human
+   summary and is now derived from the structured entry. Each
+   structured entry carries `{ symbol, gate, reason,
+   notExportedSubpaths }`. The `safeCanonicalize` entry uses
+   `gate: 'no-confirmed-subpath'` and records
+   `@0xhoneyjar/loa-hounfour/canonicalize` and
+   `@0xhoneyjar/loa-hounfour/utilities` as confirmed-not-exported.
+   The Phase 18 test suite reads the installed Hounfour
+   `package.json` and asserts neither subpath appears in the
+   exports map -- the gate is sourced from runtime evidence, not
+   from docs alone.
+
+3. **`Challenge` / `EstateTransition` deferral promoted to a
+   structured `cycleFiveDeferrals` entry.** Each entry carries
+   `{ name, deferredUntil: '8.6.0', shipsInV85x, reason }`. The
+   `shipsInV85x` field is sourced from the same
+   `DEFERRED_SCHEMA_PATTERNS` sweep that drives the existing
+   `deferredSchemas` list, so the structured view and the
+   pattern-based view cannot disagree (Phase 18 tests pin this).
+   The deferral remains a Straylight-side constraint until
+   Hounfour cycle-005 / v8.6.0 ships canonical schemas; the
+   alias module continues to import neither name from any
+   subpath.
+
+4. **Static `DISPOSITION_TABLE` exported from the inspector
+   library.** The six dispositions (`MATCH`, `EXTEND`, `FOLD`,
+   `MISSING`, `DEFERRED`, `DISCOVERY_NOTE`) are documented in
+   code with one-line descriptions and an `isBlocker: false`
+   flag. The Phase 18 test suite pins the table covers exactly
+   these six keys, contains no `NAME_DRIFT` legacy value, and
+   that every observed candidate disposition is a member of the
+   table.
+
+### Phase 18 boundary preservation (re-affirmed)
+
+- `src/straylight/index.ts` is unchanged at the Hounfour
+  boundary -- no Hounfour imports, no alias-module re-export, no
+  Hounfour name leakage.
+- `src/straylight/hounfour-alias.ts` is unchanged -- no new
+  imports of `Challenge`, `EstateTransition`, or
+  `safeCanonicalize` (Phase 18 tests sweep all three explicitly
+  in a single `it.each` block).
+- `package.json` is unchanged -- the `^8.5.0` range is preserved
+  and no new scripts are added.
+- The inspector CLI (`scripts/inspect-hounfour-shadow.ts`) is
+  unchanged; only the lib (`scripts/inspect-hounfour-shadow.lib.ts`)
+  is touched.
+- Phase 18 does not commit and does not open a PR. The deferrals
+  it documents (audit-event resolution, safeCanonicalize subpath,
+  alias-module re-export from `src/straylight/index.ts`) remain
+  open for a later phase.
+
+### Phase 18 verification
+
+- `npm run typecheck` clean.
+- `npm run hounfour:shadow-inspect` exits 0; the report contains
+  `deferredSubpaths` (one entry: `safeCanonicalize`),
+  `cycleFiveDeferrals` (two entries: `Challenge`,
+  `EstateTransition`), and at least one `DISCOVERY_NOTE`
+  candidate (`audit-event-transition.json`).
+- `npm test` -- 633 tests passing (101 in
+  `tests/hounfour-shadow-integration.test.ts`, of which 38 are
+  new Phase 18 pins covering the four decisions above).
+- No blockers surfaced; no Hounfour-side issue filed.
+
 ## Out-of-scope for this Phase 17 attempt
 
 The following remain explicitly out of scope, both on this
