@@ -108,7 +108,13 @@ schema surface:
 - `RecallReceipt`, not `straylight.recall_receipt.v0`
 - `Keyring`, not `straylight.keyring.v0`
 - `ForgetRecord`, not `straylight.forget_record.v0`
-- `AuditEvent`, not `straylight.audit_event.v0`
+- `AuditEvent`, not `straylight.audit_event.v0` *(Phase 18: the
+  shipped v8.5.x surface ships no `audit-event` schema; the
+  Straylight fixture `audit-event-transition.json` is now formally
+  classified by the inspector as `DISCOVERY_NOTE` -- informational,
+  never a blocker. See
+  [`hounfour-shadow-integration-findings.md`](./hounfour-shadow-integration-findings.md)
+  §"Phase 18: boundary hardening".)*
 - `CommitmentRoot`, not `straylight.commitment_root.v0`
 
 Reasoning (Hounfour-side, recorded here for Straylight's intake):
@@ -229,6 +235,17 @@ Implication for Straylight:
 - Audit-chain bytes computed before vs. after the migration must
   match for every existing fixture. Any fixture that re-hashes
   differently is a Hounfour blocker, not a Straylight migration.
+
+> **Phase 18 footnote.** `safeCanonicalize` remains deferred
+> pending a confirmed Hounfour exported subpath. The v8.5.x
+> exports map ships no `./canonicalize` or `./utilities` subpath;
+> importing from the package root is forbidden by delta #9, and
+> reaching into unexported internals is forbidden by the
+> Phase 17B / Phase 18 user-facing constraint. The Phase 18
+> inspector now records this as a structured `deferredSubpaths`
+> entry with `gate: 'no-confirmed-subpath'`. See
+> [`hounfour-shadow-integration-findings.md`](./hounfour-shadow-integration-findings.md)
+> §"Phase 18: boundary hardening".
 
 ## 7. `Challenge` deferral to cycle-005 / v8.6.0 follow-on
 

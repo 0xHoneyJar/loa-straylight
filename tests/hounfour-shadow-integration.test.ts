@@ -37,6 +37,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DEFERRED_SCHEMA_PATTERNS,
+  DISPOSITION_TABLE,
   HOUNFOUR_PACKAGE_NAME,
   ID_VERSION_REGEX,
   INTENDED_DEPENDENCY_RANGE,
@@ -390,5 +391,312 @@ describe('phase 17B -- inspector files preserve subpath discipline themselves', 
       expect(/from\s+['"](?:node:)?https?\b/.test(src)).toBe(false);
       expect(/octokit/i.test(src)).toBe(false);
     }
+  });
+});
+
+// ----------------------------------------------------------------
+// Phase 18 -- boundary-hardening pins.
+//
+// Phase 18 hardens the v8.5.x boundary by:
+//
+//   * formally classifying audit-event-transition.json as
+//     DISCOVERY_NOTE (never MISSING, never blocker),
+//   * recording safeCanonicalize as a structured deferredSubpaths
+//     entry with gate `no-confirmed-subpath`,
+//   * recording Challenge / EstateTransition as structured
+//     cycleFiveDeferrals entries (mirroring the existing schema
+//     absence checks),
+//   * exporting a static DISPOSITION_TABLE that pins the six
+//     classifier dispositions.
+//
+// These pins are additive; the Phase 17B describe blocks above
+// continue to enforce the original contract.
+
+describe('phase 18 -- DISPOSITION_TABLE pins the six classifier dispositions', () => {
+  it('exports the table with six entries', () => {
+    expect(DISPOSITION_TABLE.length).toBe(6);
+  });
+
+  it('covers MATCH, EXTEND, FOLD, MISSING, DEFERRED, DISCOVERY_NOTE in any order', () => {
+    const seen = new Set(DISPOSITION_TABLE.map((d) => d.disposition));
+    for (const expected of [
+      'MATCH',
+      'EXTEND',
+      'FOLD',
+      'MISSING',
+      'DEFERRED',
+      'DISCOVERY_NOTE',
+    ] as const) {
+      expect(seen.has(expected), `missing disposition: ${expected}`).toBe(
+        true,
+      );
+    }
+  });
+
+  it('does not retain the dead Phase 17B value NAME_DRIFT', () => {
+    const seen = new Set(DISPOSITION_TABLE.map((d) => d.disposition));
+    expect(
+      (seen as Set<string>).has('NAME_DRIFT'),
+      'NAME_DRIFT was renamed to DISCOVERY_NOTE in Phase 18',
+    ).toBe(false);
+  });
+
+  it('declares every entry as non-blocker (Phase 18 informational classifier surface)', () => {
+    for (const entry of DISPOSITION_TABLE) {
+      expect(
+        entry.isBlocker,
+        `${entry.disposition} must not be marked as a blocker on the classifier surface`,
+      ).toBe(false);
+    }
+  });
+
+  it('every entry carries a non-empty description', () => {
+    for (const entry of DISPOSITION_TABLE) {
+      expect(typeof entry.description).toBe('string');
+      expect(entry.description.length).toBeGreaterThan(16);
+    }
+  });
+});
+
+describe('phase 18 -- audit-event-transition is classified as DISCOVERY_NOTE (not MISSING, not blocker)', () => {
+  const report = inspect();
+
+  const auditMapping = STRAYLIGHT_CANDIDATES.find(
+    (c) => c.straylightCandidate === 'audit-event-transition.json',
+  );
+  const auditResult = report.candidates.find(
+    (c) => c.straylightCandidate === 'audit-event-transition.json',
+  );
+
+  it('the row exists in STRAYLIGHT_CANDIDATES', () => {
+    expect(auditMapping).toBeDefined();
+  });
+
+  it('the row is flagged with discoveryNote: true (Phase 18 classifier opt-in)', () => {
+    expect(auditMapping?.discoveryNote).toBe(true);
+  });
+
+  it('the row has expected stem `audit-event` (Phase 16 disposition preserved)', () => {
+    expect(auditMapping?.expectedHounfourSchema).toBe('audit-event');
+  });
+
+  it('the inspector observed disposition is DISCOVERY_NOTE', () => {
+    expect(auditResult).toBeDefined();
+    expect(auditResult?.observedDisposition).toBe('DISCOVERY_NOTE');
+  });
+
+  it('the inspector observed disposition is NOT MISSING (Phase 18 reclassification)', () => {
+    expect(auditResult?.observedDisposition).not.toBe('MISSING');
+  });
+
+  it('audit-event-transition does not appear in report.blockers', () => {
+    const auditBlockers = report.blockers.filter((b) =>
+      /audit-event/i.test(b),
+    );
+    expect(auditBlockers).toEqual([]);
+  });
+
+  it('audit-event-transition surfaces in report.notes as a DISCOVERY_NOTE entry', () => {
+    const discoveryNotes = report.notes.filter(
+      (n) =>
+        /audit-event-transition/i.test(n) && /DISCOVERY_NOTE/.test(n),
+    );
+    expect(discoveryNotes.length).toBeGreaterThan(0);
+  });
+
+  it('summarizeReport prints DISCOVERY_NOTE for the audit-event row', () => {
+    const out = summarizeReport(report);
+    expect(/\[DISCOVERY_NOTE\s*\]\s+audit-event-transition/.test(out)).toBe(
+      true,
+    );
+  });
+});
+
+describe('phase 18 -- safeCanonicalize subpath stays deferred with gate `no-confirmed-subpath`', () => {
+  const report = inspect();
+
+  it('report.deferredSubpaths contains a safeCanonicalize entry', () => {
+    const entry = report.deferredSubpaths.find(
+      (d) => d.symbol === 'safeCanonicalize',
+    );
+    expect(entry, 'safeCanonicalize entry expected').toBeDefined();
+  });
+
+  it('the safeCanonicalize entry uses gate `no-confirmed-subpath`', () => {
+    const entry = report.deferredSubpaths.find(
+      (d) => d.symbol === 'safeCanonicalize',
+    );
+    expect(entry?.gate).toBe('no-confirmed-subpath');
+  });
+
+  it('the safeCanonicalize entry records the canonicalize / utilities subpaths as not-exported', () => {
+    const entry = report.deferredSubpaths.find(
+      (d) => d.symbol === 'safeCanonicalize',
+    );
+    expect(entry?.notExportedSubpaths).toContain(
+      '@0xhoneyjar/loa-hounfour/canonicalize',
+    );
+    expect(entry?.notExportedSubpaths).toContain(
+      '@0xhoneyjar/loa-hounfour/utilities',
+    );
+  });
+
+  it('installed Hounfour package.json exports map ships no ./canonicalize or ./utilities subpath', () => {
+    const pkg = JSON.parse(read(HOUNFOUR_PACKAGE_JSON)) as {
+      exports?: Record<string, unknown>;
+    };
+    const exportsMap = pkg.exports ?? {};
+    expect(
+      Object.prototype.hasOwnProperty.call(exportsMap, './canonicalize'),
+    ).toBe(false);
+    expect(
+      Object.prototype.hasOwnProperty.call(exportsMap, './utilities'),
+    ).toBe(false);
+  });
+
+  it('alias module does NOT import safeCanonicalize from any subpath', () => {
+    const aliasSrc = readFileSync(ALIAS_MODULE, 'utf8');
+    expect(
+      /^\s*import[^;]*\bsafeCanonicalize\b/m.test(aliasSrc),
+    ).toBe(false);
+  });
+
+  it('deferredSurfaceDecisions free-text mirrors the structured deferredSubpaths entry', () => {
+    const joined = report.deferredSurfaceDecisions.join('\n');
+    expect(/safeCanonicalize/.test(joined)).toBe(true);
+    expect(/no-confirmed-subpath/.test(joined)).toBe(true);
+  });
+});
+
+describe('phase 18 -- Challenge and EstateTransition stay deferred until Hounfour v8.6.0', () => {
+  const report = inspect();
+
+  it('report.cycleFiveDeferrals contains exactly two entries: Challenge and EstateTransition', () => {
+    expect(report.cycleFiveDeferrals.length).toBe(2);
+    const names = report.cycleFiveDeferrals.map((e) => e.name).sort();
+    expect(names).toEqual(['Challenge', 'EstateTransition']);
+  });
+
+  it.each(['Challenge', 'EstateTransition'] as const)(
+    '%s entry is queued for v8.6.0',
+    (name) => {
+      const entry = report.cycleFiveDeferrals.find(
+        (e) => e.name === name,
+      );
+      expect(entry?.deferredUntil).toBe('8.6.0');
+    },
+  );
+
+  it.each(['Challenge', 'EstateTransition'] as const)(
+    '%s does not ship in the installed v8.5.x package (shipsInV85x: false)',
+    (name) => {
+      const entry = report.cycleFiveDeferrals.find(
+        (e) => e.name === name,
+      );
+      expect(entry?.shipsInV85x).toBe(false);
+    },
+  );
+
+  it('the alias module imports neither Challenge nor EstateTransition from any subpath', () => {
+    const aliasSrc = readFileSync(ALIAS_MODULE, 'utf8');
+    expect(
+      /^\s*import[^;]*\bChallenge\b[^;]*from/m.test(aliasSrc),
+    ).toBe(false);
+    expect(
+      /^\s*import[^;]*\bEstateTransition\b[^;]*from/m.test(aliasSrc),
+    ).toBe(false);
+  });
+
+  it('the deferral does not surface a blocker (informational only when honored at runtime)', () => {
+    const cycleFiveBlockers = report.blockers.filter((b) =>
+      /challenge|estate-transition/i.test(b),
+    );
+    expect(cycleFiveBlockers).toEqual([]);
+  });
+
+  it('the structured cycleFiveDeferrals view stays in sync with deferredSchemas absence checks', () => {
+    // Both views answer the same question: does v8.5.x ship a
+    // Challenge / EstateTransition schema? They MUST agree.
+    const challengeShips =
+      report.cycleFiveDeferrals.find((e) => e.name === 'Challenge')
+        ?.shipsInV85x ?? true;
+    const estateShips =
+      report.cycleFiveDeferrals.find((e) => e.name === 'EstateTransition')
+        ?.shipsInV85x ?? true;
+
+    const challengeSchemaPasses = report.deferredSchemas.find((d) =>
+      /challenge/i.test(d.pattern),
+    )?.pass;
+    const estateSchemaPasses = report.deferredSchemas.find((d) =>
+      /estate-transition/i.test(d.pattern),
+    )?.pass;
+
+    // schema-pass: TRUE when no matching schema files (deferral
+    // honored). cycleFive-shipsInV85x: TRUE when the schema ships.
+    // They must be opposites.
+    expect(challengeShips).toBe(!challengeSchemaPasses);
+    expect(estateShips).toBe(!estateSchemaPasses);
+  });
+});
+
+describe('phase 18 -- alias module is unchanged at the boundary (Challenge / EstateTransition / safeCanonicalize all out)', () => {
+  const aliasSrc = readFileSync(ALIAS_MODULE, 'utf8');
+
+  it.each(['Challenge', 'EstateTransition', 'safeCanonicalize'] as const)(
+    'alias module does not import %s from any module',
+    (symbol) => {
+      const pattern = new RegExp(
+        `^\\s*import[^;]*\\b${symbol}\\b[^;]*from`,
+        'm',
+      );
+      expect(pattern.test(aliasSrc)).toBe(false);
+    },
+  );
+
+  it.each(['Challenge', 'EstateTransition', 'safeCanonicalize'] as const)(
+    'alias module does not export %s',
+    (symbol) => {
+      const pattern = new RegExp(
+        `^\\s*export[^;]*\\b${symbol}\\b`,
+        'm',
+      );
+      expect(pattern.test(aliasSrc)).toBe(false);
+    },
+  );
+});
+
+describe('phase 18 -- inspector report shape carries the new structured fields without breaking existing surface', () => {
+  const report = inspect();
+
+  it('deferredSubpaths is an array', () => {
+    expect(Array.isArray(report.deferredSubpaths)).toBe(true);
+  });
+
+  it('cycleFiveDeferrals is an array', () => {
+    expect(Array.isArray(report.cycleFiveDeferrals)).toBe(true);
+  });
+
+  it('every candidate observedDisposition value is a member of the DISPOSITION_TABLE keys', () => {
+    const allowed = new Set(DISPOSITION_TABLE.map((d) => d.disposition));
+    for (const c of report.candidates) {
+      expect(
+        allowed.has(c.observedDisposition),
+        `unexpected disposition: ${c.observedDisposition}`,
+      ).toBe(true);
+    }
+  });
+
+  it('at least one candidate is observed as DISCOVERY_NOTE (audit-event-transition)', () => {
+    const discoveryRows = report.candidates.filter(
+      (c) => c.observedDisposition === 'DISCOVERY_NOTE',
+    );
+    expect(discoveryRows.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('blockers list remains empty under Phase 18 hardening', () => {
+    expect(
+      report.blockers,
+      `unexpected blockers under Phase 18:\n${report.blockers.join('\n')}`,
+    ).toEqual([]);
   });
 });
