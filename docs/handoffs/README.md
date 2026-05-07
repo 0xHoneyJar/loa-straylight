@@ -117,6 +117,54 @@ Validate locally:
 npm run freeside:surface
 ```
 
+## Phase 16 — Hounfour response intake / rc readiness (rc.1 fired, v8.5.0 final shipped)
+
+Phase 16 records Jani's response to the Phase 9 Hounfour handoff
+(filed as
+[`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70))
+and the post-intake upstream update: **v8.5.0-rc.1 has fired**
+(squash SHA `c94bcd22` on `loa-hounfour`) and **v8.5.0 final has
+shipped** (`@0xhoneyjar/loa-hounfour@8.5.0`, tag `v8.5.0`,
+`main` HEAD `ea98924d`, `$id`s under
+`https://schemas.0xhoneyjar.com/loa-hounfour/8.5.0/`).
+
+**Phase 16 is not Hounfour integration.** It does not flip
+imports, add a Hounfour dependency, or change Phase 0–15 runtime
+behavior. The dependency flip to
+`@0xhoneyjar/loa-hounfour@^8.5.0` is now **eligible** as of
+v8.5.0 final shipping and is authorized for a **separate
+follow-up PR — Phase 17 — on Straylight's timeline**, not this
+PR.
+
+| Document | Purpose |
+|---|---|
+| [`hounfour-response-intake.md`](./hounfour-response-intake.md) | Disposition counts (9 REUSE / 4 EXTEND / ~21 ADD-NEW / 6 DEFER to cycle-005 / 1 FOLD of `CandidateAssertion` into `Assertion` with `status: "candidate"`), the "accepted-with-adaptation, not direct import" framing, and the post-intake upstream update recording rc.1 fired and v8.5.0 final shipped. Links back to issue #70. |
+| [`hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md) | Per-delta accepted-with-adaptation table updated for v8.5.0 final: `^8.5.0` package target (not `0.1.x`), bare-PascalCase `$id` naming (`$id`s under `/8.5.0/`), Straylight-side alias / re-export strategy, `CapabilityScope` harmonization, `ForgetRecord` 4-variant model, `safeCanonicalize` (NFC + RFC 8785 + 100 KB normative cap), `Challenge` / `EstateTransition` deferral to cycle-005 / v8.6.0 follow-on, subpath import discipline, cross-version transitive risk through `AgentIdentity`, constraint-ID collapse risk, the 15 net-new rc.1 schemas, `UnverifiedObligationsManifest` evaluator/reason widening (pattern-match by `rule_id` + `reason`), and `ClaimGrounding` strict-additive `external_reference` / `external_uri` and `derived_inference` / `inference_basis`. |
+| [`hounfour-rc-shadow-integration-checklist.md`](./hounfour-rc-shadow-integration-checklist.md) | Readiness evidence + Phase 17 dependency-flip checklist (rc.1 / v8.5.0 final gates marked satisfied): pin `@0xhoneyjar/loa-hounfour@^8.5.0` on the Phase 17 test branch only, map imports through an alias module on explicit subpaths, alias `AgentIdentity` as `Actor` if needed, validate schema candidates and conformance vectors against Hounfour validators, prove canonical-hash determinism and 100 KB cap behavior, keep `Challenge` and `EstateTransition` local until cycle-005 / v8.6.0, and file new findings against the live v8.5.0 line. |
+
+The Phase 16 packet consumes the Phase 9 handoff packet, the
+Phase 6 / 7 / 8 schema-candidate inventory under
+[`docs/schema-candidates/`](../schema-candidates/), the
+Phase 8 conformance vectors under
+[`fixtures/hounfour-conformance/`](../../fixtures/hounfour-conformance/),
+Jani's response on
+[issue #70](https://github.com/0xHoneyJar/loa-hounfour/issues/70),
+and the post-intake upstream update recording rc.1 fired (squash
+SHA `c94bcd22`) and v8.5.0 final shipped
+(`@0xhoneyjar/loa-hounfour@8.5.0`). It produces no fixture
+changes and no runtime changes; the dependency flip itself is
+**Phase 17**, a separate follow-up PR.
+
+Validate locally:
+
+```bash
+npm run hounfour:rc-readiness
+```
+
+(The `hounfour:rc-readiness` script is optional. If absent,
+`npm run hounfour:handoff` and `npm run handoffs:index` still
+exercise the underlying packet.)
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
@@ -145,7 +193,14 @@ npm run handoffs:index
 ## What this directory is *not*
 
 - **Not** Hounfour integration. Phase 9 stages the contract; the
-  schema move happens later in `loa-hounfour`.
+  schema move happens later in `loa-hounfour` (rc.1 fired at
+  squash SHA `c94bcd22`; v8.5.0 final shipped as
+  `@0xhoneyjar/loa-hounfour@8.5.0`). Phase 16 records Jani's
+  "accepted-with-adaptation" response on issue #70 and the
+  post-intake upstream update — it is still docs / readiness
+  only, not integration. The dependency flip to
+  `@0xhoneyjar/loa-hounfour@^8.5.0` is **Phase 17**, a separate
+  follow-up PR on Straylight's timeline.
 - **Not** Finn integration. Phase 10 stages the contract; the
   runtime-enforcement module ships later in `loa-finn`.
 - **Not** Dixie integration. Phase 12 stages the contract; the

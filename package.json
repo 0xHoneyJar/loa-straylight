@@ -17,7 +17,8 @@
     "finn:enforcement": "vite-node scripts/export-finn-enforcement-fixtures.ts",
     "dixie:recall": "vite-node scripts/export-dixie-governed-recall-fixtures.ts",
     "freeside:surface": "vite-node scripts/export-freeside-community-surface-fixtures.ts",
-    "handoffs:index": "vite-node scripts/print-cross-repo-handoff-index.ts"
+    "handoffs:index": "vite-node scripts/print-cross-repo-handoff-index.ts",
+    "hounfour:rc-readiness": "vite-node scripts/print-hounfour-rc-readiness.ts"
   },
   "engines": {
     "node": ">=20"
