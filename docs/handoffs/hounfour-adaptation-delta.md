@@ -2,19 +2,27 @@
 
 > Status: Phase 16. **Adaptation-delta artifact only, in
 > `loa-straylight`.** This document enumerates the deltas between
-> the Phase 9 Straylight handoff and Jani's response on
+> the Phase 9 Straylight handoff and what Hounfour actually
+> shipped on the v8.5.0 line, beginning with Jani's response on
 > [`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70)
-> — i.e. what Hounfour will ship in v8.5.0-rc.1 that differs from
-> what the Phase 9 handoff proposed. It is **not** Hounfour
-> integration. It does **not** flip imports, add a Hounfour
-> dependency, or change Phase 0–15 runtime behavior.
+> and updated for the v8.5.0-rc.1 cut (squash SHA `c94bcd22`) and
+> the v8.5.0 final cut (`@0xhoneyjar/loa-hounfour@8.5.0`, tag
+> `v8.5.0`, `main` HEAD `ea98924d`, `$id`s resolving under
+> `https://schemas.0xhoneyjar.com/loa-hounfour/8.5.0/`). It is
+> **not** Hounfour integration. It does **not** flip imports, add
+> a Hounfour dependency, or change Phase 0–15 runtime behavior in
+> this PR. The dependency flip to
+> `@0xhoneyjar/loa-hounfour@^8.5.0` is authorized for a separate
+> follow-up PR (Phase 17), not Phase 16.
 >
 > Companion docs:
 > [`hounfour-response-intake.md`](./hounfour-response-intake.md)
-> (the disposition counts and "accepted-with-adaptation" framing)
-> and
+> (the disposition counts, "accepted-with-adaptation" framing,
+> and the post-intake upstream update recording rc.1 fired and
+> v8.5.0 final shipped) and
 > [`hounfour-rc-shadow-integration-checklist.md`](./hounfour-rc-shadow-integration-checklist.md)
-> (the future v8.5.0-rc.1 shadow-integration window plan).
+> (the rc shadow-integration plan, now reframed as readiness
+> evidence + the Phase 17 dependency-flip checklist).
 
 ## Why a delta doc
 
@@ -41,38 +49,48 @@ This document pins each delta in one place so:
 
 ## Delta table (summary)
 
-| # | Delta | Owner | Phase 9 handoff position | v8.5.0-rc.1 / cycle-004 position |
+| # | Delta | Owner | Phase 9 handoff position | v8.5.0 line position (rc.1 fired, final shipped) |
 |---|---|---|---|---|
-| 1 | Package version target | Hounfour | `@loa/hounfour@0.x` (0.1.x line) | `@0xhoneyjar/loa-hounfour@^8.5.0` / `^8.5.0-rc.1` |
-| 2 | `$id` naming convention | Hounfour | `straylight.<type>.v0` style implied by handoff | bare PascalCase `$id` (e.g. `Assertion`, `RecallReceipt`), not `straylight.<type>.v0` |
+| 1 | Package version target | Hounfour | `@loa/hounfour@0.x` (0.1.x line) | `@0xhoneyjar/loa-hounfour@^8.5.0` (final shipped); the rc range `^8.5.0-rc.1` is now historical |
+| 2 | `$id` naming convention | Hounfour | `straylight.<type>.v0` style implied by handoff | bare PascalCase `$id` (e.g. `Assertion`, `RecallReceipt`), not `straylight.<type>.v0`; all 234 published `$id`s now resolve under `https://schemas.0xhoneyjar.com/loa-hounfour/8.5.0/` |
 | 3 | Straylight-side alias / re-export | Straylight | direct rename of internal types to imported names | alias / re-export layer in Straylight; internal call sites unchanged |
 | 4 | `CapabilityScope` harmonization | Hounfour | per-primitive scope hints | single harmonized `CapabilityScope` enum / discriminator across the wider Loa surface |
-| 5 | `ForgetRecord` cardinality | Hounfour | single forget shape with reason | 4-variant `ForgetRecord` model (e.g. `request`, `accepted`, `enacted`, `denied`-style; final names land in rc.1) |
+| 5 | `ForgetRecord` cardinality | Hounfour | single forget shape with reason | 4-variant `ForgetRecord` model; published in v8.5.0 final |
 | 6 | `safeCanonicalize` semantics | Hounfour | unspecified exact bytes (NFC + JCS implied) | NFC + RFC 8785 (JCS) + 100 KB normative cap |
-| 7 | `Challenge` deferral | Hounfour / Straylight | extract in cycle-004 | deferred to cycle-005; stays local in Straylight |
-| 8 | `EstateTransition` deferral | Hounfour / Straylight | extract in cycle-004 | deferred to cycle-005; stays local in Straylight |
+| 7 | `Challenge` deferral | Hounfour / Straylight | extract in cycle-004 | deferred to cycle-005 / v8.6.0 follow-on; stays local in Straylight |
+| 8 | `EstateTransition` deferral | Hounfour / Straylight | extract in cycle-004 | deferred to cycle-005 / v8.6.0 follow-on; stays local in Straylight |
 | 9 | Subpath import discipline | Straylight | import everything from `@loa/hounfour` root | import from explicit subpaths only (e.g. `@0xhoneyjar/loa-hounfour/schemas`) |
 | 10 | `AgentIdentity` cross-version risk | Straylight | not yet considered | guard against transitive cross-version mismatches via `AgentIdentity`; alias as `Actor` if Hounfour names diverge |
 | 11 | Constraint-ID collapse risk | Both | one constraint per primitive | guard against collapsing two distinct constraints (Straylight `lot_invariant` vs Hounfour-wide constraint IDs) onto one identifier |
+| 12 | rc.1 net-new schemas | Hounfour | not yet enumerated | rc.1 added 15 net-new schemas across recall machinery, forget / commit / estate, and the assertion family (see §12) |
+| 13 | `UnverifiedObligationsManifest` widening | Hounfour | single-evaluator-string assumption | `evaluator` widened to `runtime-deferred \| consumer \| library`; `reason` widened to `context_absent \| crypto_deferred \| integrity_deferred \| pattern_matching \| vocabulary_drift`; pattern-match by `rule_id` + `reason`, not by `evaluator` literal (see §13) |
+| 14 | `ClaimGrounding` strict-additive fields | Hounfour | not yet considered | strict-additive `external_reference` / `external_uri` and `derived_inference` / `inference_basis` fields land in v8.5.0 final without breaking existing groundings (see §14) |
+| 15 | v8.5.0 final shipped / dependency-flip eligibility | Both | not yet considered | `@0xhoneyjar/loa-hounfour@8.5.0` is the wedge dependency target; flip is authorized for a separate Phase 17 PR, not this PR (see §15) |
 
 The numbered sections below pin each delta in detail.
 
-## 1. Package version target: `^8.5.0` / `^8.5.0-rc.1`, not `0.1.x`
+## 1. Package version target: `^8.5.0` (final shipped), not `0.1.x`
 
 The Phase 9 handoff at
 [`hounfour-schema-extraction-issue.md`](./hounfour-schema-extraction-issue.md)
-proposed pinning `@loa/hounfour@0.x`. Jani's response targets the
-v8.5.0 line in the `@0xhoneyjar` org scope:
+proposed pinning `@loa/hounfour@0.x`. Jani's response targeted the
+v8.5.0 line in the `@0xhoneyjar` org scope, and v8.5.0 final has
+now shipped:
 
 - target package: `@0xhoneyjar/loa-hounfour`
-- target stable range: `^8.5.0`
-- target rc range:     `^8.5.0-rc.1`
+- target stable range: `^8.5.0` (now live;
+  `@0xhoneyjar/loa-hounfour@8.5.0` is published, tag `v8.5.0`,
+  `main` HEAD `ea98924d`)
+- rc range: `^8.5.0-rc.1` (rc.1 fired at squash SHA `c94bcd22`;
+  range is now historical, retained only for archival reference)
 
 Implication for Straylight: any future package pin must use the
 v8.5.0 line, not the 0.1.x line. The
-[shadow-integration checklist](./hounfour-rc-shadow-integration-checklist.md)
-explicitly waits for the **v8.5.0-rc.1** tag before doing any
-shadow pin in a test branch.
+[rc shadow-integration / dependency-flip checklist](./hounfour-rc-shadow-integration-checklist.md)
+treats the rc.1 gate as **satisfied** and v8.5.0 final as
+**shipped**, and the next planned package pin is the dependency
+flip to `@0xhoneyjar/loa-hounfour@^8.5.0` in a separate Phase 17
+PR.
 
 This delta also implies Straylight cannot pin a 0.x line as a
 "placeholder" — there is no 0.x line.
@@ -212,10 +230,12 @@ Implication for Straylight:
   match for every existing fixture. Any fixture that re-hashes
   differently is a Hounfour blocker, not a Straylight migration.
 
-## 7. `Challenge` deferral to cycle-005
+## 7. `Challenge` deferral to cycle-005 / v8.6.0 follow-on
 
-The `Challenge` primitive is **deferred** to Hounfour cycle-005.
-Until then:
+The `Challenge` primitive is **deferred** to Hounfour cycle-005,
+and the v8.6.0 forward pointer published with v8.5.0 final places
+the `Challenge` layer (and related follow-on work) on that
+release line. Until cycle-005 / v8.6.0 lands:
 
 - Straylight keeps its current `Challenge` definition in
   `src/straylight/types.ts` and its current validator in
@@ -223,17 +243,20 @@ Until then:
 - The wedge's `challenge` verb, the conformance vectors that
   exercise it, and the audit-chain entries that follow from it all
   remain Straylight-owned.
-- The rc shadow-integration test branch must **not** validate
-  `Challenge` against any Hounfour schema in the v8.5.0-rc.1 line.
+- Neither the v8.5.0-rc.1 nor v8.5.0 final line carries a
+  canonical `Challenge` schema for the wedge; the Phase 17
+  shadow-integration / dependency-flip work must **not** validate
+  `Challenge` against the v8.5.0 line.
 
 This deferral is captured in
 [`hounfour-rc-shadow-integration-checklist.md`](./hounfour-rc-shadow-integration-checklist.md)
 as a hard rule.
 
-## 8. `EstateTransition` deferral to cycle-005
+## 8. `EstateTransition` deferral to cycle-005 / v8.6.0 follow-on
 
 The `EstateTransition` primitive is **deferred** to Hounfour
-cycle-005. Until then:
+cycle-005, and rides the same v8.6.0 forward pointer as
+`Challenge` (per delta #7). Until cycle-005 / v8.6.0 lands:
 
 - Straylight keeps its current `EstateTransition` definition,
   transition machinery, transition receipts, and audit-chain
@@ -242,9 +265,10 @@ cycle-005. Until then:
   ([`tests/transition-receipts.test.ts`](../../tests/transition-receipts.test.ts),
   [`tests/quorum-and-timelock.test.ts`](../../tests/quorum-and-timelock.test.ts))
   remain Straylight-owned and Straylight-validated.
-- The rc shadow-integration test branch must **not** validate
-  `EstateTransition` against any Hounfour schema in the
-  v8.5.0-rc.1 line.
+- Neither the v8.5.0-rc.1 nor v8.5.0 final line carries a
+  canonical `EstateTransition` schema for the wedge; the Phase 17
+  shadow-integration / dependency-flip work must **not** validate
+  `EstateTransition` against the v8.5.0 line.
 
 This deferral is also captured in the
 [shadow-integration checklist](./hounfour-rc-shadow-integration-checklist.md).
@@ -327,22 +351,148 @@ Implication for Straylight:
     order.
 
 This delta is, like delta #10, a "compiles fine, breaks at
-runtime" risk and must be checked during the rc shadow-integration
-window.
+runtime" risk and must be checked during the Phase 17
+dependency-flip / shadow-integration work.
+
+## 12. rc.1 net-new schemas (15 total)
+
+v8.5.0-rc.1 (squash SHA `c94bcd22`) introduced **15 net-new
+schemas** across three families. They were carried forward into
+v8.5.0 final without renaming. The list is recorded here so the
+Phase 17 dependency-flip PR can validate that each Straylight
+fixture and conformance vector that *should* validate against one
+of these schemas in fact does:
+
+- **Recall machinery (5):** `ReceiptDetailLevel`, `SurfaceContext`,
+  `RecallRequest`, `RecallPack`, `RecallReceipt`.
+- **Forget / Commit / Estate (5):** `ForgetRecord`,
+  `CommitmentType`, `CommitmentRoot`, `AgentEstateStatus`,
+  `AgentEstate`.
+- **Assertion family (5):** `PrivacyScope`, `RiskLevel`,
+  `AssertionStatus`, `AssertionClass`, `Assertion`.
+
+Implication for Straylight:
+
+- Phase 16 ships **no** schema imports — the list is recorded for
+  Phase 17.
+- The `ForgetRecord` 4-variant cardinality from delta #5 is
+  realized in this list; a Straylight-side `ForgetRecord` fixture
+  validates against a single variant of the v8.5.0 final schema,
+  not against the union.
+- `Assertion` carries the FOLD-into-`Assertion` collapse from
+  Jani's response (per
+  [`hounfour-response-intake.md`](./hounfour-response-intake.md)):
+  the `status: "candidate"` discriminator is the supported way to
+  represent a candidate assertion in v8.5.0 final. There is no
+  separate `CandidateAssertion` schema.
+
+## 13. `UnverifiedObligationsManifest` evaluator / reason widening
+
+In v8.5.0-rc.1 (and carried into v8.5.0 final), the
+`UnverifiedObligationsManifest` schema widened two fields the
+Straylight wedge currently emits:
+
+- `evaluator` now accepts the values
+  `runtime-deferred | consumer | library`.
+- `reason` now accepts the values
+  `context_absent | crypto_deferred | integrity_deferred |
+  pattern_matching | vocabulary_drift`.
+
+Hounfour's published migration guidance is:
+**prefer pattern matching by `rule_id` + `reason`, not by literal
+`evaluator` value.** The `evaluator` axis is intentionally
+underspecified compared to `reason`; pattern matching by
+`evaluator` is brittle to future widening, while `rule_id` +
+`reason` is stable.
+
+Implication for Straylight:
+
+- The wedge's existing emit sites for unverified-obligation
+  manifests must be audited (under Phase 17, not under this PR)
+  to ensure they emit a value in the widened `reason` set rather
+  than relying on legacy `evaluator` literals.
+- Any Straylight-side test or fixture that pattern-matches a
+  manifest by `evaluator === "<literal>"` must be migrated under
+  Phase 17 to match by `rule_id` + `reason`.
+- Phase 16 ships **no** code change against this widening; the
+  audit and migration are Phase 17 work. Recording the widening
+  here keeps the Phase 17 PR from re-discovering it.
+
+## 14. `ClaimGrounding` strict-additive `external_reference` / `external_uri` and `derived_inference` / `inference_basis`
+
+v8.5.0 final's `ClaimGrounding` schema adds two additive field
+pairs without removing or renaming any existing field, and without
+changing the validation semantics of an existing `ClaimGrounding`
+that omits them:
+
+- `external_reference` / `external_uri` — a strict-additive pair
+  for grounding a claim against an external reference URI.
+- `derived_inference` / `inference_basis` — a strict-additive pair
+  for grounding a claim against a derived inference and its
+  documented basis.
+
+Both pairs are **strict-additive**: a Straylight fixture that
+omits them validates as cleanly against v8.5.0 final
+`ClaimGrounding` as it did against the cycle-004 draft.
+
+Implication for Straylight:
+
+- Phase 16 makes **no** ClaimGrounding fixture changes. The pairs
+  are recorded so the Phase 17 dependency-flip PR can opt fixtures
+  in (or leave them omitted) on a fixture-by-fixture basis without
+  re-deriving the additive guarantee.
+- A Straylight test that asserts the *absence* of either pair on
+  legacy fixtures must remain green under v8.5.0 final — if a test
+  ever asserts these fields are required, that is a Hounfour
+  blocker, not an additive migration.
+
+## 15. v8.5.0 final shipped / dependency-flip eligibility (Phase 17, not Phase 16)
+
+After Jani's response on issue #70, Hounfour fired
+**v8.5.0-rc.1** (squash SHA `c94bcd22`) and then shipped **v8.5.0
+final**:
+
+- package: `@0xhoneyjar/loa-hounfour@8.5.0`
+- tag: `v8.5.0`
+- `main` HEAD: `ea98924d`
+- `$id` resolution: all 234 published `$id` URIs resolve under
+  `https://schemas.0xhoneyjar.com/loa-hounfour/8.5.0/`
+- forward pointer: v8.6.0 carries `Challenge` (per delta #7) and
+  `EstateTransition` (per delta #8) and related follow-on work.
+
+Implication for Straylight:
+
+- The wedge's dependency flip to
+  `@0xhoneyjar/loa-hounfour@^8.5.0` is **eligible** as of v8.5.0
+  final shipping. It is **not** performed in this PR.
+- The flip is authorized for **Phase 17** — a separate follow-up
+  PR on Straylight's timeline. Phase 17 is where the alias /
+  re-export module lands (delta #3), where the subpath import
+  discipline is applied (delta #9), and where the `AgentIdentity`
+  ↔ `Actor` alias (delta #10) and constraint-ID checks (delta
+  #11) are validated against Hounfour's shipped validators.
+- Phase 16 (this PR) does not add
+  `@0xhoneyjar/loa-hounfour` to `package.json`, does not flip
+  any wedge import, and does not change any Phase 0–15 runtime
+  behavior. The deltas above are recorded so a future reviewer of
+  Phase 17 has a single readable list.
 
 ## What this doc is *not*
 
 - **Not** a Hounfour-side spec. The canonical Hounfour spec is
-  whatever Hounfour ships in v8.5.0-rc.1. This doc is the
-  Straylight-side intake of the deltas as of cycle-004 draft.
-- **Not** a contract pin. The contract is the rc.1 tag; this doc
-  is a readiness artifact that helps Straylight validate the rc.1
-  tag once it lands.
-- **Not** a Straylight runtime change. Phase 16 ships docs and
-  optionally a printer script; no runtime imports change.
-- **Not** a license to flip imports. Imports flip only inside an
-  explicit shadow-integration test branch, only after v8.5.0-rc.1
-  ships, and only behind the alias module.
+  whatever Hounfour shipped in v8.5.0 final
+  (`@0xhoneyjar/loa-hounfour@8.5.0`, tag `v8.5.0`, `$id`s under
+  `https://schemas.0xhoneyjar.com/loa-hounfour/8.5.0/`). This doc
+  is the Straylight-side intake of the deltas as of v8.5.0 final.
+- **Not** a contract pin. The contract is the v8.5.0 tag; this
+  doc is a readiness artifact that helps the Phase 17 dependency-
+  flip PR validate the v8.5.0 line.
+- **Not** a Straylight runtime change. Phase 16 ships docs and a
+  printer script; no runtime imports change in this PR. The
+  dependency flip is Phase 17.
+- **Not** a license to flip imports inside this PR. Imports flip
+  only inside the Phase 17 follow-up PR, behind the alias module,
+  using subpath imports (delta #9).
 
 ## Cross-references
 

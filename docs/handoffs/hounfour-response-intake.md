@@ -3,17 +3,24 @@
 > Status: Phase 16. **Response intake / readiness artifact only, in
 > `loa-straylight`.** This file records Jani's response to the
 > Phase 9 handoff filed at
-> [`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70).
-> It is **not** Hounfour integration. It is **not** a cross-repo
-> implementation. It does **not** flip any package import to
-> `@0xhoneyjar/loa-hounfour`, add Hounfour as a dependency, or
-> change Phase 0–15 runtime behavior.
+> [`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70),
+> together with the post-intake upstream update recording that
+> v8.5.0-rc.1 fired and v8.5.0 final has now shipped on the
+> Hounfour side. It is **not** Hounfour integration. It is **not**
+> a cross-repo implementation. It does **not** flip any package
+> import to `@0xhoneyjar/loa-hounfour`, add Hounfour as a
+> dependency, or change Phase 0–15 runtime behavior. The actual
+> dependency flip is staged for a separate follow-up PR (Phase 17),
+> not Phase 16.
 >
 > Companion docs:
 > [`hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md)
-> (the accepted-with-adaptation deltas vs. our Phase 9 handoff) and
+> (the accepted-with-adaptation deltas vs. our Phase 9 handoff,
+> updated with the v8.5.0 final deltas) and
 > [`hounfour-rc-shadow-integration-checklist.md`](./hounfour-rc-shadow-integration-checklist.md)
-> (the future v8.5.0-rc.1 shadow-integration window plan).
+> (the rc shadow-integration window plan, now reframed as
+> readiness evidence + the next-PR dependency-flip checklist for
+> Phase 17).
 
 ## Purpose
 
@@ -32,11 +39,13 @@ update. Phase 16 records that response inside `loa-straylight` so:
 - a future reviewer of either repo can see the Straylight-side
   picture of what was accepted, what was adapted, and what was
   deferred — without re-reading the Hounfour issue thread;
-- the Straylight repo has a single intake doc to reference when the
-  v8.5.0-rc.1 shadow-integration window opens;
+- the Straylight repo has a single intake doc to reference now
+  that the v8.5.0-rc.1 shadow-integration window has fired and
+  v8.5.0 final has shipped;
 - the response is captured as **accepted-with-adaptation, not
-  direct import** — both repos must remain free to adapt naming,
-  versioning, and scope before the rc tag lands.
+  direct import** — both repos retained the freedom to adapt
+  naming, versioning, and scope through the rc.1 / final cut, and
+  the dependency flip itself is still gated to a separate PR.
 
 ## Disposition summary
 
@@ -73,23 +82,80 @@ Concretely, this means:
   enumerated in
   [`hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md).
 - Straylight must not flip its imports / package boundary to
-  `@0xhoneyjar/loa-hounfour` until **after** the v8.5.0-rc.1 tag
-  exists and has been validated through the shadow-integration
-  checklist.
-- Until then, the Straylight wedge remains the source of truth for
-  primitive semantics. Phase 0–15 behavior is unchanged.
+  `@0xhoneyjar/loa-hounfour` inside this Phase 16 PR. The flip is
+  authorized for a separate follow-up PR (Phase 17) once the rc
+  shadow-integration evidence has been captured against the now-
+  shipped v8.5.0 line.
+- Until that follow-up PR lands, the Straylight wedge remains the
+  source of truth for primitive semantics. Phase 0–15 behavior is
+  unchanged.
 
 If a future reviewer sees a Straylight PR that:
 
-- pins `@0xhoneyjar/loa-hounfour` outside of an explicit
-  shadow-integration test branch, or
-- changes any Straylight runtime import to come from Hounfour, or
+- pins `@0xhoneyjar/loa-hounfour` inside this Phase 16 PR, or
+- changes any Straylight runtime import to come from Hounfour
+  inside this Phase 16 PR, or
 - treats the Phase 9 handoff packet as the canonical Hounfour
   contract,
 
 the reviewer should refuse the PR at the gate. The "accepted-with-
 adaptation" framing is what protects both repos from premature
-coupling.
+coupling. The dependency flip is authorized for a separate
+follow-up PR (Phase 17), not Phase 16.
+
+## Post-intake upstream update — rc.1 fired, v8.5.0 final shipped
+
+After the original Phase 16 intake was staged, two upstream events
+landed on the Hounfour side. Both are recorded here so a future
+reviewer of this PR can see that the readiness packet is current
+without re-reading the Hounfour issue thread.
+
+### v8.5.0-rc.1 shipped
+
+- **Squash SHA on `loa-hounfour`:** `c94bcd22`.
+- **Effect:** the v8.5.0-rc.1 shadow-integration window opened.
+  The "wait for the rc.1 tag" gate that the
+  [shadow-integration checklist](./hounfour-rc-shadow-integration-checklist.md)
+  pinned is now **satisfied**.
+- **Net-new schemas in rc.1 (15 total):**
+  - Recall machinery: `ReceiptDetailLevel`, `SurfaceContext`,
+    `RecallRequest`, `RecallPack`, `RecallReceipt`.
+  - Forget / Commit / Estate: `ForgetRecord`, `CommitmentType`,
+    `CommitmentRoot`, `AgentEstateStatus`, `AgentEstate`.
+  - Assertion family: `PrivacyScope`, `RiskLevel`,
+    `AssertionStatus`, `AssertionClass`, `Assertion`.
+- **`UnverifiedObligationsManifest` widened:** `evaluator` now
+  accepts `runtime-deferred | consumer | library`; `reason` now
+  explains `context_absent | crypto_deferred |
+  integrity_deferred | pattern_matching | vocabulary_drift`.
+  Migration guidance from the Hounfour side: prefer pattern
+  matching by `rule_id` + `reason`, not by literal `evaluator`
+  value.
+
+### v8.5.0 final shipped
+
+- **Package:** `@0xhoneyjar/loa-hounfour@8.5.0`.
+- **Tag on `loa-hounfour`:** `v8.5.0`.
+- **`main` HEAD:** `ea98924d`.
+- **`$id` resolution:** all 234 published `$id` URIs resolve
+  under `https://schemas.0xhoneyjar.com/loa-hounfour/8.5.0/`.
+- **Forward pointer:** the v8.6.0 line is queued for the
+  `Challenge` layer and related follow-on work; the cycle-005
+  deferrals captured in this intake (notably `Challenge` and
+  `EstateTransition`) carry forward to the v8.6.0 line.
+
+### Implication for Straylight
+
+- The wedge dependency flip to
+  `@0xhoneyjar/loa-hounfour@^8.5.0` is now **eligible for a
+  separate follow-up PR (Phase 17)**, on Straylight's timeline.
+- This Phase 16 PR remains scoped to **response intake /
+  readiness only**. It adds no Hounfour dependency, flips no
+  imports, and changes no Phase 0–15 runtime behavior.
+- The detailed delta surface against v8.5.0 final is captured in
+  [`hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md).
+  The dependency-flip checklist for Phase 17 is captured in
+  [`hounfour-rc-shadow-integration-checklist.md`](./hounfour-rc-shadow-integration-checklist.md).
 
 ## What Jani accepted (REUSE — 9)
 
@@ -197,19 +263,24 @@ Implications for Straylight:
 
 ## What this doc is *not*
 
-- **Not** Hounfour integration. The integration is the
-  shadow-integration window in
-  [`hounfour-rc-shadow-integration-checklist.md`](./hounfour-rc-shadow-integration-checklist.md),
-  and even that is a *test branch* — not a main-branch import flip.
+- **Not** Hounfour integration. The shadow-integration plan in
+  [`hounfour-rc-shadow-integration-checklist.md`](./hounfour-rc-shadow-integration-checklist.md)
+  is now reframed as readiness evidence + the next-PR dependency-
+  flip checklist for Phase 17, and even Phase 17 is a separate PR
+  on Straylight's timeline — Phase 16 itself does not flip the
+  import.
 - **Not** a re-statement of the Phase 9 handoff. The Phase 9
   handoff is still the input; this intake doc captures the
   response.
-- **Not** a license to flip Straylight imports to Hounfour. That
-  flip happens only after v8.5.0-rc.1 ships and the shadow
-  checklist passes.
-- **Not** a contract pin. The contract is whatever Hounfour ships
-  in v8.5.0-rc.1, not the Phase 9 handoff and not this intake
-  doc.
+- **Not** a license to flip Straylight imports to Hounfour inside
+  this PR. The flip is authorized for Phase 17, on Straylight's
+  timeline, in a separate PR.
+- **Not** a contract pin. The contract is whatever Hounfour
+  shipped in v8.5.0 final (now live at
+  `@0xhoneyjar/loa-hounfour@8.5.0`, all 234 published `$id`s
+  resolving under
+  `https://schemas.0xhoneyjar.com/loa-hounfour/8.5.0/`), not the
+  Phase 9 handoff and not this intake doc.
 - **Not** a Straylight runtime change. Phase 16 is documentation /
   readiness only.
 
@@ -228,9 +299,11 @@ Implications for Straylight:
   Hounfour schema names.
 - [`cross-repo-handoff-index.md`](./cross-repo-handoff-index.md)
   — the cross-repo index, updated with Hounfour issue #70 response
+  status and the v8.5.0 final shipped / dependency-flip-eligible
   status in Phase 16.
 - [`cross-repo-implementation-order.md`](./cross-repo-implementation-order.md)
-  — implementation order, updated with the rc.1 wait condition
-  in Phase 16.
+  — implementation order, updated with the v8.5.0 final shipped
+  status and the Phase 17 dependency-flip / shadow-integration
+  next step in Phase 16.
 - [`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70)
   — Hounfour-side filed issue.

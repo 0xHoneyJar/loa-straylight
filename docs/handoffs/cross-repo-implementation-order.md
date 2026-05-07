@@ -8,12 +8,17 @@
 > merging the sibling-repo PRs is out of scope and must happen in
 > the sibling repo, under teammate review.
 >
-> Phase 16 update: the Hounfour extraction is now under way in
-> Hounfour cycle-004, accepted-with-adaptation per Jani's response
-> on [`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70).
-> Straylight should not flip any import to
-> `@0xhoneyjar/loa-hounfour` until **v8.5.0-rc.1** ships and the
-> rc shadow-integration checklist passes — see
+> Phase 16 update: the Hounfour extraction landed in Hounfour
+> cycle-004, accepted-with-adaptation per Jani's response on
+> [`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70).
+> **v8.5.0-rc.1** has fired (squash SHA `c94bcd22`) and **v8.5.0
+> final** has shipped (`@0xhoneyjar/loa-hounfour@8.5.0`, tag
+> `v8.5.0`, `main` HEAD `ea98924d`, `$id`s under
+> `https://schemas.0xhoneyjar.com/loa-hounfour/8.5.0/`). Straylight
+> should not flip any import to `@0xhoneyjar/loa-hounfour` inside
+> this Phase 16 PR. The dependency flip is authorized for a
+> separate follow-up PR — **Phase 17** — on Straylight's
+> timeline. See
 > [`hounfour-response-intake.md`](./hounfour-response-intake.md),
 > [`hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md),
 > and
@@ -73,40 +78,85 @@ either:
 Both paths are observable failure modes. Shipping Hounfour first
 keeps shape in the class lane where it belongs.
 
-#### Phase 16 update: Hounfour extraction is in Hounfour cycle-004; Straylight waits for v8.5.0-rc.1
+#### Phase 16 update: Hounfour extraction landed in cycle-004; v8.5.0-rc.1 fired and v8.5.0 final shipped
 
-Jani's response on issue #70 places the Hounfour extraction in
+Jani's response on issue #70 placed the Hounfour extraction in
 **Hounfour cycle-004**, with the canonical surface targeting the
-`@0xhoneyjar/loa-hounfour@^8.5.0` line and a v8.5.0-rc.1 release
-candidate cut from cycle-004 (see
+`@0xhoneyjar/loa-hounfour@^8.5.0` line. Since the original
+intake was staged, the upstream cuts have landed:
+
+- **v8.5.0-rc.1** fired at squash SHA `c94bcd22` on
+  `loa-hounfour`. The shadow-integration window opened.
+- **v8.5.0 final** shipped as `@0xhoneyjar/loa-hounfour@8.5.0`
+  (tag `v8.5.0`, `main` HEAD `ea98924d`, all 234 published
+  `$id`s resolving under
+  `https://schemas.0xhoneyjar.com/loa-hounfour/8.5.0/`).
+- v8.6.0 carries the `Challenge` layer and the rest of the
+  cycle-005 follow-on work.
+
+See
 [`hounfour-response-intake.md`](./hounfour-response-intake.md)
 and
-[`hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md)).
+[`hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md)
+for the recorded deltas.
 
-This does not change the implementation order — Hounfour still
-goes first — but it tightens what "first" means for Straylight:
+This does not change the cross-repo implementation order —
+Hounfour still goes first — but it tightens what "first" means
+for Straylight:
 
-- Straylight **must not** flip any import to
-  `@0xhoneyjar/loa-hounfour` ahead of the v8.5.0-rc.1 tag, even on
-  a feature branch. The only acceptable rc-line pin is the
-  shadow-integration test branch described in
-  [`hounfour-rc-shadow-integration-checklist.md`](./hounfour-rc-shadow-integration-checklist.md),
-  which is reverted before close.
-- Straylight **must not** treat Jani's cycle-004 draft schemas as
-  canonical. Until v8.5.0-rc.1 ships and the rc shadow-integration
-  checklist passes, the wedge owns primitive semantics.
-- The downstream lanes (Finn, Dixie, Freeside) still must wait for
-  **stable schema contracts or explicit mocks** — the rc shadow
-  test branch on the Straylight side is *not* a stable schema
-  contract, even though it pins `^8.5.0-rc.1`. Finn / Dixie /
-  Freeside implementation work should continue to wait for either
-  a stable Hounfour line or an explicit, written-stub commitment
-  per the existing dependency rationale below.
+- Straylight **should not** flip any import to
+  `@0xhoneyjar/loa-hounfour` inside this Phase 16 PR, even on a
+  feature branch. Phase 16 is docs / readiness only.
+- The dependency flip to `@0xhoneyjar/loa-hounfour@^8.5.0` is
+  now eligible (the rc.1 wait gate is satisfied; v8.5.0 final has
+  shipped) and is authorized for a **separate follow-up PR —
+  Phase 17 — on Straylight's timeline**. Phase 17 is the PR that
+  lands the alias / re-export module, applies the subpath import
+  discipline, and validates against the now-shipped Hounfour
+  validators per
+  [`hounfour-rc-shadow-integration-checklist.md`](./hounfour-rc-shadow-integration-checklist.md).
+- The downstream lanes (Finn, Dixie, Freeside) consume the same
+  v8.5.0 line once Phase 17 lands. Finn / Dixie / Freeside
+  implementation work that is gated on a stable Hounfour line is
+  now unblocked at the upstream side, but the per-lane
+  implementation work itself (in their respective sibling repos)
+  remains under each repo's own teammate-review schedule.
 
 The intent is the same as Phase 15: keep shape in the class lane,
-keep the wedge as the source of truth until canonical Hounfour
-schemas land. The Phase 16 update only clarifies *which* Hounfour
-line / tag triggers the import flip on the Straylight side.
+keep the wedge as the source of truth until the dependency flip
+in Phase 17 lands. The Phase 16 update only clarifies *which*
+Hounfour line / tag triggers the import flip on the Straylight
+side, and that the flip itself is Phase 17's job — not this PR's.
+
+#### Next step: Phase 17 = Hounfour v8.5.0 dependency flip / shadow integration
+
+The recommended next step on the Straylight side is **Phase 17**:
+the dependency-flip / shadow-integration PR for
+`@0xhoneyjar/loa-hounfour@^8.5.0`. Phase 17 is **separate from
+Phase 16**:
+
+- **Phase 16 (this PR)** ships docs and a readiness printer only:
+  the response-intake, the adaptation delta updated for v8.5.0
+  final, and the rc-shadow-integration checklist reframed as
+  readiness evidence + the Phase 17 checklist. Phase 16 does not
+  add any Hounfour dependency.
+- **Phase 17 (separate follow-up PR)** adds
+  `@0xhoneyjar/loa-hounfour` to `package.json`, lands the alias /
+  re-export module described in delta #3 of
+  [`hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md),
+  applies the subpath import discipline (delta #9), and runs the
+  shadow-integration steps in
+  [`hounfour-rc-shadow-integration-checklist.md`](./hounfour-rc-shadow-integration-checklist.md)
+  against the live `@0xhoneyjar/loa-hounfour@8.5.0` validators.
+
+Phase 17 must not be folded into Phase 16. Bundling the dep flip
+into the response-intake PR would silently widen the Phase 16
+scope past docs / readiness, defeat the "accepted-with-
+adaptation, not direct import" framing, and bypass the separation
+that
+[`cross-repo-no-go-sequence.md`](./cross-repo-no-go-sequence.md)
+relies on for sibling-repo teammate review. Phase 17 is its own
+PR, on Straylight's timeline, with its own review.
 
 ### Why Finn goes second (and not before Hounfour)
 

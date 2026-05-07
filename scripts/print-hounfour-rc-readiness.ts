@@ -1,11 +1,13 @@
-// Phase 16 — Hounfour rc shadow-integration readiness printer.
+// Phase 16 — Hounfour rc readiness printer.
 //
 // Usage:
 //   npm run hounfour:rc-readiness
 //
 // Prints the paths of the Phase 16 response-intake / readiness
-// documents and the rc shadow-integration checklist. This is a
-// readiness artifact only. The script does NOT:
+// documents and the rc shadow-integration checklist (now reframed
+// as readiness evidence + the Phase 17 dependency-flip
+// checklist). This is a readiness artifact only. The script does
+// NOT:
 //   * file any sibling-repo issue
 //   * open any sibling-repo PR
 //   * call any GitHub API
@@ -36,6 +38,15 @@ export const RC_CHECKLIST_DOC =
 
 export const HOUNFOUR_ISSUE_URL =
   'https://github.com/0xHoneyJar/loa-hounfour/issues/70';
+
+export const HOUNFOUR_RC1_SQUASH_SHA = 'c94bcd22';
+export const HOUNFOUR_V850_PACKAGE = '@0xhoneyjar/loa-hounfour@8.5.0';
+export const HOUNFOUR_V850_TAG = 'v8.5.0';
+export const HOUNFOUR_V850_MAIN_HEAD = 'ea98924d';
+export const HOUNFOUR_V850_SCHEMAS_BASE_URL =
+  'https://schemas.0xhoneyjar.com/loa-hounfour/8.5.0/';
+export const HOUNFOUR_DEPENDENCY_TARGET =
+  '@0xhoneyjar/loa-hounfour@^8.5.0';
 
 export const READINESS_DOCS = [
   RESPONSE_INTAKE_DOC,
@@ -75,13 +86,37 @@ export function buildReadinessSummary(): ReadinessSummary {
 
 export function formatReadinessSummary(s: ReadinessSummary): string {
   const lines: string[] = [];
-  lines.push(
-    'Hounfour rc shadow-integration readiness packet (Phase 16)',
-  );
+  lines.push('Hounfour rc readiness packet (Phase 16)');
   lines.push('');
   lines.push(`Hounfour-side filed issue: ${s.hounfourIssueUrl}`);
   lines.push('Response status: accepted-with-adaptation');
-  lines.push('Pending: v8.5.0-rc.1 tag on @0xhoneyjar/loa-hounfour');
+  lines.push('');
+  lines.push('Upstream status (post-intake update):');
+  lines.push(
+    `  v8.5.0-rc.1 fired (squash SHA ${HOUNFOUR_RC1_SQUASH_SHA} on loa-hounfour)`,
+  );
+  lines.push(
+    `  v8.5.0 final shipped: ${HOUNFOUR_V850_PACKAGE} (tag ${HOUNFOUR_V850_TAG}, main HEAD ${HOUNFOUR_V850_MAIN_HEAD})`,
+  );
+  lines.push(`  $ids resolve under ${HOUNFOUR_V850_SCHEMAS_BASE_URL}`);
+  lines.push(
+    '  v8.6.0 forward pointer carries Challenge layer and related cycle-005 follow-on work',
+  );
+  lines.push('');
+  lines.push('Dependency-flip status:');
+  lines.push(
+    `  Wedge dependency flip to ${HOUNFOUR_DEPENDENCY_TARGET} is now ELIGIBLE`,
+  );
+  lines.push(
+    '  for a separate follow-up PR (Phase 17) on Straylight\'s timeline.',
+  );
+  lines.push(
+    '  This Phase 16 PR remains NO-IMPORT-FLIP: it does not add the',
+  );
+  lines.push(
+    '  dependency, does not flip any wedge import, and does not change',
+  );
+  lines.push('  Phase 0–15 runtime behavior.');
   lines.push('');
   lines.push('Readiness documents:');
   for (const d of s.docs) {
@@ -99,9 +134,11 @@ export function formatReadinessSummary(s: ReadinessSummary): string {
     'Straylight will not flip any import to @0xhoneyjar/loa-hounfour',
   );
   lines.push(
-    'until v8.5.0-rc.1 ships and the rc shadow-integration checklist',
+    'inside this Phase 16 PR. The dependency flip is authorized for',
   );
-  lines.push('passes on a test branch.');
+  lines.push(
+    'Phase 17 — a separate follow-up PR on Straylight\'s timeline.',
+  );
   return lines.join('\n');
 }
 

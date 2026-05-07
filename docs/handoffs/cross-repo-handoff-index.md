@@ -48,16 +48,33 @@ references:
   and an adaptation plan covering package version target, `$id`
   naming, `CapabilityScope` harmonization, the 4-variant
   `ForgetRecord` model, and `safeCanonicalize` (NFC + RFC 8785 +
-  100 KB cap). Hounfour integration is **pending v8.5.0-rc.1**:
-  Straylight will not flip imports until the rc.1 tag exists and
-  has been validated through the shadow-integration checklist
-  below. See:
+  100 KB cap).
+- **Upstream status (Phase 16, post-intake update):**
+  **v8.5.0-rc.1 fired** at squash SHA `c94bcd22` and **v8.5.0
+  final has shipped** as `@0xhoneyjar/loa-hounfour@8.5.0` (tag
+  `v8.5.0`, `main` HEAD `ea98924d`, all 234 published `$id`s
+  resolving under
+  `https://schemas.0xhoneyjar.com/loa-hounfour/8.5.0/`). The
+  pending-rc.1 wait is over; the rc.1 gate from the original
+  shadow-integration checklist is **satisfied**. The v8.6.0
+  forward pointer carries `Challenge`, `EstateTransition`, and
+  related cycle-005 follow-on work.
+- **Dependency-flip status (Phase 16 / Phase 17 split):** the
+  wedge dependency flip to `@0xhoneyjar/loa-hounfour@^8.5.0` is
+  now **eligible for a separate follow-up PR (Phase 17)** on
+  Straylight's timeline. **This Phase 16 PR does not flip the
+  import, does not add `@0xhoneyjar/loa-hounfour` to
+  `package.json`, and does not change Phase 0–15 runtime
+  behavior.** See:
   - [`docs/handoffs/hounfour-response-intake.md`](./hounfour-response-intake.md)
-    — disposition counts and "accepted-with-adaptation" framing.
+    — disposition counts, "accepted-with-adaptation" framing,
+    and the post-intake upstream update.
   - [`docs/handoffs/hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md)
-    — per-delta accepted-with-adaptation table.
+    — per-delta accepted-with-adaptation table updated for
+    v8.5.0 final.
   - [`docs/handoffs/hounfour-rc-shadow-integration-checklist.md`](./hounfour-rc-shadow-integration-checklist.md)
-    — future v8.5.0-rc.1 shadow-integration window plan.
+    — readiness evidence + Phase 17 dependency-flip checklist
+    (rc.1 / v8.5.0 final gates marked satisfied).
 - **Local handoff packet (Phase 9):**
   - [`docs/handoffs/hounfour-schema-extraction-issue.md`](./hounfour-schema-extraction-issue.md)
   - [`docs/handoffs/hounfour-schema-extraction-pr-checklist.md`](./hounfour-schema-extraction-pr-checklist.md)

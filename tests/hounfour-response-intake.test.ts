@@ -1,27 +1,55 @@
 // Phase 16 conformance — Hounfour response intake / adaptation delta /
 // rc shadow-integration readiness checklist.
 //
+// Post-intake upstream update: v8.5.0-rc.1 has fired (squash SHA
+// c94bcd22 on loa-hounfour) and v8.5.0 final has shipped as
+// @0xhoneyjar/loa-hounfour@8.5.0 (tag v8.5.0, main HEAD ea98924d,
+// $ids under https://schemas.0xhoneyjar.com/loa-hounfour/8.5.0/).
+// The wedge dependency flip to @0xhoneyjar/loa-hounfour@^8.5.0 is
+// now eligible for a separate follow-up PR (Phase 17). This Phase
+// 16 PR remains no-import-flip.
+//
 // Pins:
-//   * response intake doc exists.
-//   * adaptation delta doc mentions ^8.5.0 and ^8.5.0-rc.1.
-//   * adaptation delta doc mentions bare PascalCase $id naming.
+//   * response intake doc exists, records the post-intake upstream
+//     update (rc.1 fired, v8.5.0 final shipped), and still pins
+//     the disposition counts and "accepted-with-adaptation"
+//     framing.
+//   * adaptation delta doc mentions ^8.5.0 and ^8.5.0-rc.1, the
+//     rc.1 / v8.5.0 net-new schemas (15 total),
+//     UnverifiedObligationsManifest evaluator/reason widening, and
+//     ClaimGrounding strict-additive external_reference /
+//     external_uri / derived_inference / inference_basis.
+//   * adaptation delta doc mentions bare PascalCase $id naming and
+//     $ids under /8.5.0/.
 //   * adaptation delta doc mentions CapabilityScope harmonization.
 //   * adaptation delta doc mentions ForgetRecord 4-variant model.
 //   * adaptation delta doc mentions safeCanonicalize, NFC, RFC 8785,
 //     and 100 KB cap.
-//   * checklist says not to flip imports before rc.1.
+//   * checklist marks the rc.1 wait-gate satisfied and v8.5.0 final
+//     shipped, and reframes itself as readiness evidence + the
+//     Phase 17 dependency-flip checklist.
+//   * checklist says this Phase 16 PR does not flip imports
+//     (premature-flip prevention).
 //   * checklist says Challenge and EstateTransition stay local until
-//     cycle-005.
-//   * cross-repo index records Hounfour as accepted-with-adaptation
-//     (not only pending).
+//     cycle-005 / v8.6.0 follow-on.
+//   * cross-repo index records Hounfour as accepted-with-adaptation,
+//     records that v8.5.0 final has shipped, and records that the
+//     dependency flip is eligible for a separate follow-up PR.
+//   * implementation order doc records that Phase 17 is the
+//     dependency-flip / shadow-integration follow-up, separate from
+//     Phase 16.
 //   * helper script (if present) does not import from .loa, .claude,
 //     loa-hounfour, or sibling repos.
+//   * helper script (if present) prints the post-intake upstream
+//     update (rc.1 fired, v8.5.0 final shipped) and prints that
+//     this Phase 16 PR remains no-import-flip.
 //
 // These pins prove the Phase 16 response-intake / readiness packet
-// is internally consistent and does not silently introduce cross-
-// repo coupling. They are NOT a substitute for any future Hounfour
-// integration review; they only validate the in-repo readiness
-// prep.
+// is internally consistent, reflects the now-shipped v8.5.0 line,
+// and does not silently introduce cross-repo coupling inside this
+// PR. They are NOT a substitute for any future Hounfour integration
+// review (which is Phase 17's job); they only validate the in-repo
+// readiness prep.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -104,6 +132,27 @@ describe('phase 16 — Hounfour response intake doc exists and pins disposition'
     const src = read(INTAKE_DOC);
     expect(/Phase 16/.test(src)).toBe(true);
   });
+
+  it('response intake doc records the post-intake upstream update (rc.1 fired, v8.5.0 final shipped)', () => {
+    const src = read(INTAKE_DOC);
+    expect(/post[- ]intake upstream update/i.test(src)).toBe(true);
+    expect(/v8\.5\.0-rc\.1/.test(src)).toBe(true);
+    expect(/c94bcd22/.test(src)).toBe(true);
+    expect(/v8\.5\.0 final/i.test(src)).toBe(true);
+    expect(/@0xhoneyjar\/loa-hounfour@8\.5\.0/.test(src)).toBe(true);
+    expect(/ea98924d/.test(src)).toBe(true);
+    expect(
+      src.includes(
+        'https://schemas.0xhoneyjar.com/loa-hounfour/8.5.0/',
+      ),
+    ).toBe(true);
+  });
+
+  it('response intake doc preserves no-import-flip-in-this-PR (Phase 16 docs/readiness only)', () => {
+    const src = read(INTAKE_DOC);
+    expect(/Phase 16 (PR )?does not (flip|import)|inside this Phase 16 PR|Phase 16 is (documentation|docs)/i.test(src)).toBe(true);
+    expect(/separate follow[- ]up PR|Phase 17/i.test(src)).toBe(true);
+  });
 });
 
 describe('phase 16 — Hounfour adaptation delta doc pins required deltas', () => {
@@ -185,6 +234,83 @@ describe('phase 16 — Hounfour adaptation delta doc pins required deltas', () =
     const src = normalize(read(DELTA_DOC));
     expect(/\bnot\W*Hounfour\W*integration\b/i.test(src)).toBe(true);
   });
+
+  it('adaptation delta doc records v8.5.0 final shipped (package, tag, main HEAD, schemas base URL)', () => {
+    const src = read(DELTA_DOC);
+    expect(/@0xhoneyjar\/loa-hounfour@8\.5\.0/.test(src)).toBe(true);
+    expect(/\bv8\.5\.0\b/.test(src)).toBe(true);
+    expect(/ea98924d/.test(src)).toBe(true);
+    expect(
+      src.includes(
+        'https://schemas.0xhoneyjar.com/loa-hounfour/8.5.0/',
+      ),
+    ).toBe(true);
+  });
+
+  it('adaptation delta doc records the rc.1 squash SHA c94bcd22', () => {
+    const src = read(DELTA_DOC);
+    expect(/c94bcd22/.test(src)).toBe(true);
+  });
+
+  it('adaptation delta doc records the 15 net-new rc.1 schemas (recall / forget+commit+estate / assertion families)', () => {
+    const src = read(DELTA_DOC);
+    expect(/ReceiptDetailLevel/.test(src)).toBe(true);
+    expect(/SurfaceContext/.test(src)).toBe(true);
+    expect(/RecallRequest/.test(src)).toBe(true);
+    expect(/RecallPack/.test(src)).toBe(true);
+    expect(/RecallReceipt/.test(src)).toBe(true);
+    expect(/CommitmentType/.test(src)).toBe(true);
+    expect(/CommitmentRoot/.test(src)).toBe(true);
+    expect(/AgentEstateStatus/.test(src)).toBe(true);
+    expect(/AgentEstate\b/.test(src)).toBe(true);
+    expect(/PrivacyScope/.test(src)).toBe(true);
+    expect(/RiskLevel/.test(src)).toBe(true);
+    expect(/AssertionStatus/.test(src)).toBe(true);
+    expect(/AssertionClass/.test(src)).toBe(true);
+  });
+
+  it('adaptation delta doc records UnverifiedObligationsManifest evaluator / reason widening with rule_id+reason guidance', () => {
+    const src = read(DELTA_DOC);
+    expect(/UnverifiedObligationsManifest/.test(src)).toBe(true);
+    expect(/runtime-deferred/.test(src)).toBe(true);
+    expect(/\bconsumer\b/.test(src)).toBe(true);
+    expect(/\blibrary\b/.test(src)).toBe(true);
+    expect(/context_absent/.test(src)).toBe(true);
+    expect(/crypto_deferred/.test(src)).toBe(true);
+    expect(/integrity_deferred/.test(src)).toBe(true);
+    expect(/pattern_matching/.test(src)).toBe(true);
+    expect(/vocabulary_drift/.test(src)).toBe(true);
+    expect(/rule_id/.test(src)).toBe(true);
+  });
+
+  it('adaptation delta doc records ClaimGrounding strict-additive external_reference / external_uri / derived_inference / inference_basis', () => {
+    const src = read(DELTA_DOC);
+    expect(/ClaimGrounding/.test(src)).toBe(true);
+    expect(/strict[- ]additive/i.test(src)).toBe(true);
+    expect(/external_reference/.test(src)).toBe(true);
+    expect(/external_uri/.test(src)).toBe(true);
+    expect(/derived_inference/.test(src)).toBe(true);
+    expect(/inference_basis/.test(src)).toBe(true);
+  });
+
+  it('adaptation delta doc records Challenge / EstateTransition cycle-005 / v8.6.0 follow-on', () => {
+    const src = read(DELTA_DOC);
+    expect(/v8\.6\.0/.test(src)).toBe(true);
+    expect(/Challenge/.test(src)).toBe(true);
+    expect(/EstateTransition/.test(src)).toBe(true);
+    expect(/cycle-005/.test(src)).toBe(true);
+  });
+
+  it('adaptation delta doc preserves no-import-flip-in-this-PR (dependency flip is Phase 17, not Phase 16)', () => {
+    const src = read(DELTA_DOC);
+    expect(/Phase 17/.test(src)).toBe(true);
+    expect(/separate follow[- ]up PR|separate.*Phase 17/i.test(src)).toBe(true);
+    expect(
+      /Phase 16[^.]*does not (flip|add|import)|does not (flip|add|import)[^.]*Phase 16|Phase 16[^.]*not.*integration/i.test(
+        src,
+      ),
+    ).toBe(true);
+  });
 });
 
 describe('phase 16 — rc shadow-integration checklist pins required rules', () => {
@@ -212,13 +338,16 @@ describe('phase 16 — rc shadow-integration checklist pins required rules', () 
     expect(/wait for (the )?v8\.5\.0-rc\.1 tag/i.test(src)).toBe(true);
   });
 
-  it('checklist says do not flip imports before rc.1', () => {
+  it('checklist still mentions rc.1 (history is preserved as readiness evidence)', () => {
     const src = read(CHECKLIST_DOC);
-    // Must say imports do not flip on main / before rc.1, regardless of
-    // exact phrasing, but must include rc.1.
     expect(src.includes('rc.1')).toBe(true);
+  });
+
+  it('checklist preserves no-import-flip-in-this-PR (Phase 16 PR does not flip; flip is Phase 17)', () => {
+    const src = read(CHECKLIST_DOC);
+    expect(/Phase 17/.test(src)).toBe(true);
     expect(
-      /must\s+not\s+flip[^.]*main|not\s+flip[^.]*main[- ]branch|never\s+on\s+`?main`?/i.test(
+      /this PR does not (flip|import|pin)|Phase 16[^.]*does not (flip|import|pin)|does not (flip|import|pin)[^.]*Phase 16|never on a Phase 16 docs[- ]only PR/i.test(
         src,
       ),
     ).toBe(true);
@@ -285,24 +414,57 @@ describe('phase 16 — rc shadow-integration checklist pins required rules', () 
     const src = normalize(read(CHECKLIST_DOC));
     expect(/\bnot\W*Hounfour\W*integration\b/i.test(src)).toBe(true);
   });
+
+  it('checklist marks rc.1 wait-gate satisfied and v8.5.0 final shipped', () => {
+    const src = read(CHECKLIST_DOC);
+    expect(/satisfied/i.test(src)).toBe(true);
+    expect(/v8\.5\.0 final/i.test(src)).toBe(true);
+    expect(/c94bcd22/.test(src)).toBe(true);
+    expect(/@0xhoneyjar\/loa-hounfour@8\.5\.0/.test(src)).toBe(true);
+    expect(/ea98924d/.test(src)).toBe(true);
+  });
+
+  it('checklist is reframed as readiness evidence + Phase 17 dependency-flip checklist', () => {
+    const src = read(CHECKLIST_DOC);
+    expect(/readiness evidence/i.test(src)).toBe(true);
+    expect(/Phase 17/.test(src)).toBe(true);
+    expect(/dependency[- ]flip/i.test(src)).toBe(true);
+  });
 });
 
-describe('phase 16 — cross-repo handoff index records accepted-with-adaptation', () => {
+describe('phase 16 — cross-repo handoff index records accepted-with-adaptation and v8.5.0 final shipped', () => {
   it('cross-repo index records Hounfour as accepted-with-adaptation', () => {
     const src = read(INDEX_DOC);
     expect(/accepted-with-adaptation/i.test(src)).toBe(true);
   });
 
-  it('cross-repo index records Hounfour as pending v8.5.0-rc.1', () => {
+  it('cross-repo index records rc.1 fired and v8.5.0 final shipped', () => {
     const src = read(INDEX_DOC);
     expect(src.includes('v8.5.0-rc.1')).toBe(true);
-    expect(/pending/i.test(src)).toBe(true);
+    expect(/v8\.5\.0 final/i.test(src) || /v8\.5\.0[^-]/.test(src)).toBe(true);
+    expect(/shipped|fired/i.test(src)).toBe(true);
+    expect(/c94bcd22/.test(src)).toBe(true);
+    expect(/@0xhoneyjar\/loa-hounfour@8\.5\.0/.test(src)).toBe(true);
   });
 
-  it('cross-repo index does not treat Hounfour as merely pending (status documented)', () => {
+  it('cross-repo index records Hounfour dependency flip as eligible for separate follow-up PR (Phase 17)', () => {
     const src = read(INDEX_DOC);
-    // Index must include both the response-status framing and a
-    // pointer to the Phase 16 packet, not just the bare issue URL.
+    expect(/eligible/i.test(src)).toBe(true);
+    expect(/separate follow[- ]up PR|Phase 17/i.test(src)).toBe(true);
+    expect(/@0xhoneyjar\/loa-hounfour@\^?8\.5\.0/.test(src)).toBe(true);
+  });
+
+  it('cross-repo index makes clear this Phase 16 PR does not flip imports', () => {
+    const src = read(INDEX_DOC);
+    expect(
+      /this Phase 16 PR does not (flip|add|import|change)|Phase 16 PR does not (flip|add|import|change)/i.test(
+        src,
+      ),
+    ).toBe(true);
+  });
+
+  it('cross-repo index documents the response status with pointers to Phase 16 packet docs', () => {
+    const src = read(INDEX_DOC);
     expect(/Response status/i.test(src)).toBe(true);
     expect(/hounfour-response-intake\.md/.test(src)).toBe(true);
     expect(/hounfour-adaptation-delta\.md/.test(src)).toBe(true);
@@ -323,16 +485,17 @@ describe('phase 16 — cross-repo handoff index records accepted-with-adaptation
   });
 });
 
-describe('phase 16 — implementation order doc reflects rc.1 wait condition', () => {
-  it('implementation order doc references v8.5.0-rc.1', () => {
+describe('phase 16 — implementation order doc reflects rc.1 fired / v8.5.0 final shipped / Phase 17 next step', () => {
+  it('implementation order doc references v8.5.0-rc.1 and v8.5.0 final', () => {
     const src = read(ORDER_DOC);
     expect(src.includes('v8.5.0-rc.1')).toBe(true);
+    expect(/v8\.5\.0 final|@0xhoneyjar\/loa-hounfour@8\.5\.0/i.test(src)).toBe(true);
   });
 
-  it('implementation order doc says Straylight should not flip imports until rc.1', () => {
+  it('implementation order doc says Straylight should not flip imports inside this Phase 16 PR (premature-flip prevention preserved)', () => {
     const src = read(ORDER_DOC);
-    expect(/should not flip|must not flip/i.test(src)).toBe(true);
-    expect(/rc\.1/.test(src)).toBe(true);
+    expect(/should not flip|must not flip|does not flip/i.test(src)).toBe(true);
+    expect(/Phase 16/.test(src)).toBe(true);
   });
 
   it('implementation order doc says Hounfour extraction is in cycle-004', () => {
@@ -340,10 +503,21 @@ describe('phase 16 — implementation order doc reflects rc.1 wait condition', (
     expect(/cycle-004/.test(src)).toBe(true);
   });
 
-  it('implementation order doc says downstream lanes still wait for stable contracts or explicit mocks', () => {
+  it('implementation order doc records rc.1 fired (squash SHA c94bcd22) and v8.5.0 final shipped', () => {
     const src = read(ORDER_DOC);
+    expect(/c94bcd22/.test(src)).toBe(true);
+    expect(/ea98924d/.test(src)).toBe(true);
+    expect(/@0xhoneyjar\/loa-hounfour@8\.5\.0/.test(src)).toBe(true);
+  });
+
+  it('implementation order doc declares Phase 17 as the dependency-flip / shadow-integration follow-up, separate from Phase 16', () => {
+    const src = read(ORDER_DOC);
+    expect(/Phase 17/.test(src)).toBe(true);
+    expect(/dependency[- ]flip|shadow[- ]integration/i.test(src)).toBe(
+      true,
+    );
     expect(
-      /stable schema contracts or explicit mocks|stable Hounfour line|written-stub/i.test(
+      /separate from Phase 16|separate follow[- ]up PR|not Phase 16|own PR|its own PR/i.test(
         src,
       ),
     ).toBe(true);
@@ -551,6 +725,47 @@ describe('phase 16 — optional helper script has no forbidden imports and no Gi
     expect(
       src.includes(
         'docs/handoffs/hounfour-rc-shadow-integration-checklist.md',
+      ),
+    ).toBe(true);
+  });
+
+  it('helper script (if present) does not print that v8.5.0-rc.1 is pending', () => {
+    if (!HELPER_PRESENT) return;
+    const src = read(HELPER_SCRIPT);
+    expect(/Pending: v8\.5\.0-rc\.1/i.test(src)).toBe(false);
+    expect(/pending v8\.5\.0-rc\.1/i.test(src)).toBe(false);
+  });
+
+  it('helper script (if present) prints rc.1 landed and v8.5.0 final shipped', () => {
+    if (!HELPER_PRESENT) return;
+    const src = read(HELPER_SCRIPT);
+    expect(/v8\.5\.0-rc\.1/.test(src)).toBe(true);
+    expect(/c94bcd22/.test(src)).toBe(true);
+    expect(/v8\.5\.0 final|final shipped|shipped/i.test(src)).toBe(true);
+    expect(/@0xhoneyjar\/loa-hounfour@8\.5\.0/.test(src)).toBe(true);
+    expect(/ea98924d/.test(src)).toBe(true);
+    expect(
+      src.includes(
+        'https://schemas.0xhoneyjar.com/loa-hounfour/8.5.0/',
+      ),
+    ).toBe(true);
+  });
+
+  it('helper script (if present) prints that the dependency flip to @0xhoneyjar/loa-hounfour@^8.5.0 is eligible for a separate follow-up PR', () => {
+    if (!HELPER_PRESENT) return;
+    const src = read(HELPER_SCRIPT);
+    expect(/@0xhoneyjar\/loa-hounfour@\^?8\.5\.0/.test(src)).toBe(true);
+    expect(/eligible/i.test(src)).toBe(true);
+    expect(/separate follow[- ]up PR|Phase 17/i.test(src)).toBe(true);
+  });
+
+  it('helper script (if present) prints that this Phase 16 PR remains no-import-flip', () => {
+    if (!HELPER_PRESENT) return;
+    const src = read(HELPER_SCRIPT);
+    expect(/Phase 16/.test(src)).toBe(true);
+    expect(
+      /no[- ]import[- ]flip|does not (flip|add|change)|will not flip|inside this Phase 16 PR/i.test(
+        src,
       ),
     ).toBe(true);
   });
