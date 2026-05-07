@@ -339,6 +339,66 @@ npm run typecheck
 npm test
 ```
 
+## Phase 20C — Recall Wedge demo / evidence packet
+
+Phase 20C is a **narrow, in-repo demo / evidence packet** staged on
+the `phase-20c-recall-wedge-demo-evidence` branch inside
+`loa-straylight` after the Phase 20B local-scaffold packet. It makes
+the existing local Recall Wedge demo (`npm run demo:recall:json`)
+reproducible and reviewable from one in-repo packet, without changing
+demo behavior, source code, scripts, fixtures, or any package
+configuration. Phase 20C is **local demo / local evidence only**: it
+is **not runtime-wired**, **not endpoint-wired**, **not the full
+Recall Wedge**, **not governed recall in Finn / Dixie / Freeside
+runtime**, and **not Hounfour-side schema work**.
+
+Phase 20C does **not** flip any wedge import, change `package.json` /
+`package-lock.json`, change the Hounfour dependency range or resolved
+patch, modify [`../../src/straylight/`](../../src/straylight/),
+modify
+[`../../scripts/demo-recall-wedge.ts`](../../scripts/demo-recall-wedge.ts)
+or
+[`../../scripts/demo-recall-wedge.lib.ts`](../../scripts/demo-recall-wedge.lib.ts),
+wire any sibling-repo runtime, add a Dixie endpoint, edit any sibling
+repo, implement `Challenge` or `EstateTransition`, reach into
+unexported Hounfour internals, add a `safeCanonicalize` subpath
+import, publish a public commitment root, or touch `.loa/` /
+`.claude/`. It does **not** commit and does **not** open a PR. It
+also does **not** add a committed snapshot of the demo's JSON output;
+the demo's output path (`.run/recall-demo.json`) remains gitignored
+per existing repo convention.
+
+| Document | Purpose |
+|---|---|
+| [`phase-20c-recall-wedge-demo-evidence.md`](./phase-20c-recall-wedge-demo-evidence.md) | Phase 20C demo / evidence summary: command to run the local recall demo (`npm run demo:recall:json`), expected output location (`.run/recall-demo.json`, gitignored, local-only), expected top-level JSON keys (`recall_request`, `recall_pack`, `recall_receipt`, `audit_review`, `audit_chain_verification`), how the demo relates to the Phase 20A ADR-020A–E decision-locks, how the demo relates to the Phase 20B per-category receipt-pin test, what the demo proves (local pipeline; five JSON keys; pack ↔ receipt linkage; clean audit chain), what the demo does *not* prove (no runtime wiring, no Dixie endpoint, no Finn integration, no Freeside surface, no Hounfour schema ownership, no `Challenge`, no `EstateTransition`, no public anchoring), explicit non-claims, what Phase 20C explicitly did *not* do, and what remains deferred. |
+
+The Phase 20C test pin lives at
+[`../../tests/phase-20c-recall-wedge-demo-evidence.test.ts`](../../tests/phase-20c-recall-wedge-demo-evidence.test.ts).
+It uses only the existing `runDemo()` / `toDemoJson()` library
+entrypoints from
+[`../../scripts/demo-recall-wedge.lib.ts`](../../scripts/demo-recall-wedge.lib.ts)
+and asserts only the documented JSON shape (the five top-level keys,
+`audit_review`'s sub-keys, `audit_chain_verification.ok`, and the
+`recall_pack` ↔ `recall_receipt` linkage on both the public and
+audit-review frames). No source file, fixture file, demo script, or
+package file is modified by Phase 20C.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+npm run demo:recall:json   # writes .run/recall-demo.json (gitignored)
+```
+
+The Phase 20C packet introduces no new sibling issues, no new
+sibling-repo handoff packets, no new fixture directories, no new
+runtime imports, no new public-surface re-exports, no new typed
+helpers under `src/straylight/`, no new validate command, and no
+committed example output. The four filed sibling-repo issue rows
+(Hounfour / Finn / Dixie / Freeside) and the prior Phase 20A /
+Phase 20B in-repo rows are unchanged by Phase 20C.
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
