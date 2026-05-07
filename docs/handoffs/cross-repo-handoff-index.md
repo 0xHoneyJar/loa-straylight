@@ -350,6 +350,80 @@ committed example output. The four filed sibling-repo issue rows
 above (Hounfour / Finn / Dixie / Freeside) are unchanged by
 Phase 20C.
 
+## Phase 20D — Recall Wedge endpoint-boundary packet (in-repo, not a sibling issue)
+
+Phase 20D is a **narrow, in-repo endpoint-boundary planning packet**
+staged on the `phase-20d-recall-wedge-endpoint-boundary` branch
+inside `loa-straylight` after the Phase 20C demo / evidence packet.
+It converts the Phase 20B / Phase 20C local Recall Wedge evidence
+into a **future integration boundary** for a Dixie-hosted
+recall-inspection candidate and a Finn-hosted runtime-context
+fallback candidate, **without implementing either endpoint**. It is
+**not** a filed sibling issue, **not** Hounfour integration, **not**
+Finn / Dixie / Freeside runtime wiring, **not** sibling-repo
+coordination beyond an in-repo restatement, and **not** the full
+Recall Wedge. Phase 20D is **endpoint-boundary planning only** —
+it is **not endpoint-wired** and **not runtime-wired**.
+
+The Phase 20D packet does **not** flip any wedge import, change
+`package.json` / `package-lock.json`, change the Hounfour dependency
+range or resolved patch, modify
+[`../../src/straylight/`](../../src/straylight/), modify
+[`../../scripts/demo-recall-wedge.ts`](../../scripts/demo-recall-wedge.ts)
+or
+[`../../scripts/demo-recall-wedge.lib.ts`](../../scripts/demo-recall-wedge.lib.ts),
+edit any sibling repo, add a Dixie endpoint, add a Finn endpoint,
+implement `Challenge` or `EstateTransition`, reach into unexported
+Hounfour internals, add a `safeCanonicalize` subpath import, publish
+a public commitment root, add a network surface, change persistence,
+or touch `.loa/` / `.claude/`. It does **not** commit and does
+**not** open a PR. It also does **not** add any new test, fixture,
+or `src/` module — the Phase 20B per-category receipt pins and the
+Phase 20C demo-shape pin already cover the local evidence Phase 20D
+narrates.
+
+The Phase 20D artifact (in-repo):
+
+- [`docs/handoffs/phase-20d-recall-wedge-endpoint-boundary.md`](./phase-20d-recall-wedge-endpoint-boundary.md)
+  — Phase 20D endpoint-boundary planning summary: executive
+  summary (endpoint-boundary planning only; no endpoint
+  implemented; no sibling repo edited; no runtime wiring),
+  boundary model (`RecallRequest`, `RecallPack`, `RecallReceipt`,
+  the Phase 20C `audit_review` and `audit_chain_verification`
+  projections — *candidates*, not finalized cross-repo API
+  schemas), Dixie-hosted recall-inspection candidate
+  responsibilities (operator/admin inspection; should not become
+  semantic owner; should not mutate estate state without an
+  explicit transition path), Finn-hosted runtime-context fallback
+  responsibilities (immediate model-context assembly; runtime
+  policy + audit; should not define canonical Straylight
+  semantics; should not bypass local receipt semantics), shared
+  future contract candidate (input: actor/estate context,
+  task/intent, environment frame, requested classes/scopes,
+  caller/authority context; output: pack + receipt + audit-review
+  + exclusion/redaction/challenge/revocation summaries +
+  audit-chain verification; errors/denials: policy denied,
+  invalid request, unavailable transition, missing competence,
+  unsupported runtime host), ownership boundaries (Straylight
+  owns semantics; Hounfour may own schema/protocol exports;
+  Dixie may host inspection; Finn may host runtime; Freeside
+  consumes; no sibling owns Phase 20D output), explicit
+  non-scope (no Dixie endpoint, no Finn endpoint, no Freeside
+  integration, no Hounfour schemas, no `Challenge`, no
+  `EstateTransition`, no `safeCanonicalize` subpath, no public
+  anchors, no persistence wiring, no package changes, no `src/`
+  changes), what this packet does *not* claim, and what remains
+  deferred.
+
+The Phase 20D packet introduces no new sibling issues, no new
+sibling-repo handoff packets, no new fixture directories, no new
+runtime imports, no new public-surface re-exports, no new typed
+helpers under `src/straylight/`, no new validate command, no new
+tests, and no committed example output. The four filed sibling-repo
+issue rows above (Hounfour / Finn / Dixie / Freeside) and the prior
+Phase 20A / Phase 20B / Phase 20C in-repo rows are unchanged by
+Phase 20D.
+
 ## Recommended next steps
 
 1. Read [`cross-repo-implementation-order.md`](./cross-repo-implementation-order.md)
@@ -437,6 +511,15 @@ content.
   reproducibility; pinned JSON output shape over the existing
   `runDemo()` / `toDemoJson()` library entrypoints; not
   runtime-wired and not endpoint-wired).
+- [`docs/handoffs/phase-20d-recall-wedge-endpoint-boundary.md`](./phase-20d-recall-wedge-endpoint-boundary.md)
+  — Phase 20D endpoint-boundary planning summary (local
+  `RecallRequest` / `RecallPack` / `RecallReceipt` / `audit_review`
+  / `audit_chain_verification` objects nominated as current
+  evidence-backed contract *candidates* for a future Dixie-hosted
+  recall-inspection endpoint or Finn-hosted runtime-context
+  endpoint; *candidates*, not finalized cross-repo API schemas;
+  not endpoint-wired, not runtime-wired, no Dixie endpoint, no
+  Finn endpoint).
 - [`docs/decisions/ADR-020A-straylight-semantic-owner.md`](../decisions/ADR-020A-straylight-semantic-owner.md)
   — semantic-owner decision-lock.
 - [`docs/decisions/ADR-020B-recall-wedge-endpoint-host.md`](../decisions/ADR-020B-recall-wedge-endpoint-host.md)
