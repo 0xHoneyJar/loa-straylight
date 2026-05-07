@@ -293,6 +293,52 @@ The five Phase 20A ADRs:
 - [`../decisions/ADR-020D-recall-wedge-persistence-and-receipts.md`](../decisions/ADR-020D-recall-wedge-persistence-and-receipts.md)
 - [`../decisions/ADR-020E-commitment-root-deferral.md`](../decisions/ADR-020E-commitment-root-deferral.md)
 
+## Phase 20B — Recall Wedge local scaffold
+
+Phase 20B is a **narrow local scaffold** staged on the
+`phase-20b-recall-wedge-local-scaffold` branch inside
+`loa-straylight`. It is the first implementation-facing branch
+after the Phase 20A decision-lock packet, but it remains
+**local**: it pins local recall semantics on the existing
+`executeRecall` pipeline and does **not** wire Finn, Dixie,
+Freeside, or Hounfour runtime behavior. Phase 20B is **not the
+full Recall Wedge**, **not governed recall in Finn / Dixie /
+Freeside runtime**, and **not Hounfour-side schema work**.
+
+Phase 20B does **not** flip any wedge import, change
+`package.json` / `package-lock.json`, change the Hounfour
+dependency range or resolved patch, modify
+[`../../src/straylight/`](../../src/straylight/), wire any
+sibling-repo runtime, add a Dixie endpoint, edit any sibling
+repo, implement `Challenge` or `EstateTransition`, reach into
+unexported Hounfour internals, add a `safeCanonicalize` subpath
+import, publish a public commitment root, or touch `.loa/` /
+`.claude/`.
+
+| Document | Purpose |
+|---|---|
+| [`phase-20b-recall-wedge-local-scaffold.md`](./phase-20b-recall-wedge-local-scaffold.md) | Phase 20B local-scaffold summary: what was added (one additive test file plus three doc files), behaviors pinned (the six ADR-020D receipt categories — included / excluded / redacted / challenged / revoked / blocked-by-policy — on the existing `executeRecall` pipeline, plus the "structural validity is not authorization" invariant and a receipt-or-audit completeness pin), validation evidence (`npm run typecheck`, `npm test`), what Phase 20B explicitly did *not* do (no Finn / Dixie / Freeside wiring, no Dixie endpoint, no sibling-repo edits, no Hounfour schema authoring, no Hounfour dependency change, no `Challenge` / `EstateTransition`, no `safeCanonicalize` subpath, no new typed helper in `src/`, no public anchoring, no new HTTP surface, no `package.json` deps), what remains deferred, and what Phase 20B does *not* claim. |
+
+The Phase 20B packet consumes the Phase 20A decision-lock packet
+([`phase-20a-recall-wedge-readiness.md`](./phase-20a-recall-wedge-readiness.md)),
+the Phase 20A-staged candidate scope
+([`phase-20b-implementation-candidate-scope.md`](./phase-20b-implementation-candidate-scope.md)),
+the five ADR-020-series decision-locks under
+[`../decisions/`](../decisions/), and the existing Recall Wedge
+implementation under
+[`../../src/straylight/`](../../src/straylight/). It produces no
+fixture changes, no runtime changes, no package changes, and no
+new sibling-repo handoff packets. The four filed sibling-repo
+issue rows above (Hounfour / Finn / Dixie / Freeside) are
+unchanged by Phase 20B.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+```
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
@@ -358,7 +404,12 @@ npm run handoffs:index
   ADR-020A through ADR-020E). It does not flip imports, change
   packages, wire any sibling repo, or scaffold any Phase 20B
   code on its own; the actual Phase 20B PR is a separate,
-  future event under teammate review.
+  future event under teammate review. **Phase 20B**
+  ([`phase-20b-recall-wedge-local-scaffold.md`](./phase-20b-recall-wedge-local-scaffold.md))
+  is a **local scaffold** that pins ADR-020D's six receipt
+  categories on the existing `executeRecall` pipeline; it is
+  not runtime-wired, not Hounfour integration, not Finn / Dixie
+  / Freeside wiring, and not the full Recall Wedge.
 - **Not** a license to begin sibling work ahead of the schedule.
   Until the sibling repo's PR lands, the wedge owns every primitive
   the packets describe.
