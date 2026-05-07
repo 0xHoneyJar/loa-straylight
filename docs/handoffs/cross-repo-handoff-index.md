@@ -424,6 +424,83 @@ issue rows above (Hounfour / Finn / Dixie / Freeside) and the prior
 Phase 20A / Phase 20B / Phase 20C in-repo rows are unchanged by
 Phase 20D.
 
+## Phase 20E — Recall Wedge closeout packet (in-repo, not a sibling issue)
+
+Phase 20E is a **narrow, in-repo closeout packet** staged on the
+`phase-20e-recall-wedge-closeout` branch inside `loa-straylight`
+after the Phase 20D endpoint-boundary planning packet. It closes
+the Phase 20 Recall Wedge **pre-integration** lane by summarizing
+what Phases 20A, 20B, 20C, and 20D established locally, what
+remains unimplemented, and what must be true before Phase 21
+endpoint / runtime integration begins. It is **not** a filed
+sibling issue, **not** Hounfour integration, **not** Finn / Dixie
+/ Freeside runtime wiring, **not** sibling-repo coordination
+beyond an in-repo restatement, and **not** the full Recall Wedge.
+Phase 20E is **closeout only** — it is **not endpoint-wired** and
+**not runtime-wired**. **No endpoint / runtime integration is
+authorized by this packet.**
+
+The Phase 20E packet does **not** flip any wedge import, change
+`package.json` / `package-lock.json`, change the Hounfour
+dependency range or resolved patch, modify
+[`../../src/straylight/`](../../src/straylight/), modify
+[`../../scripts/demo-recall-wedge.ts`](../../scripts/demo-recall-wedge.ts)
+or
+[`../../scripts/demo-recall-wedge.lib.ts`](../../scripts/demo-recall-wedge.lib.ts),
+edit any sibling repo, add a Dixie endpoint, add a Finn endpoint,
+implement `Challenge` or `EstateTransition`, reach into
+unexported Hounfour internals, add a `safeCanonicalize` subpath
+import, publish a public commitment root, add a network surface,
+change persistence, or touch `.loa/` / `.claude/`. It does
+**not** commit and does **not** open a PR. It also does **not**
+add any new test, fixture, script, or `src/` module — the
+Phase 20B per-category receipt pins and the Phase 20C demo-shape
+pin already cover the local evidence Phase 20E narrates.
+
+The Phase 20E artifact (in-repo):
+
+- [`docs/handoffs/phase-20e-recall-wedge-closeout.md`](./phase-20e-recall-wedge-closeout.md)
+  — Phase 20E closeout summary: executive summary (closeout
+  only; Phase 20 local Recall Wedge prep complete; no endpoint /
+  runtime integration authorized), Phase 20 recap (20A
+  decision-lock; 20B local `executeRecall` behavior pinned; 20C
+  local demo / evidence output shape pinned; 20D endpoint-host
+  boundary documented), what is locally proven (`RecallRequest` /
+  `RecallPack` / `RecallReceipt` / `audit_review` /
+  `audit_chain_verification` shape evidence-backed; local recall
+  behavior pinned by tests; local demo evidence reproducible;
+  endpoint-host candidates and integration boundary documented),
+  what is not proven (no Dixie endpoint, no Finn runtime
+  integration, no Freeside integration, no Hounfour Straylight
+  schemas, no `Challenge` or `EstateTransition` implementation,
+  no public anchor / commitment-root implementation, no
+  production persistence wired, no governed recall in
+  sibling-runtime production surfaces), Phase 21 entry conditions
+  (Hounfour / Jani feedback received or teammate review approves
+  proceeding; endpoint host selected; schema ownership boundary
+  reaffirmed; runtime persistence / audit owner reaffirmed;
+  non-scope remains explicit), Phase 21 non-go conditions
+  (Hounfour feedback still pending and no teammate review
+  approves proceeding → do not begin endpoint / runtime wiring;
+  endpoint host still ambiguous → do not wire Dixie or Finn;
+  schema ownership still ambiguous → do not add Hounfour schemas;
+  `Challenge` / `EstateTransition` still deferred → do not
+  implement them locally), explicit non-scope (no `src/` changes,
+  no tests, no scripts, no package changes, no Dixie endpoint, no
+  Finn endpoint, no Freeside integration, no Hounfour schemas, no
+  `Challenge`, no `EstateTransition`, no `safeCanonicalize` work,
+  no public anchors, no persistence wiring, no sibling repo
+  edits), and what this packet does *not* claim.
+
+The Phase 20E packet introduces no new sibling issues, no new
+sibling-repo handoff packets, no new fixture directories, no new
+runtime imports, no new public-surface re-exports, no new typed
+helpers under `src/straylight/`, no new validate command, no new
+tests, and no committed example output. The four filed sibling-repo
+issue rows above (Hounfour / Finn / Dixie / Freeside) and the prior
+Phase 20A / Phase 20B / Phase 20C / Phase 20D in-repo rows are
+unchanged by Phase 20E.
+
 ## Recommended next steps
 
 1. Read [`cross-repo-implementation-order.md`](./cross-repo-implementation-order.md)
@@ -492,7 +569,15 @@ content.
   `loa-straylight`. It is not runtime-wired, not Hounfour
   integration, not Finn / Dixie / Freeside wiring, not a Dixie
   endpoint, not a `Challenge` or `EstateTransition`
-  implementation, and not the full Recall Wedge.
+  implementation, and not the full Recall Wedge. **Phase 20E**
+  ([`phase-20e-recall-wedge-closeout.md`](./phase-20e-recall-wedge-closeout.md))
+  is the **closeout packet** for the Phase 20 Recall Wedge
+  **pre-integration** lane — it summarizes what 20A / 20B / 20C /
+  20D established locally, what remains unimplemented, and what
+  must be true before Phase 21 endpoint / runtime integration
+  begins; it authorizes **no** endpoint / runtime integration, is
+  **not endpoint-wired** and **not runtime-wired**, adds no test
+  / fixture / script / `src/` change, and is **Phase 20E only**.
 
 ## Cross-references
 
@@ -520,6 +605,13 @@ content.
   endpoint; *candidates*, not finalized cross-repo API schemas;
   not endpoint-wired, not runtime-wired, no Dixie endpoint, no
   Finn endpoint).
+- [`docs/handoffs/phase-20e-recall-wedge-closeout.md`](./phase-20e-recall-wedge-closeout.md)
+  — Phase 20E closeout summary for the Phase 20 Recall Wedge
+  **pre-integration** lane (Phase 20 recap; what is locally
+  proven; what is not proven; Phase 21 entry conditions; Phase 21
+  non-go conditions; explicit non-scope; closeout only — no
+  endpoint / runtime integration authorized; not endpoint-wired
+  and not runtime-wired).
 - [`docs/decisions/ADR-020A-straylight-semantic-owner.md`](../decisions/ADR-020A-straylight-semantic-owner.md)
   — semantic-owner decision-lock.
 - [`docs/decisions/ADR-020B-recall-wedge-endpoint-host.md`](../decisions/ADR-020B-recall-wedge-endpoint-host.md)
