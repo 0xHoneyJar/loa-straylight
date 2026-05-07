@@ -185,7 +185,8 @@ A human reviewer pastes it verbatim — Phase 19A does **not**
 file the comment itself.
 
 ```markdown
-**Straylight-side shadow-inspection update against `@0xhoneyjar/loa-hounfour@^8.5.0`** (Phase 17B + Phase 18, working-tree only — no integration on Straylight `main`, no Hounfour-side change requested by this comment).
+**Straylight-side shadow-inspection update against `@0xhoneyjar/loa-hounfour@^8.5.0`**  
+Phase 17B + Phase 18 results. This is a Straylight-side shadow-inspection / boundary review update only: no Hounfour-side change is requested by this comment, and no Finn / Dixie / Freeside runtime integration is included.
 
 Summary against the v8.5.x line, sourced from the locally-installed package:
 
@@ -194,24 +195,24 @@ Summary against the v8.5.x line, sourced from the locally-installed package:
 - **The 15 net-new v8.5.0 schemas (delta #12) are present in v8.5.x.** Each declares a `$id` matching `/loa-hounfour/8.5.\d+/`. Names: `receipt-detail-level`, `surface-context`, `recall-request`, `recall-pack`, `recall-receipt`, `forget-record`, `commitment-type`, `commitment-root`, `agent-estate-status`, `agent-estate`, `privacy-scope`, `risk-level`, `assertion-status`, `assertion-class`, `assertion`.
 - **`Challenge` remains absent in v8.5.x as expected (delta #7).** Deferred to Hounfour cycle-005 / v8.6.0; the Straylight `challenge` verb stays local until then. No Hounfour-side change requested.
 - **`EstateTransition` remains absent in v8.5.x as expected (delta #8).** Deferred to Hounfour cycle-005 / v8.6.0; the Straylight transition machinery stays local until then. No Hounfour-side change requested.
-- **`audit-event-transition` → expected `audit-event` is classified as `DISCOVERY_NOTE`, not a blocker.** v8.5.x ships `audit-trail-entry.schema.json` and `domain-event.schema.json` but no `audit-event.schema.json`. Straylight will resolve this on its side in a later phase (rename the local fixture, or re-classify against `audit-trail-entry` / `domain-event`). No Hounfour-side change requested by this comment.
+- **`audit-event-transition` → expected `audit-event` is classified as `DISCOVERY_NOTE`, not a blocker.** v8.5.x ships `audit-trail-entry.schema.json` and `domain-event.schema.json` but no `audit-event.schema.json`. Straylight will resolve this on its side in a later phase: rename the local fixture, or re-classify against `audit-trail-entry` / `domain-event`. No Hounfour-side change requested by this comment.
 - **`safeCanonicalize` subpath selection remains deferred — gate `no-confirmed-subpath`.** v8.5.x exports map declares no `./canonicalize` and no `./utilities` subpath. The Straylight alias module imports no `safeCanonicalize` from any subpath. If Hounfour intends `safeCanonicalize` to be a public boundary, an explicit exported subpath would close this gate; if Hounfour intends it to remain internal, Straylight will keep the local Phase 0–18 implementation. Either is fine — this comment is informational, not a blocker.
 
-Boundary preservation (re-affirmed):
+Boundary preservation re-affirmed:
 
-- The Straylight wedge's public API surface (`src/straylight/index.ts`) is unchanged at the Hounfour boundary. The alias module (`src/straylight/hounfour-alias.ts`) is **not** re-exported from `index.ts` — it is a forward-looking boundary pin, not runtime wiring.
+- The Straylight wedge's public API surface (`src/straylight/index.ts`) is unchanged at the Hounfour boundary. The alias module (`src/straylight/hounfour-alias.ts`) is **not** re-exported from `index.ts`; it is a forward-looking boundary pin, not runtime wiring.
 - No Finn / Dixie / Freeside runtime is wired by this work.
-- No sibling repo (`loa-hounfour`, `loa-finn`, `loa-dixie`, `loa-freeside`) was inspected, cloned, forked, or edited by this work — the inspection reads only the locally-installed `node_modules/@0xhoneyjar/loa-hounfour/` tree.
+- No sibling repo (`loa-hounfour`, `loa-finn`, `loa-dixie`, `loa-freeside`) was inspected, cloned, forked, or edited by this work. The inspection reads only the locally-installed `node_modules/@0xhoneyjar/loa-hounfour/` tree.
 
-**No Hounfour-side blockers filed by this update.** All findings above are either confirmations (package works; 15 schemas present; deferrals honored at runtime) or Straylight-side later-phase decisions (audit-event resolution; safeCanonicalize subpath selection).
+**No Hounfour-side blockers filed by this update.** All findings above are either confirmations, expected deferrals, or Straylight-side later-phase decisions.
 
-References (Straylight-side, in `loa-straylight`):
+References, Straylight-side in `loa-straylight`:
 
-- `docs/handoffs/hounfour-shadow-integration-findings.md` — Phase 17B + Phase 18 working-tree findings (source of truth for the facts above).
+- `docs/handoffs/hounfour-shadow-integration-findings.md` — Phase 17B + Phase 18 findings.
 - `docs/handoffs/hounfour-adaptation-delta.md` — per-delta accepted-with-adaptation table for v8.5.0 final.
 - `docs/handoffs/hounfour-rc-shadow-integration-checklist.md` — readiness evidence + Phase 17 dependency-flip checklist.
-- `docs/handoffs/hounfour-v850-shadow-review-packet.md` — this packet (Phase 19A upstream-review summary).
-- `tests/hounfour-shadow-integration.test.ts` — Phase 17B + Phase 18 vitest pins backing every fact above.
+- `docs/handoffs/hounfour-v850-shadow-review-packet.md` — Phase 19A upstream-review summary.
+- `tests/hounfour-shadow-integration.test.ts` — Phase 17B + Phase 18 vitest pins backing the facts above.
 ```
 
 ## What this packet is *not*
