@@ -240,6 +240,59 @@ It produces no fixture changes, no runtime changes, and no
 package changes; filing the upstream comment remains a separate,
 human-reviewed event in the sibling repo.
 
+## Phase 20A — Recall Wedge decision-lock packet
+
+Phase 20A is a **narrow decision-lock packet** that converts
+existing Loa-Straylight architecture / spec material into
+explicit implementation-readiness decisions for the Straylight
+Recall Wedge, while the team waits for Jani / teammate response
+on
+[`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70).
+It locks the next implementation gates (semantic ownership, MVP
+endpoint-host recommendation, schema namespace strategy,
+persistence / recall-receipt ownership, commitment-root /
+public-anchor deferral, and Phase 20B implementation-candidate
+scope) so Phase 20B can begin a *local* scaffold without taking
+an implicit dependency on any sibling repo, any v8.6.0 schema,
+any unconfirmed Hounfour subpath, or any commitment surface.
+
+**Phase 20A is not Recall Wedge implementation.** It does
+**not** flip any wedge import, change `package.json` /
+`package-lock.json`, change the Hounfour dependency range or
+resolved patch, modify
+[`../../src/straylight/hounfour-alias.ts`](../../src/straylight/hounfour-alias.ts),
+modify [`../../src/straylight/index.ts`](../../src/straylight/index.ts),
+wire Finn / Dixie / Freeside runtime, edit any sibling repo,
+implement `Challenge` or `EstateTransition`, reach into
+unexported Hounfour internals, or touch `.loa/` / `.claude/`. It
+does **not** commit and does **not** open a PR. Phase 20A is
+docs / coordination only — it does not, on its own, authorize
+Phase 20B work.
+
+| Document | Purpose |
+|---|---|
+| [`phase-20a-recall-wedge-readiness.md`](./phase-20a-recall-wedge-readiness.md) | Phase 20A executive summary: decisions locked (the five ADR-020 series), decisions deferred (`Challenge`, `EstateTransition`, `safeCanonicalize` subpath, `audit-event-transition`, public anchoring, runtime persistence), implementation blockers removed (coordination-level ambiguities), implementation blockers remaining (awaiting issue #70, Hounfour v8.6.0, sibling-repo PRs), what Phase 20A explicitly did *not* do, and the ready/not-ready verdict for Phase 20B. |
+| [`phase-20b-implementation-candidate-scope.md`](./phase-20b-implementation-candidate-scope.md) | Phase 20A-staged Phase 20B scope proposal: candidate branch (`phase-20b-recall-wedge-local-scaffold`), candidate goal (library-shaped local scaffold over the existing wedge surface), allowed scope (`src/straylight/`, `tests/`, demo, docs, *additive* only), explicit non-scope (no Finn / Dixie / Freeside wiring, no sibling-repo edits, no Hounfour schema authoring, no Hounfour dependency change, no `Challenge` / `EstateTransition`, no `safeCanonicalize` subpath, no public anchoring, no new HTTP surface, no `package.json` deps), likely files for future implementation, validation expectations, and the dependencies on Hounfour feedback. |
+
+The Phase 20A packet consumes the existing
+[`docs/architecture/loa-straylight-product-system-architecture-spec.md`](../architecture/loa-straylight-product-system-architecture-spec.md),
+the existing [`docs/mvp/`](../mvp/) wedge / boundary / threat-model
+material, the Phase 9 / 10 / 12 / 14 sibling-repo handoff packets,
+the Phase 16 response-intake / adaptation-delta / readiness packet,
+the Phase 17B / 18 shadow-integration findings, and the Phase 19A
+upstream-review packet. It produces five ADR docs under
+[`../decisions/`](../decisions/) (ADR-020A through ADR-020E) plus
+the two handoff docs above. It produces no fixture changes, no
+runtime changes, and no package changes.
+
+The five Phase 20A ADRs:
+
+- [`../decisions/ADR-020A-straylight-semantic-owner.md`](../decisions/ADR-020A-straylight-semantic-owner.md)
+- [`../decisions/ADR-020B-recall-wedge-endpoint-host.md`](../decisions/ADR-020B-recall-wedge-endpoint-host.md)
+- [`../decisions/ADR-020C-straylight-schema-namespace-strategy.md`](../decisions/ADR-020C-straylight-schema-namespace-strategy.md)
+- [`../decisions/ADR-020D-recall-wedge-persistence-and-receipts.md`](../decisions/ADR-020D-recall-wedge-persistence-and-receipts.md)
+- [`../decisions/ADR-020E-commitment-root-deferral.md`](../decisions/ADR-020E-commitment-root-deferral.md)
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
@@ -297,6 +350,15 @@ npm run handoffs:index
   order, and no-go sequence inside `loa-straylight`; filing,
   opening, reviewing, or merging any sibling-repo PR remains a
   separate, future, sibling-repo event under teammate review.
+- **Not** Recall Wedge implementation. Phase 20A is a docs /
+  coordination decision-lock packet
+  ([`phase-20a-recall-wedge-readiness.md`](./phase-20a-recall-wedge-readiness.md),
+  [`phase-20b-implementation-candidate-scope.md`](./phase-20b-implementation-candidate-scope.md),
+  and the five ADRs under [`../decisions/`](../decisions/)
+  ADR-020A through ADR-020E). It does not flip imports, change
+  packages, wire any sibling repo, or scaffold any Phase 20B
+  code on its own; the actual Phase 20B PR is a separate,
+  future event under teammate review.
 - **Not** a license to begin sibling work ahead of the schedule.
   Until the sibling repo's PR lands, the wedge owns every primitive
   the packets describe.
