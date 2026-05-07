@@ -18,7 +18,8 @@
     "dixie:recall": "vite-node scripts/export-dixie-governed-recall-fixtures.ts",
     "freeside:surface": "vite-node scripts/export-freeside-community-surface-fixtures.ts",
     "handoffs:index": "vite-node scripts/print-cross-repo-handoff-index.ts",
-    "hounfour:rc-readiness": "vite-node scripts/print-hounfour-rc-readiness.ts"
+    "hounfour:rc-readiness": "vite-node scripts/print-hounfour-rc-readiness.ts",
+    "hounfour:shadow-inspect": "vite-node scripts/inspect-hounfour-shadow.ts"
   },
   "engines": {
     "node": ">=20"
@@ -27,5 +28,8 @@
     "@types/node": "^20.11.0",
     "typescript": "^5.4.0",
     "vitest": "^1.6.0"
+  },
+  "dependencies": {
+    "@0xhoneyjar/loa-hounfour": "^8.5.0"
   }
 }
