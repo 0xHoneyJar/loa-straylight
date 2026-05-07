@@ -155,6 +155,81 @@ references:
   [`fixtures/freeside-community-surface/`](../../fixtures/freeside-community-surface/)
 - **Local validate command:** `npm run freeside:surface`
 
+## Phase 20A — Recall Wedge decision-lock packet (in-repo, not a sibling issue)
+
+Phase 20A is a **narrow, in-repo decision-lock packet** staged
+inside `loa-straylight` while the team waits for Jani / teammate
+response on
+[`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70).
+It is **not** a filed sibling issue, **not** Hounfour
+integration, **not** Finn / Dixie / Freeside runtime wiring,
+**not** sibling-repo coordination beyond an in-repo restatement,
+and **not** authorization to begin Phase 20B work. It is docs /
+coordination only.
+
+The Phase 20A packet does **not** flip any wedge import, change
+`package.json` / `package-lock.json`, change the Hounfour
+dependency range or resolved patch, modify
+[`../../src/straylight/hounfour-alias.ts`](../../src/straylight/hounfour-alias.ts),
+modify [`../../src/straylight/index.ts`](../../src/straylight/index.ts),
+edit any sibling repo, implement `Challenge` or
+`EstateTransition`, reach into unexported Hounfour internals, or
+touch `.loa/` / `.claude/`. It does **not** commit and does
+**not** open a PR. The actual Phase 20B PR is a separate, future
+event under teammate review.
+
+The Phase 20A artifacts (all in-repo):
+
+- [`docs/handoffs/phase-20a-recall-wedge-readiness.md`](./phase-20a-recall-wedge-readiness.md)
+  — executive summary, decisions locked (the five ADR-020 series),
+  decisions deferred (`Challenge`, `EstateTransition`,
+  `safeCanonicalize` subpath, `audit-event-transition`, public
+  anchoring, runtime persistence), implementation blockers
+  removed (coordination-level ambiguities), implementation
+  blockers remaining (awaiting issue #70, Hounfour v8.6.0,
+  sibling-repo PRs), what Phase 20A explicitly did *not* do, and
+  the ready/not-ready verdict for Phase 20B.
+- [`docs/handoffs/phase-20b-implementation-candidate-scope.md`](./phase-20b-implementation-candidate-scope.md)
+  — Phase 20B candidate scope: branch (`phase-20b-recall-wedge-local-scaffold`),
+  goal (library-shaped local scaffold), allowed scope (`src/straylight/`,
+  `tests/`, demo, docs — *additive* only), explicit non-scope
+  (no Finn / Dixie / Freeside wiring, no sibling-repo edits, no
+  Hounfour schema authoring, no Hounfour dependency change, no
+  `Challenge` / `EstateTransition`, no `safeCanonicalize`
+  subpath, no public anchoring, no new HTTP surface, no
+  `package.json` deps).
+
+The five Phase 20A ADRs under
+[`../decisions/`](../decisions/):
+
+- [`../decisions/ADR-020A-straylight-semantic-owner.md`](../decisions/ADR-020A-straylight-semantic-owner.md)
+  — Loa-Straylight remains the semantic owner. Hounfour / Finn /
+  Dixie / Freeside are *candidates* for their respective roles;
+  none has yet implemented the staged contract.
+- [`../decisions/ADR-020B-recall-wedge-endpoint-host.md`](../decisions/ADR-020B-recall-wedge-endpoint-host.md)
+  — Default candidate: Dixie-hosted recall inspection surface.
+  Fallback: Finn-hosted endpoint. Phase 20A wires neither.
+- [`../decisions/ADR-020C-straylight-schema-namespace-strategy.md`](../decisions/ADR-020C-straylight-schema-namespace-strategy.md)
+  — Future Straylight namespace / package surface; Hounfour
+  remains the canonical schema candidate. `Challenge`,
+  `EstateTransition`, and `safeCanonicalize` exported subpath
+  are explicitly deferred.
+- [`../decisions/ADR-020D-recall-wedge-persistence-and-receipts.md`](../decisions/ADR-020D-recall-wedge-persistence-and-receipts.md)
+  — MVP receipt semantics owned by Loa-Straylight. Finn / Dixie
+  / Freeside are *future* persistence / exposure candidates.
+- [`../decisions/ADR-020E-commitment-root-deferral.md`](../decisions/ADR-020E-commitment-root-deferral.md)
+  — Local commitment-root helper unchanged. No public anchoring,
+  no onchain integration. Future-requirement gates recorded for
+  any later wiring ADR.
+
+The Phase 20A packet introduces no new sibling issues, no new
+sibling-repo handoff packets, no new fixture directories, no new
+runtime imports, and no new validate command. It is purely a
+docs / coordination decision-lock prepared while the team waits
+for Jani / teammate response. The four filed sibling-repo issue
+rows above (Hounfour / Finn / Dixie / Freeside) are unchanged by
+Phase 20A.
+
 ## Recommended next steps
 
 1. Read [`cross-repo-implementation-order.md`](./cross-repo-implementation-order.md)
@@ -211,11 +286,31 @@ content.
   above are the *filed* issues, not merged PRs. Merging the
   sibling-repo PR is a separate, future, sibling-repo event under
   teammate review.
+- **Not** Recall Wedge implementation. The Phase 20A
+  decision-lock packet linked above is docs / coordination only;
+  it does not flip imports, change packages, wire any sibling
+  repo, or scaffold any Phase 20B code on its own. The actual
+  Phase 20B PR is a separate, future event under teammate
+  review.
 
 ## Cross-references
 
 - [`docs/handoffs/README.md`](./README.md) — the per-packet
   handoff index (Phases 9 / 10 / 12 / 14).
+- [`docs/handoffs/phase-20a-recall-wedge-readiness.md`](./phase-20a-recall-wedge-readiness.md)
+  — Phase 20A decision-lock readiness packet.
+- [`docs/handoffs/phase-20b-implementation-candidate-scope.md`](./phase-20b-implementation-candidate-scope.md)
+  — Phase 20A-staged Phase 20B candidate scope.
+- [`docs/decisions/ADR-020A-straylight-semantic-owner.md`](../decisions/ADR-020A-straylight-semantic-owner.md)
+  — semantic-owner decision-lock.
+- [`docs/decisions/ADR-020B-recall-wedge-endpoint-host.md`](../decisions/ADR-020B-recall-wedge-endpoint-host.md)
+  — MVP endpoint-host recommendation + fallback.
+- [`docs/decisions/ADR-020C-straylight-schema-namespace-strategy.md`](../decisions/ADR-020C-straylight-schema-namespace-strategy.md)
+  — schema-namespace strategy + Phase 20A deferrals.
+- [`docs/decisions/ADR-020D-recall-wedge-persistence-and-receipts.md`](../decisions/ADR-020D-recall-wedge-persistence-and-receipts.md)
+  — receipt-ownership + persistence-deferral decision-lock.
+- [`docs/decisions/ADR-020E-commitment-root-deferral.md`](../decisions/ADR-020E-commitment-root-deferral.md)
+  — commitment-root / public-anchor deferral.
 - [`docs/handoffs/cross-repo-implementation-order.md`](./cross-repo-implementation-order.md)
   — recommended sibling-repo implementation order and dependency
   rationale.
