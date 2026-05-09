@@ -532,6 +532,79 @@ npm run typecheck
 npm test
 ```
 
+## Phase 21B — Hounfour v8.6 schema-readiness lock
+
+Phase 21B is a **narrow, in-repo schema-readiness lock packet**
+staged on the `phase-21b-v86-schema-readiness-lock` branch inside
+`loa-straylight` after the Phase 21A `@0xhoneyjar/loa-hounfour@^8.6.0`
+dependency intake. It maps the actually-exported v8.6.0 surface
+(eleven JS module subpaths plus the `./schemas/*` file-level
+subpath, against
+[`hounfour-v86-shadow-inspection-output.txt`](./hounfour-v86-shadow-inspection-output.txt))
+to the Straylight Recall Wedge MVP primitive set — answering, in
+one packet, which v8.6.0 exports are now safe upstream substrate
+(notably `challenge.schema.json`, which closes Phase 16 delta #7),
+which Straylight primitives still are not confirmed exported
+Hounfour contracts (`EstateTransition`, `AuditEvent` under that
+name, the `safeCanonicalize` JS subpath), which items remain
+deferred locally, which gaps are runtime-integration blockers
+versus non-blocking discovery notes, and what shape Phase 22
+should take. Phase 21B is **schema-readiness lock only** — it is
+**not endpoint-wired**, **not runtime-wired**, **not the full
+Recall Wedge**, **not governed recall in Finn / Dixie / Freeside
+runtime**, and **not Hounfour-side schema work**. **No endpoint /
+runtime integration is authorized by this packet.**
+
+Phase 21B does **not** flip any wedge import, change `package.json`
+/ `package-lock.json`, change the Hounfour dependency range or
+resolved patch, modify [`../../src/straylight/`](../../src/straylight/),
+modify any script under [`../../scripts/`](../../scripts/), wire
+any sibling-repo runtime, add a Dixie endpoint, add a Finn
+endpoint, edit any sibling repo, implement `Challenge` locally,
+implement `EstateTransition` locally, reach into unexported
+Hounfour internals, add a `safeCanonicalize` subpath import,
+publish a public commitment root, add a network surface, change
+persistence, add or modify any test, add or modify any fixture,
+or touch `.loa/` / `.claude/`. It does **not** commit and does
+**not** open a PR.
+
+| Document | Purpose |
+|---|---|
+| [`phase-21b-v86-schema-readiness-lock.md`](./phase-21b-v86-schema-readiness-lock.md) | Phase 21B readiness-lock summary: executive summary (schema-readiness lock only; v8.6.0-shipped substrate mapped to Straylight Recall Wedge primitives; no endpoint / runtime integration authorized), v8.6 inherited dependency state recap (consumes `^8.6.0`; resolves to `8.6.0`; `Challenge` shipped; `EstateTransition` queued; `safeCanonicalize` subpath gated), v8.6.0 exported surface table (11 JS module subpaths + `./schemas/*` file-level subpath; `./canonicalize` and `./utilities` confirmed absent), Q1 — v8.6 surface now safe as shipped upstream substrate (9 MATCH + 1 EXTEND dispositions resolved against `https://schemas.0xhoneyjar.com/loa-hounfour/8.6.0/`; `challenge.schema.json` newly resolved at v8.6.0 closing Phase 16 delta #7), Q2 — Straylight MVP primitives still not confirmed exported Hounfour contracts (`EstateTransition` schema absent; `AuditEvent` not shipped under that name; `safeCanonicalize` JS subpath absent), Q3 — items remaining deferred locally (`EstateTransition` semantics; canonicalization; `audit-event-transition` resolution path; `policy-decision-denied` candidate disposition; public anchoring per ADR-020E; production persistence per ADR-020D; sibling-repo runtime wiring; endpoint-host placement; `Challenge` adoption into the public surface), Q4 — blocker classification (blockers: `EstateTransition` absence; `safeCanonicalize` subpath absence; Phase 19A pending feedback; ADR-020B endpoint-host unselected; ADR-020A semantic-ownership reaffirmation missing for Phase 21; non-blocking discovery notes: `audit-event-transition`; `policy-decision-denied`; cosmetic alias decisions; eleven unconsumed JS subpaths), Q5 — Phase 22 recommendation (recommended: local schema/readiness work *or* a drafted-not-filed Hounfour status comment for issue #70; not authorized: Finn boundary prep, Dixie boundary prep; not preferred but allowable: no code work), explicit non-scope, what this packet does *not* claim, validation evidence (`npm run typecheck`, `npm test`, `npm run hounfour:shadow-inspect`). |
+
+The Phase 21B packet consumes the Phase 21A v8.6.x shadow
+inspection output
+([`hounfour-v86-shadow-inspection-output.txt`](./hounfour-v86-shadow-inspection-output.txt)),
+the Phase 21A test-pin refresh
+([`../../tests/hounfour-shadow-integration.test.ts`](../../tests/hounfour-shadow-integration.test.ts)),
+the Phase 19A upstream-review packet
+([`hounfour-v850-shadow-review-packet.md`](./hounfour-v850-shadow-review-packet.md))
+that pins the load-bearing pending feedback gate this readiness
+lock does not satisfy, the Phase 16 adaptation-delta and
+response-intake packets
+([`hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md),
+[`hounfour-response-intake.md`](./hounfour-response-intake.md)),
+the Phase 20A decision-lock packet
+([`phase-20a-recall-wedge-readiness.md`](./phase-20a-recall-wedge-readiness.md))
+and Phase 20B–E packets, the five ADR-020-series decision-locks
+under [`../decisions/`](../decisions/), and the existing Recall
+Wedge implementation under
+[`../../src/straylight/`](../../src/straylight/) (read-only). It
+produces no fixture changes, no runtime changes, no script
+changes, no test additions, no package changes, and no new
+sibling-repo handoff packets. The four filed sibling-repo issue
+rows above (Hounfour / Finn / Dixie / Freeside) and the prior
+Phase 20A / Phase 20B / Phase 20C / Phase 20D / Phase 20E in-repo
+rows are unchanged by Phase 21B.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+npm run hounfour:shadow-inspect
+```
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
@@ -627,6 +700,22 @@ npm run handoffs:index
   begins; it authorizes **no** endpoint / runtime integration, is
   **not endpoint-wired** and **not runtime-wired**, adds no test /
   fixture / script / `src/` change, and is **Phase 20E only**.
+  **Phase 21B**
+  ([`phase-21b-v86-schema-readiness-lock.md`](./phase-21b-v86-schema-readiness-lock.md))
+  is a **schema-readiness lock packet** that maps the
+  v8.6.0-resolved Hounfour exported surface (eleven JS module
+  subpaths plus `./schemas/*`) to the Straylight Recall Wedge MVP
+  primitive set, records `challenge.schema.json` as newly safe
+  upstream substrate (closing Phase 16 delta #7), records
+  `EstateTransition` / `AuditEvent` (under that name) /
+  `safeCanonicalize` JS subpath as still not confirmed exported
+  Hounfour contracts, classifies blockers vs non-blocking
+  discovery notes, and constrains Phase 22 to local
+  schema/readiness work *or* a drafted-not-filed Hounfour status
+  comment for issue #70 (Finn / Dixie boundary prep is **not
+  authorized**); it is **not endpoint-wired** and **not
+  runtime-wired**, adds no test / fixture / script / `src/` /
+  package change, and is **Phase 21B only**.
 - **Not** a license to begin sibling work ahead of the schedule.
   Until the sibling repo's PR lands, the wedge owns every primitive
   the packets describe.
