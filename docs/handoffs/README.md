@@ -691,6 +691,101 @@ npm run typecheck
 npm test
 ```
 
+## Phase 23A — MVP schema-contract draft packet
+
+Phase 23A is a **narrow, in-repo MVP schema-contract draft
+packet** staged on the `phase-23a-mvp-schema-contract-draft`
+branch inside `loa-straylight` after the Phase 22A MVP
+decision-lock and after the Phase 22A-drafted Hounfour status
+comment was filed on
+[`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70#issuecomment-4413876047)
+by the user as a separate sibling-repo human-reviewed event.
+It converts the v8.6.0 substrate Phase 21B mapped, the five
+Phase 22A decision-locks (ADR-022A–E), and the Phase 22A
+deferred-features list into a per-object MVP schema-contract
+draft (fourteen objects: `Actor`, `ActorEstate`, `Assertion`,
+`SignatureEnvelope`, `Keyring`, `PolicyDecision`,
+`EstateTransition`, `Challenge`, `Revocation`, `RecallRequest`,
+`RecallPack`, `RecallReceipt`, `AuditEvent`, optional
+`CommitmentRoot`) and an eleven-vector MVP conformance matrix
+— **without authoring any schema, fixture, or test**. Phase 23A
+is **MVP schema-contract draft only** — it is **not
+endpoint-wired**, **not runtime-wired**, **not the full Recall
+Wedge**, **not governed recall in Finn / Dixie / Freeside
+runtime**, **not Hounfour-side schema work**, and **not
+schema-authoring**. **No endpoint / runtime integration is
+authorized by this packet, and no schema is authored.**
+
+Phase 23A does **not** flip any wedge import, change `package.json`
+/ `package-lock.json`, change the Hounfour dependency range or
+resolved patch, modify [`../../src/straylight/`](../../src/straylight/),
+modify any script under [`../../scripts/`](../../scripts/), wire
+any sibling-repo runtime, add a Dixie endpoint, add a Finn
+endpoint, edit any sibling repo, implement `Challenge` locally,
+implement `EstateTransition` locally, reach into unexported
+Hounfour internals, add a `safeCanonicalize` subpath import,
+publish a public commitment root, add a network surface, change
+persistence, add or modify any test, add or modify any fixture,
+author any TypeBox / JSON Schema, **file** any GitHub issue or
+comment, or touch `.loa/` / `.claude/`. It does **not** commit
+and does **not** open a PR.
+
+| Document | Purpose |
+|---|---|
+| [`phase-23a-mvp-schema-contract-draft.md`](./phase-23a-mvp-schema-contract-draft.md) | Phase 23A summary handoff: executive summary (MVP schema-contract draft only; no schema authored; no endpoint / runtime integration authorized; the Hounfour status comment for issue #70 was filed before Phase 23A by the user as an open status request, not an answer), v8.6 inherited state recap with the comment-filed delta, minimum MVP object contract list (fourteen one-line rows summarizing the per-object spec), conformance-vector matrix summary (eleven one-line rows summarizing the per-vector spec), blockers vs non-blockers tables (five runtime-integration blockers; four non-blocking discovery notes), next-phase recommendation (Scenario A — wait for Hounfour answer; Scenario B — local semantic-contract scaffolding only with `EstateTransition` and `safeCanonicalize` deferred; default — Phase 23B does not open), Phase 23 entry / non-go conditions, explicit non-scope, what this packet does *not* claim, validation evidence (`npm run typecheck`, `npm test`). |
+| [`../specs/recall-wedge-schema-contract.md`](../specs/recall-wedge-schema-contract.md) | Phase 23A primary deliverable — the per-object MVP schema-contract draft. Pins a five-tier status taxonomy (shipped upstream / safe draft / blocked / deferred / discovery note) that separates *shape availability* from *adoption authorization*. For each of the fourteen MVP objects: purpose, minimum required fields, class-validation role, policy-validation relationship, signer/keyring relationship, recall/audit relationship, current Phase 23A status, and likely future Hounfour `$id` (under `https://schemas.0xhoneyjar.com/loa-hounfour/8.6.0/`) *or* Straylight-local export name. Closes with summary tables (semantic owner / status / Hounfour name; lane assignment) and explicit non-claims. |
+| [`../specs/recall-wedge-conformance-vectors.md`](../specs/recall-wedge-conformance-vectors.md) | Phase 23A companion deliverable — the eleven-vector MVP conformance matrix. Each vector pins schema(s) exercised, lane(s) on which the decision is made (`class_validation` / `policy_validation` / `audit_validation` / `keyring_validation`), expected outcome at the wedge MVP, matching ADR / Phase-21B / Phase-22A pin, and Phase 23A status. Vectors 1–8 cover safe-draft scenarios (valid observation admission; invalid missing provenance; valid reflection but not identity promotion; revoked assertion excluded from recall; private assertion excluded from public Discord recall; contested assertion marked or excluded; unknown signer denied; valid signer but not competent denied). Vector 9 demonstrates that the upstream `challenge.schema.json` shipped at v8.6.0 *can* describe a wedge `Challenge` without adoption. Vectors 10 and 11 are explicit gates: `EstateTransition` deferred (Hounfour delta #8 still queued) and `safeCanonicalize` absent exported subpath (gate `no-confirmed-subpath`). The Phase 8 schema-candidate-layer vector pack remains the load-bearing precursor; Phase 23A's matrix sits at the wedge MVP layer on top of it. |
+
+The Phase 23A packet consumes the Phase 22A MVP decision-lock
+([`phase-22a-mvp-decision-lock.md`](./phase-22a-mvp-decision-lock.md))
+and its five ADRs ([`../decisions/ADR-022A-straylight-semantic-home.md`](../decisions/ADR-022A-straylight-semantic-home.md)
+through
+[`../decisions/ADR-022E-phase-22-deferred-features.md`](../decisions/ADR-022E-phase-22-deferred-features.md))
+that constrain Phase 23's allowable shapes, the Phase 22A drafted
+Hounfour status comment
+([`hounfour-v86-status-comment-draft.md`](./hounfour-v86-status-comment-draft.md))
+**which has now been filed on issue #70 by the user** as a
+separate human-reviewed event (the filed comment is a status
+request, not an answer to the Phase 19A pending feedback gate),
+the Phase 21B schema-readiness lock
+([`phase-21b-v86-schema-readiness-lock.md`](./phase-21b-v86-schema-readiness-lock.md)),
+the Phase 21A v8.6.x shadow inspection output
+([`hounfour-v86-shadow-inspection-output.txt`](./hounfour-v86-shadow-inspection-output.txt)),
+the Phase 19A upstream-review packet
+([`hounfour-v850-shadow-review-packet.md`](./hounfour-v850-shadow-review-packet.md))
+that pins the load-bearing pending feedback gate this packet
+does not satisfy, the Phase 16 adaptation-delta and
+response-intake packets
+([`hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md),
+[`hounfour-response-intake.md`](./hounfour-response-intake.md)),
+the Phase 20A decision-lock packet and the five ADR-020-series
+decision-locks under [`../decisions/`](../decisions/), the
+Phase 6 per-candidate inventory
+([`../schema-candidates/hounfour-schema-extraction-prep.md`](../schema-candidates/hounfour-schema-extraction-prep.md))
+and the Phase 8 schema-candidate-layer conformance vectors
+([`../schema-candidates/hounfour-conformance-vectors.md`](../schema-candidates/hounfour-conformance-vectors.md))
+as load-bearing precursors at the schema layer, the
+class-vs-policy boundary doc
+([`../schema-candidates/class-vs-policy-boundary.md`](../schema-candidates/class-vs-policy-boundary.md))
+that pins the per-lane separation Phase 23A reuses, and the
+existing Recall Wedge implementation under
+[`../../src/straylight/`](../../src/straylight/) (read-only).
+It produces two new spec docs under
+[`../specs/`](../specs/), this summary handoff, and an updated
+README index entry. It produces no fixture changes, no runtime
+changes, no script changes, no test additions, no package
+changes, no new ADR, and no new sibling-repo handoff packets.
+The four filed sibling-repo issue rows above (Hounfour / Finn /
+Dixie / Freeside) and the prior Phase 20A / 20B / 20C / 20D /
+20E / 21B / 22A in-repo rows are unchanged by Phase 23A.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+```
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
@@ -819,7 +914,42 @@ npm run handoffs:index
   fixture / script / `src/` / package change, files no
   sibling-repo comment, edits no sibling repo, does not advance
   any Phase 20A / 20B / 20C / 20D / 20E / 21A / 21B deferral, and
-  is **Phase 22A only**.
+  is **Phase 22A only**. **Phase 23A**
+  ([`phase-23a-mvp-schema-contract-draft.md`](./phase-23a-mvp-schema-contract-draft.md),
+  [`../specs/recall-wedge-schema-contract.md`](../specs/recall-wedge-schema-contract.md),
+  [`../specs/recall-wedge-conformance-vectors.md`](../specs/recall-wedge-conformance-vectors.md))
+  is an **MVP schema-contract draft packet** staged after the
+  Phase 22A-drafted Hounfour status comment was **filed on
+  issue #70** by the user as a separate sibling-repo
+  human-reviewed event. It produces two new local spec docs —
+  a per-object MVP schema-contract draft (fourteen objects:
+  `Actor`, `ActorEstate`, `Assertion`, `SignatureEnvelope`,
+  `Keyring`, `PolicyDecision`, `EstateTransition`, `Challenge`,
+  `Revocation`, `RecallRequest`, `RecallPack`, `RecallReceipt`,
+  `AuditEvent`, optional `CommitmentRoot`) and an eleven-vector
+  MVP conformance matrix — and pins a five-tier status taxonomy
+  (shipped upstream / safe draft / blocked / deferred /
+  discovery note) that separates *shape availability* from
+  *adoption authorization*. **Phase 23A authors no schema, no
+  fixture, and no test.** The filed Hounfour status comment is
+  treated as an open status request, not as an answer to the
+  Phase 19A pending feedback gate. `EstateTransition`,
+  `safeCanonicalize` exported subpath, `Challenge` adoption
+  into the wedge public surface, `AuditEvent` adoption from
+  any v8.6.x adjacent candidate, and public anchoring all
+  remain deferred per the ADR-020 / ADR-022 series. Phase 23A's
+  next-phase recommendation is two-pronged: Scenario A — wait
+  for the Hounfour answer if it arrives before Phase 23B
+  implementation; Scenario B — if the answer does not arrive
+  and a teammate review explicitly approves proceeding,
+  Phase 23B continues with local semantic-contract scaffolding
+  only, keeping `EstateTransition` and `safeCanonicalize`
+  deferred. It is **not endpoint-wired** and **not
+  runtime-wired**, adds no test / fixture / script / `src/` /
+  package change, files no sibling-repo issue / comment / PR
+  by Phase 23A itself, edits no sibling repo, does not advance
+  any Phase 20A / 20B / 20C / 20D / 20E / 21A / 21B / 22A
+  deferral, and is **Phase 23A only**.
 - **Not** a license to begin sibling work ahead of the schedule.
   Until the sibling repo's PR lands, the wedge owns every primitive
   the packets describe.
