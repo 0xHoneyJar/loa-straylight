@@ -605,6 +605,92 @@ npm test
 npm run hounfour:shadow-inspect
 ```
 
+## Phase 22A — MVP decision-lock packet
+
+Phase 22A is a **narrow, in-repo MVP decision-lock packet** staged
+on the `phase-22a-mvp-decision-lock` branch inside
+`loa-straylight` after the Phase 21B v8.6 schema-readiness lock.
+It converts the v8.6.0 substrate Phase 21B mapped plus the Phase
+20E entry conditions Phase 21B did not discharge into five
+explicit decision-locks before any Phase 22 implementation
+branch opens — Straylight semantic home (post-v8.6
+reaffirmation), MVP endpoint host (Dixie preferred; Finn
+fallback) with seven explicit decision criteria, schema
+dependency direction (Hounfour substrate → Straylight semantic
+contract → Finn / Dixie consume → Freeside consumes; acyclic;
+wedge public surface as the cut), MVP persistence + audit /
+receipt owner (Loa-Straylight; Phase 5 hardening invariants
+elevated to MVP host contract; in-process persistence at MVP),
+and a deferred-features list (twenty gates, each with a current
+state and a trigger). It also drafts (without filing) a Hounfour
+status comment for issue #70 asking for status on the residual
+gates (`EstateTransition` schema, `safeCanonicalize` exported
+subpath). Phase 22A is **MVP decision-lock only** — it is **not
+endpoint-wired**, **not runtime-wired**, **not the full Recall
+Wedge**, **not governed recall in Finn / Dixie / Freeside
+runtime**, and **not Hounfour-side schema work**. **No endpoint /
+runtime integration is authorized by this packet.**
+
+Phase 22A does **not** flip any wedge import, change `package.json`
+/ `package-lock.json`, change the Hounfour dependency range or
+resolved patch, modify [`../../src/straylight/`](../../src/straylight/),
+modify any script under [`../../scripts/`](../../scripts/), wire
+any sibling-repo runtime, add a Dixie endpoint, add a Finn
+endpoint, edit any sibling repo, implement `Challenge` locally,
+implement `EstateTransition` locally, reach into unexported
+Hounfour internals, add a `safeCanonicalize` subpath import,
+publish a public commitment root, add a network surface, change
+persistence, add or modify any test, add or modify any fixture,
+**file** the drafted Hounfour status comment, or touch `.loa/` /
+`.claude/`. It does **not** commit and does **not** open a PR.
+
+| Document | Purpose |
+|---|---|
+| [`phase-22a-mvp-decision-lock.md`](./phase-22a-mvp-decision-lock.md) | Phase 22A summary handoff: executive summary (MVP decision-lock only; no endpoint / runtime integration authorized; successful v8.6 intake does not authorize Finn / Dixie / Freeside runtime wiring), v8.6 inherited state recap, the five ADR-022-series decision-locks summarized one row each (semantic home; MVP endpoint host with Dixie-preferred / Finn-fallback / Freeside-not-a-host criteria; schema dependency direction graph; persistence + audit / receipt owner with Phase 5 hardening invariants elevated to MVP host contract; twenty-row deferred-features list), decision area 6 (Hounfour status comment — yes, drafted in-repo, not filed), Phase 22 entry conditions and non-go conditions, explicit non-scope, what this packet does *not* claim, validation evidence (`npm run typecheck`, `npm test`). |
+| [`hounfour-v86-status-comment-draft.md`](./hounfour-v86-status-comment-draft.md) | Drafted-not-filed Hounfour status comment for [`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70). Asks for **status** on `EstateTransition` (delta #8) and the `safeCanonicalize` exported subpath (`no-confirmed-subpath`). Explicitly does **not** claim v8.6.0 satisfies the Phase 19A pending feedback gate, does **not** claim `Challenge` is adopted into the Loa-Straylight public surface, does **not** claim any sibling-repo runtime is wired, and does **not** claim the alias boundary has changed. Includes a filing checklist for the human reviewer. **Filing is a separate, sibling-repo, human-reviewed event** — Phase 22A drafts only. |
+
+The Phase 22A packet consumes the Phase 21B schema-readiness lock
+([`phase-21b-v86-schema-readiness-lock.md`](./phase-21b-v86-schema-readiness-lock.md))
+that constrains Phase 22's allowable shapes, the Phase 21A
+v8.6.x shadow inspection output
+([`hounfour-v86-shadow-inspection-output.txt`](./hounfour-v86-shadow-inspection-output.txt)),
+the Phase 19A upstream-review packet
+([`hounfour-v850-shadow-review-packet.md`](./hounfour-v850-shadow-review-packet.md))
+that pins the load-bearing pending feedback gate this decision
+lock does not satisfy, the Phase 16 adaptation-delta and
+response-intake packets
+([`hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md),
+[`hounfour-response-intake.md`](./hounfour-response-intake.md)),
+the Phase 20A decision-lock packet
+([`phase-20a-recall-wedge-readiness.md`](./phase-20a-recall-wedge-readiness.md))
+and Phase 20B–E packets, the five ADR-020-series decision-locks
+under [`../decisions/`](../decisions/) (Phase 22A succeeds them
+without superseding), and the existing Recall Wedge implementation
+under [`../../src/straylight/`](../../src/straylight/) (read-only).
+It produces five new ADR-022-series decision-locks under
+[`../decisions/`](../decisions/) plus the two handoff docs above.
+It produces no fixture changes, no runtime changes, no script
+changes, no test additions, no package changes, and no new
+sibling-repo handoff packets. The four filed sibling-repo issue
+rows above (Hounfour / Finn / Dixie / Freeside) and the prior
+Phase 20A / Phase 20B / Phase 20C / Phase 20D / Phase 20E /
+Phase 21B in-repo rows are unchanged by Phase 22A.
+
+The five Phase 22A ADRs:
+
+- [`../decisions/ADR-022A-straylight-semantic-home.md`](../decisions/ADR-022A-straylight-semantic-home.md)
+- [`../decisions/ADR-022B-mvp-endpoint-host.md`](../decisions/ADR-022B-mvp-endpoint-host.md)
+- [`../decisions/ADR-022C-schema-dependency-direction.md`](../decisions/ADR-022C-schema-dependency-direction.md)
+- [`../decisions/ADR-022D-mvp-persistence-and-audit-owner.md`](../decisions/ADR-022D-mvp-persistence-and-audit-owner.md)
+- [`../decisions/ADR-022E-phase-22-deferred-features.md`](../decisions/ADR-022E-phase-22-deferred-features.md)
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+```
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
@@ -715,7 +801,25 @@ npm run handoffs:index
   comment for issue #70 (Finn / Dixie boundary prep is **not
   authorized**); it is **not endpoint-wired** and **not
   runtime-wired**, adds no test / fixture / script / `src/` /
-  package change, and is **Phase 21B only**.
+  package change, and is **Phase 21B only**. **Phase 22A**
+  ([`phase-22a-mvp-decision-lock.md`](./phase-22a-mvp-decision-lock.md))
+  is an **MVP decision-lock packet** that locks the five MVP
+  decisions before any Phase 22 implementation branch opens —
+  Straylight semantic home (post-v8.6 reaffirmation), MVP
+  endpoint host (Dixie preferred; Finn fallback; Freeside not a
+  candidate host) under seven explicit decision criteria, schema
+  dependency direction (acyclic; wedge public surface as the
+  cut), MVP persistence + audit / receipt owner (Loa-Straylight;
+  Phase 5 hardening invariants elevated to MVP host contract),
+  and a twenty-row deferred-features list — and **drafts**
+  (without filing) a Hounfour status comment for issue #70
+  asking for status on the residual gates (`EstateTransition`,
+  `safeCanonicalize` exported subpath); it is **not
+  endpoint-wired** and **not runtime-wired**, adds no test /
+  fixture / script / `src/` / package change, files no
+  sibling-repo comment, edits no sibling repo, does not advance
+  any Phase 20A / 20B / 20C / 20D / 20E / 21A / 21B deferral, and
+  is **Phase 22A only**.
 - **Not** a license to begin sibling work ahead of the schedule.
   Until the sibling repo's PR lands, the wedge owns every primitive
   the packets describe.
