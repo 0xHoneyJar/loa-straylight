@@ -1,0 +1,57 @@
+
+> @loa/straylight@0.0.1 hounfour:shadow-inspect
+> vite-node scripts/inspect-hounfour-shadow.ts
+
+Hounfour v8.6.x shadow inspection report (Phase 17B / Phase 18 / Phase 21A)
+
+Intended dependency range: ^8.6.0
+Resolved package: @0xhoneyjar/loa-hounfour@8.6.0
+
+Candidate dispositions (Phase 17B):
+  [MATCH         ] actor.json -> agent-identity  $id=https://schemas.0xhoneyjar.com/loa-hounfour/8.6.0/agent-identity
+  [EXTEND        ] estate.json -> agent-estate  $id=https://schemas.0xhoneyjar.com/loa-hounfour/8.6.0/agent-estate
+  [MATCH         ] keyring.json -> keyring  $id=https://schemas.0xhoneyjar.com/loa-hounfour/8.6.0/keyring
+  [MATCH         ] assertion-observation.json -> assertion  $id=https://schemas.0xhoneyjar.com/loa-hounfour/8.6.0/assertion
+  [MATCH         ] assertion-reflection-contested.json -> assertion  $id=https://schemas.0xhoneyjar.com/loa-hounfour/8.6.0/assertion
+  [MATCH         ] assertion-revoked.json -> assertion  $id=https://schemas.0xhoneyjar.com/loa-hounfour/8.6.0/assertion
+  [MATCH         ] recall-request-public-discord.json -> recall-request  $id=https://schemas.0xhoneyjar.com/loa-hounfour/8.6.0/recall-request
+  [MATCH         ] recall-pack-public-discord.json -> recall-pack  $id=https://schemas.0xhoneyjar.com/loa-hounfour/8.6.0/recall-pack
+  [MATCH         ] recall-receipt-public-discord.json -> recall-receipt  $id=https://schemas.0xhoneyjar.com/loa-hounfour/8.6.0/recall-receipt
+  [DISCOVERY_NOTE] audit-event-transition.json -> audit-event
+  [DEFERRED      ] policy-decision-denied.json -> (none)
+  [MATCH         ] commitment-root.json -> commitment-root  $id=https://schemas.0xhoneyjar.com/loa-hounfour/8.6.0/commitment-root
+
+Net-new v8.5.0-origin schemas (delta #12; still required in v8.6.x):
+  [present, 8.6.x] receipt-detail-level.schema.json
+  [present, 8.6.x] surface-context.schema.json
+  [present, 8.6.x] recall-request.schema.json
+  [present, 8.6.x] recall-pack.schema.json
+  [present, 8.6.x] recall-receipt.schema.json
+  [present, 8.6.x] forget-record.schema.json
+  [present, 8.6.x] commitment-type.schema.json
+  [present, 8.6.x] commitment-root.schema.json
+  [present, 8.6.x] agent-estate-status.schema.json
+  [present, 8.6.x] agent-estate.schema.json
+  [present, 8.6.x] privacy-scope.schema.json
+  [present, 8.6.x] risk-level.schema.json
+  [present, 8.6.x] assertion-status.schema.json
+  [present, 8.6.x] assertion-class.schema.json
+  [present, 8.6.x] assertion.schema.json
+
+Deferred schemas (delta #8; EstateTransition still queued):
+  [absent -- PASS] /^estate-transition(\b|[-.])/i
+
+Cycle-005 / v8.6.0 deferrals (Phase 18 structured view; resolved entries print "shipped"):
+  [shipped] Challenge -> v8.6.0
+  [deferred] EstateTransition -> v8.6.0
+
+Deferred subpaths (Phase 18 structured view):
+  [no-confirmed-subpath] safeCanonicalize
+
+Deferred surface decisions:
+  - safeCanonicalize subpath selection deferred (gate: no-confirmed-subpath). Installed Hounfour exports map (verified against v8.5.x and v8.6.0) declares no ./canonicalize or ./utilities subpath; importing from package root is forbidden (delta #9), and reaching into unexported internals (dist/utilities/) is forbidden by the user-facing Phase 17B / Phase 18 / Phase 21A constraint. Resolution is deferred until a later phase confirms an explicit exported subpath or files a Hounfour-side blocker.
+
+Notes:
+  - Candidate audit-event-transition.json classified as DISCOVERY_NOTE: expected audit-event not shipped in the installed Hounfour line. Informational; resolution path is a deliberate later-phase decision.
+
+wrote /home/eileenspectremoon/loa-dev/loa-straylight/.run/hounfour-shadow-report.json

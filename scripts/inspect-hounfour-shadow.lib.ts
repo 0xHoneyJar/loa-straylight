@@ -1,4 +1,5 @@
-// Phase 17B / Phase 18 -- Hounfour v8.5.x shadow inspector library.
+// Phase 17B / Phase 18 / Phase 21A -- Hounfour v8.6.x shadow
+// inspector library.
 //
 // Reads schema-byte surfaces from the installed Hounfour package
 // under `node_modules/@0xhoneyjar/loa-hounfour/` and produces a
@@ -19,34 +20,41 @@
 //   * does NOT import from `.loa` or `.claude` framework internals
 //   * does NOT call any GitHub API or make network requests
 //
-// Constraints (see docs/handoffs/hounfour-adaptation-delta.md):
+// Constraints (see docs/handoffs/hounfour-adaptation-delta.md and
+// Phase 21A intake doc docs/handoffs/hounfour-v86-shadow-intake.md):
 //
-//   * delta #7  -- Challenge schema absence is REQUIRED in v8.5.x.
-//                 The inspector asserts absence and reports PASS
-//                 when no `challenge*` schema ships. Phase 18 also
-//                 surfaces this as a structured cycleFiveDeferrals
-//                 entry with `deferredUntil: '8.6.0'`.
+//   * delta #7  -- Challenge schema family SHIPS in v8.6.0
+//                 (cycle-005 layer landed). The inspector treats
+//                 the Challenge schemas as informationally present
+//                 (cycleFiveDeferrals records `shipsInV85x: true`)
+//                 and does NOT classify the schema-side surface as
+//                 a blocker. Challenge runtime semantics remain
+//                 deferred at the Straylight wedge boundary.
 //   * delta #8  -- EstateTransition schema absence is REQUIRED in
-//                 v8.5.x. Same handling, same cycleFiveDeferrals
-//                 surfacing.
-//   * delta #12 -- The 15 net-new v8.5.0 schemas are REQUIRED to be
-//                 present. Inspector asserts presence and validates
-//                 each schema's `$id` matches `/loa-hounfour/8.5.\d+/`.
-//   * Intended dependency range is `^8.5.0`; resolved version is
-//     whatever the installed package metadata reports (e.g. 8.5.2).
+//                 v8.6.x; the deferral persists until a later
+//                 Hounfour cycle confirms a canonical schema.
+//                 The inspector asserts absence and reports PASS
+//                 when no `estate-transition*` schema ships.
+//   * delta #12 -- The 15 originally-net-new v8.5.0 schemas remain
+//                 REQUIRED present in v8.6.x (strict-additive on
+//                 v8.5.2). Inspector asserts presence and validates
+//                 each schema's `$id` matches the v8.6.x lane
+//                 (`/loa-hounfour/8.6.\d+/`).
+//   * Intended dependency range is `^8.6.0`; resolved version is
+//     whatever the installed package metadata reports (e.g. 8.6.0).
 //     Both are captured in the report.
-//   * `safeCanonicalize` subpath selection is DEFERRED for Phase
-//     17B per the user-facing constraint -- the inspector records
-//     the deferral and does not attempt to import it. Phase 18
-//     surfaces the deferral as a structured deferredSubpaths
-//     entry with `gate: 'no-confirmed-subpath'`.
+//   * `safeCanonicalize` subpath selection is DEFERRED per the
+//     user-facing constraint -- the inspector records the deferral
+//     and does not attempt to import it. Phase 18 surfaces the
+//     deferral as a structured deferredSubpaths entry with
+//     `gate: 'no-confirmed-subpath'`.
 //
-// Phase 18 boundary-hardening additions:
+// Phase 18 boundary-hardening additions (still in force):
 //
 //   * Renames the dead `NAME_DRIFT` value in ObservedDisposition to
 //     `DISCOVERY_NOTE`. The classifier now actually emits it for
 //     candidate rows flagged with `discoveryNote: true` whose
-//     expected Hounfour schema is absent in v8.5.x. DISCOVERY_NOTE
+//     expected Hounfour schema is absent in v8.6.x. DISCOVERY_NOTE
 //     is informational by design and is never a blocker.
 //   * Exports a static DISPOSITION_TABLE documenting the six
 //     classifier dispositions (MATCH, EXTEND, FOLD, MISSING,
@@ -54,7 +62,11 @@
 //     code, not just docs.
 //   * Adds `deferredSubpaths` (structured safeCanonicalize-style
 //     deferrals) and `cycleFiveDeferrals` (structured Challenge /
-//     EstateTransition deferrals) to ShadowReport.
+//     EstateTransition deferrals) to ShadowReport. Under v8.6.0
+//     the Challenge entry has `shipsInV85x: true` (resolved); the
+//     EstateTransition entry has `shipsInV85x: false` (still
+//     deferred). Field names retain the `V85x` suffix for back-
+//     compat with the existing report shape.
 
 import {
   existsSync,
@@ -69,7 +81,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
 
 export const HOUNFOUR_PACKAGE_NAME = '@0xhoneyjar/loa-hounfour';
-export const INTENDED_DEPENDENCY_RANGE = '^8.5.0';
+export const INTENDED_DEPENDENCY_RANGE = '^8.6.0';
 
 const HOUNFOUR_PACKAGE_DIR = resolve(
   ROOT,
@@ -90,13 +102,19 @@ const STRAYLIGHT_FIXTURES_DIR = resolve(
 );
 
 /**
- * Match `/loa-hounfour/8.5.<patch>/` in any `$id` URI. Per the
- * user-facing Phase 17B constraint, tests do not hard-pin 8.5.0;
- * any 8.5.x patch within the `^8.5.0` range is acceptable.
+ * Match `/loa-hounfour/8.6.<patch>/` in any `$id` URI. Per the
+ * Phase 21A v8.6 intake constraint, tests do not hard-pin 8.6.0;
+ * any 8.6.x patch within the `^8.6.0` range is acceptable.
  */
-export const ID_VERSION_REGEX = /\/loa-hounfour\/8\.5\.\d+\//;
+export const ID_VERSION_REGEX = /\/loa-hounfour\/8\.6\.\d+\//;
 
-/** The 15 net-new v8.5.0 schemas (delta #12), by file stem. */
+/**
+ * The 15 originally-net-new v8.5.0 schemas (delta #12), by file
+ * stem. They remain REQUIRED present in v8.6.x (strict-additive
+ * on v8.5.2). Symbol name kept as `NET_NEW_V850_SCHEMAS` for
+ * stability against the test surface; the assertion lane is now
+ * v8.6.x via `ID_VERSION_REGEX`.
+ */
 export const NET_NEW_V850_SCHEMAS: readonly string[] = [
   // Recall machinery (5)
   'receipt-detail-level',
@@ -119,13 +137,14 @@ export const NET_NEW_V850_SCHEMAS: readonly string[] = [
 ];
 
 /**
- * Schemas that MUST be absent in v8.5.x. Challenge and
- * EstateTransition are deferred to cycle-005 / v8.6.0 (deltas
- * #7 / #8). Patterns are matched against the schema filename
- * stem (without `.schema.json`).
+ * Schemas that MUST be absent in v8.6.x. Challenge SHIPS in v8.6.0
+ * (cycle-005 layer landed -- delta #7 resolved on the schema-byte
+ * surface; runtime semantics still deferred at the wedge boundary).
+ * EstateTransition (delta #8) remains deferred until a later
+ * Hounfour cycle confirms a canonical schema. Patterns are matched
+ * against the schema filename stem (without `.schema.json`).
  */
 export const DEFERRED_SCHEMA_PATTERNS: readonly RegExp[] = [
-  /^challenge(\b|[-.])/i,
   /^estate-transition(\b|[-.])/i,
 ];
 
@@ -133,11 +152,12 @@ export type ExpectedDisposition = 'MATCH' | 'EXTEND' | 'FOLD' | 'DEFERRED';
 
 /**
  * Phase 18: classifier dispositions the inspector can emit at
- * runtime against the actually-shipped v8.5.x surface. The set
- * matches DISPOSITION_TABLE below; DISCOVERY_NOTE replaces the
- * Phase 17B `NAME_DRIFT` value and is the only disposition that
- * captures "Phase 16 expected this to be present, v8.5.x ships it
- * under a different name (or not at all), and the resolution is
+ * runtime against the actually-shipped Hounfour schema surface
+ * (v8.6.x under Phase 21A). The set matches DISPOSITION_TABLE
+ * below; DISCOVERY_NOTE replaces the Phase 17B `NAME_DRIFT` value
+ * and is the only disposition that captures "Phase 16 expected
+ * this to be present, the actually-shipped surface ships it under
+ * a different name (or not at all), and the resolution is
  * informational rather than a blocker."
  */
 export type ObservedDisposition =
@@ -170,13 +190,13 @@ export const DISPOSITION_TABLE: readonly DispositionDescription[] = [
   {
     disposition: 'MATCH',
     description:
-      'Straylight candidate maps cleanly to a Hounfour v8.5.x schema with the expected stem and an 8.5.x $id.',
+      'Straylight candidate maps cleanly to a Hounfour v8.6.x schema with the expected stem and an 8.6.x $id.',
     isBlocker: false,
   },
   {
     disposition: 'EXTEND',
     description:
-      'Straylight candidate maps to a Hounfour v8.5.x schema, but the candidate uses a strict-additive extension on the Hounfour shape (delta #5 / #14).',
+      'Straylight candidate maps to a Hounfour v8.6.x schema, but the candidate uses a strict-additive extension on the Hounfour shape (delta #5 / #14).',
     isBlocker: false,
   },
   {
@@ -188,19 +208,19 @@ export const DISPOSITION_TABLE: readonly DispositionDescription[] = [
   {
     disposition: 'MISSING',
     description:
-      'Phase 16 expected a Hounfour schema with a specific stem; v8.5.x ships no schema with that stem. Treated as a potential blocker for non-DEFERRED rows that are not flagged as DISCOVERY_NOTE.',
+      'Phase 16 expected a Hounfour schema with a specific stem; the installed Hounfour line ships no schema with that stem. Treated as a potential blocker for non-DEFERRED rows that are not flagged as DISCOVERY_NOTE.',
     isBlocker: false,
   },
   {
     disposition: 'DEFERRED',
     description:
-      'Straylight-local primitive that is intentionally not part of the v8.5.x Hounfour line (e.g. policy-decision-denied) and must not be validated against Hounfour.',
+      'Straylight-local primitive that is intentionally not part of the published Hounfour line (e.g. policy-decision-denied) and must not be validated against Hounfour.',
     isBlocker: false,
   },
   {
     disposition: 'DISCOVERY_NOTE',
     description:
-      'Phase 16 expected a Hounfour schema with a specific stem, but Phase 17B / Phase 18 inspection discovered v8.5.x ships an adjacent or differently-named schema. Informational; the resolution path is a deliberate later-phase decision (rename Straylight fixture, request a Hounfour-side schema, or re-classify against the actually-shipping name). Never a blocker.',
+      'Phase 16 expected a Hounfour schema with a specific stem, but inspection discovered the installed Hounfour line ships an adjacent or differently-named schema. Informational; the resolution path is a deliberate later-phase decision (rename Straylight fixture, request a Hounfour-side schema, or re-classify against the actually-shipping name). Never a blocker.',
     isBlocker: false,
   },
 ];
@@ -215,10 +235,10 @@ export interface CandidateMapping {
   /**
    * Phase 18: when true, the inspector emits DISCOVERY_NOTE
    * (rather than MISSING) if the expected Hounfour schema is
-   * absent in v8.5.x. Used for rows where Phase 17B inspection
-   * confirmed the expected stem does not ship and the Straylight
-   * fixture stays local pending a deliberate later-phase
-   * resolution.
+   * absent in the installed Hounfour line. Used for rows where
+   * inspection confirmed the expected stem does not ship and the
+   * Straylight fixture stays local pending a deliberate
+   * later-phase resolution.
    */
   discoveryNote?: true;
   notes?: string;
@@ -243,7 +263,7 @@ export const STRAYLIGHT_CANDIDATES: readonly CandidateMapping[] = [
     expectedHounfourSchema: 'agent-estate',
     expectedDisposition: 'EXTEND',
     notes:
-      'One of the 5 forget/commit/estate net-new v8.5.0 schemas (delta #12).',
+      'One of the 5 forget/commit/estate net-new v8.5.0 schemas (delta #12); still present in v8.6.x under Phase 21A intake.',
   },
   {
     straylightCandidate: 'keyring.json',
@@ -293,20 +313,20 @@ export const STRAYLIGHT_CANDIDATES: readonly CandidateMapping[] = [
     expectedDisposition: 'MATCH',
     discoveryNote: true,
     notes:
-      'Phase 16 disposition was REUSE (expected `audit-event`). Phase 17B inspection against v8.5.2 confirmed no `audit-event.schema.json` ships; adjacent schemas are `audit-trail-entry` and `domain-event`. Phase 18 formally classifies this row as DISCOVERY_NOTE -- informational, never a blocker, resolution deferred to a later phase.',
+      'Phase 16 disposition was REUSE (expected `audit-event`). Phase 17B inspection against v8.5.2 and Phase 21A inspection against v8.6.0 both confirmed no `audit-event.schema.json` ships; adjacent schemas are `audit-trail-entry` and `domain-event`. Phase 18 formally classifies this row as DISCOVERY_NOTE -- informational, never a blocker, resolution deferred to a later phase.',
   },
   {
     straylightCandidate: 'policy-decision-denied.json',
     expectedHounfourSchema: null,
     expectedDisposition: 'DEFERRED',
     notes:
-      'Straylight-local; not part of the v8.5.0 line per Phase 16 disposition.',
+      'Straylight-local; not part of the published Hounfour line per Phase 16 disposition (still local under v8.6.x).',
   },
   {
     straylightCandidate: 'commitment-root.json',
     expectedHounfourSchema: 'commitment-root',
     expectedDisposition: 'MATCH',
-    notes: 'Forget/commit/estate family (delta #12).',
+    notes: 'Forget/commit/estate family (delta #12); still present in v8.6.x.',
   },
 ];
 
@@ -323,6 +343,12 @@ export interface SchemaPresence {
   exists: boolean;
   size: number;
   $id?: string;
+  /**
+   * True when the schema's `$id` matches the active intended-lane
+   * regex (`ID_VERSION_REGEX`). Field name retained from the
+   * v8.5.x lane for back-compat with the existing report shape;
+   * under Phase 21A the lane is v8.6.x.
+   */
   $idMatchesV85x: boolean;
 }
 
@@ -341,6 +367,12 @@ export interface NetNewSchemaCheck {
   filename: string;
   present: boolean;
   $id?: string;
+  /**
+   * True when the schema's `$id` matches the active intended-lane
+   * regex (`ID_VERSION_REGEX`). Field name retained from the
+   * v8.5.x lane for back-compat with the existing report shape;
+   * under Phase 21A the lane is v8.6.x.
+   */
   $idMatchesV85x: boolean;
 }
 
@@ -361,16 +393,18 @@ export interface DeferredSubpathEntry {
   symbol: string;
   /**
    * Stable string code identifying the gate the resolution waits
-   * on. `no-confirmed-subpath` means the v8.5.x exports map ships
-   * no subpath that re-exports the symbol; reaching into
-   * unexported internals or the package root is forbidden.
+   * on. `no-confirmed-subpath` means the installed Hounfour
+   * exports map ships no subpath that re-exports the symbol;
+   * reaching into unexported internals or the package root is
+   * forbidden.
    */
   gate: 'no-confirmed-subpath';
   /** Human-readable reason for the deferral. */
   reason: string;
   /**
-   * Subpaths the inspector confirmed v8.5.x does NOT export.
-   * Empty when no specific candidate subpath was probed.
+   * Subpaths the inspector confirmed the installed Hounfour
+   * package does NOT export. Empty when no specific candidate
+   * subpath was probed.
    */
   notExportedSubpaths: readonly string[];
 }
@@ -378,19 +412,22 @@ export interface DeferredSubpathEntry {
 /**
  * Phase 18 structured cycle-005 / v8.6.0 deferral entry. Mirrors
  * the existing pattern-based DeferredSchemaCheck but exposes the
- * Hounfour-side symbol and the version it is queued for, which
- * the pattern alone does not document.
+ * Hounfour-side symbol and the version it was queued for, which
+ * the pattern alone does not document. Under Phase 21A intake the
+ * Challenge entry has resolved (`shipsInV85x: true`) while the
+ * EstateTransition entry remains deferred.
  */
 export interface CycleFiveDeferralEntry {
-  /** Hounfour symbol deferred to cycle-005 / v8.6.0. */
+  /** Hounfour symbol queued at cycle-005 / v8.6.0. */
   name: 'Challenge' | 'EstateTransition';
-  /** Version the symbol is queued for. */
+  /** Version the symbol was queued for (cycle-005 target). */
   deferredUntil: '8.6.0';
   /**
-   * Whether the symbol ships in the currently-installed v8.5.x
-   * package (true would indicate a deferral breach and the
-   * inspector raises a blocker via the existing
-   * deferredSchemas check).
+   * Whether the symbol ships in the currently-installed Hounfour
+   * package. Under v8.6.x: Challenge -> true (resolved), and
+   * EstateTransition -> false (still deferred). Field name kept
+   * as `shipsInV85x` for back-compat with the existing report
+   * shape; the lane it queries is the active installed lane.
    */
   shipsInV85x: boolean;
   /** Free-text rationale for the deferral. */
@@ -541,7 +578,7 @@ function classifyCandidate(
         hounfour: presence,
         notes: [
           ...notes,
-          `DISCOVERY_NOTE: expected Hounfour schema ${presence.filename} not found in v8.5.x; row is flagged as a known name-drift / discovery candidate. Informational, never a blocker.`,
+          `DISCOVERY_NOTE: expected Hounfour schema ${presence.filename} not found in the installed Hounfour line; row is flagged as a known name-drift / discovery candidate. Informational, never a blocker.`,
         ],
       };
     }
@@ -561,7 +598,7 @@ function classifyCandidate(
 
   if (!presence.$idMatchesV85x) {
     notes.push(
-      `Hounfour schema $id does not match /loa-hounfour/8.5.\\d+/: ${
+      `Hounfour schema $id does not match /loa-hounfour/8.6.\\d+/: ${
         presence.$id ?? '(no $id)'
       }`,
     );
@@ -633,10 +670,10 @@ export function inspect(): ShadowReport {
     }
     if (
       typeof resolvedPackage.version === 'string' &&
-      !/^8\.5\.\d+$/.test(resolvedPackage.version)
+      !/^8\.6\.\d+$/.test(resolvedPackage.version)
     ) {
       blockers.push(
-        `Resolved version ${resolvedPackage.version} is outside the 8.5.x line; intended range is ${INTENDED_DEPENDENCY_RANGE}.`,
+        `Resolved version ${resolvedPackage.version} is outside the 8.6.x line; intended range is ${INTENDED_DEPENDENCY_RANGE}.`,
       );
     }
   }
@@ -644,11 +681,11 @@ export function inspect(): ShadowReport {
   for (const c of netNewSchemas) {
     if (!c.present) {
       blockers.push(
-        `Required v8.5.0 net-new schema missing: ${c.filename} (delta #12).`,
+        `Required v8.5.0-origin net-new schema missing in v8.6.x: ${c.filename} (delta #12).`,
       );
     } else if (!c.$idMatchesV85x) {
       blockers.push(
-        `Net-new schema $id outside /loa-hounfour/8.5.\\d+/: ${c.filename} -> ${
+        `Net-new schema $id outside /loa-hounfour/8.6.\\d+/: ${c.filename} -> ${
           c.$id ?? '(no $id)'
         }.`,
       );
@@ -658,9 +695,9 @@ export function inspect(): ShadowReport {
   for (const d of deferredSchemas) {
     if (!d.pass) {
       blockers.push(
-        `Deferred schema present in v8.5.x (deltas #7/#8): pattern ${
+        `Deferred schema present in v8.6.x (delta #8): pattern ${
           d.pattern
-        } matched ${d.matchingFiles.join(', ')}. Straylight does not authorize using it from Hounfour until cycle-005 / v8.6.0.`,
+        } matched ${d.matchingFiles.join(', ')}. Straylight does not authorize using it from Hounfour until a later cycle confirms a canonical schema.`,
       );
     }
   }
@@ -670,7 +707,7 @@ export function inspect(): ShadowReport {
       notes.push(
         `Candidate ${c.straylightCandidate} classified as DISCOVERY_NOTE: expected ${
           c.expectedHounfourSchema ?? '(none)'
-        } not shipped in v8.5.x. Informational; resolution path is a deliberate later-phase decision.`,
+        } not shipped in the installed Hounfour line. Informational; resolution path is a deliberate later-phase decision.`,
       );
     } else if (
       c.expectedDisposition !== 'DEFERRED' &&
@@ -679,7 +716,7 @@ export function inspect(): ShadowReport {
       notes.push(
         `Candidate ${c.straylightCandidate} expected ${
           c.expectedHounfourSchema ?? '(none)'
-        } but no schema with that stem ships in v8.5.x and the row is not flagged as DISCOVERY_NOTE. Investigate before declaring it a blocker.`,
+        } but no schema with that stem ships in the installed Hounfour line and the row is not flagged as DISCOVERY_NOTE. Investigate before declaring it a blocker.`,
       );
     }
   }
@@ -692,7 +729,7 @@ export function inspect(): ShadowReport {
       symbol: 'safeCanonicalize',
       gate: 'no-confirmed-subpath',
       reason:
-        'v8.5.x exports map declares no ./canonicalize or ./utilities subpath; importing from package root is forbidden (delta #9), and reaching into unexported internals (dist/utilities/) is forbidden by the user-facing Phase 17B / Phase 18 constraint. Resolution is deferred until a later phase confirms an explicit exported subpath or files a Hounfour-side blocker.',
+        'Installed Hounfour exports map (verified against v8.5.x and v8.6.0) declares no ./canonicalize or ./utilities subpath; importing from package root is forbidden (delta #9), and reaching into unexported internals (dist/utilities/) is forbidden by the user-facing Phase 17B / Phase 18 / Phase 21A constraint. Resolution is deferred until a later phase confirms an explicit exported subpath or files a Hounfour-side blocker.',
       notExportedSubpaths: [
         '@0xhoneyjar/loa-hounfour/canonicalize',
         '@0xhoneyjar/loa-hounfour/utilities',
@@ -706,30 +743,34 @@ export function inspect(): ShadowReport {
   );
 
   // Phase 18 structured cycle-005 / v8.6.0 deferrals. Each entry's
-  // shipsInV85x is sourced from the same DEFERRED_SCHEMA_PATTERNS
-  // sweep that produces the existing deferredSchemas list, so the
-  // two views cannot disagree.
-  const challengeMatches =
-    deferredSchemas.find((d) => /challenge/i.test(d.pattern))
-      ?.matchingFiles.length ?? 0;
-  const estateTransitionMatches =
-    deferredSchemas.find((d) => /estate-transition/i.test(d.pattern))
-      ?.matchingFiles.length ?? 0;
+  // shipsInV85x is sourced by sweeping the Hounfour schemas
+  // directory directly so the value reflects the installed
+  // surface even after a symbol is removed from
+  // DEFERRED_SCHEMA_PATTERNS once it ships (e.g. Challenge in
+  // v8.6.0). EstateTransition stays in DEFERRED_SCHEMA_PATTERNS
+  // because the absence assertion is still load-bearing.
+  const shippedStems = listShippedSchemaStems();
+  const challengeShips = shippedStems.some((s) =>
+    /^challenge(\b|[-.])/i.test(s),
+  );
+  const estateTransitionShips = shippedStems.some((s) =>
+    /^estate-transition(\b|[-.])/i.test(s),
+  );
 
   const cycleFiveDeferrals: CycleFiveDeferralEntry[] = [
     {
       name: 'Challenge',
       deferredUntil: '8.6.0',
-      shipsInV85x: challengeMatches > 0,
+      shipsInV85x: challengeShips,
       reason:
-        'Challenge primitive deferred to Hounfour cycle-005 / v8.6.0 (delta #7). Straylight keeps the local Challenge type and validator until v8.6.0 ships a canonical schema.',
+        'Challenge primitive was queued for Hounfour cycle-005 / v8.6.0 (delta #7) and now ships under v8.6.0 (challenge.schema.json, challenge-type.schema.json, challenge-requested-effect.schema.json). Schema-side deferral is resolved; Straylight keeps Challenge runtime semantics deferred at the alias-module / wedge boundary pending a deliberate later-phase wiring decision.',
     },
     {
       name: 'EstateTransition',
       deferredUntil: '8.6.0',
-      shipsInV85x: estateTransitionMatches > 0,
+      shipsInV85x: estateTransitionShips,
       reason:
-        'EstateTransition primitive deferred to Hounfour cycle-005 / v8.6.0 (delta #8). Straylight keeps the local EstateTransition type, transition machinery, and audit-chain semantics until v8.6.0 ships a canonical schema.',
+        'EstateTransition primitive was queued for Hounfour cycle-005 / v8.6.0 (delta #8) but does not ship under v8.6.0. Straylight keeps the local EstateTransition type, transition machinery, and audit-chain semantics until a later Hounfour cycle confirms a canonical schema or Hounfour explicitly confirms a replacement path.',
     },
   ];
 
@@ -751,7 +792,7 @@ export function inspect(): ShadowReport {
 export function summarizeReport(r: ShadowReport): string {
   const lines: string[] = [];
   lines.push(
-    'Hounfour v8.5.x shadow inspection report (Phase 17B / Phase 18)',
+    'Hounfour v8.6.x shadow inspection report (Phase 17B / Phase 18 / Phase 21A)',
   );
   lines.push('');
   lines.push(`Intended dependency range: ${r.intendedDependencyRange}`);
@@ -761,7 +802,7 @@ export function summarizeReport(r: ShadowReport): string {
     }`,
   );
   lines.push('');
-  lines.push('Candidate dispositions:');
+  lines.push('Candidate dispositions (Phase 17B):');
   for (const c of r.candidates) {
     const id = c.hounfour?.$id ?? '(no $id)';
     // Phase 18: padding widened from 8 to 14 to accommodate the
@@ -778,20 +819,20 @@ export function summarizeReport(r: ShadowReport): string {
     );
   }
   lines.push('');
-  lines.push('Net-new v8.5.0 schemas (delta #12):');
+  lines.push('Net-new v8.5.0-origin schemas (delta #12; still required in v8.6.x):');
   for (const c of r.netNewSchemas) {
     lines.push(
       `  [${c.present ? 'present' : 'MISSING'}${
         c.present
           ? c.$idMatchesV85x
-            ? ', 8.5.x'
+            ? ', 8.6.x'
             : ', $id-DRIFT'
           : ''
       }] ${c.filename}`,
     );
   }
   lines.push('');
-  lines.push('Deferred schemas (deltas #7 / #8):');
+  lines.push('Deferred schemas (delta #8; EstateTransition still queued):');
   for (const d of r.deferredSchemas) {
     lines.push(
       `  [${d.pass ? 'absent -- PASS' : 'PRESENT -- BLOCKER'}] ${d.pattern}${
@@ -803,11 +844,18 @@ export function summarizeReport(r: ShadowReport): string {
   }
   lines.push('');
   lines.push(
-    'Cycle-005 / v8.6.0 deferrals (Phase 18 structured view):',
+    'Cycle-005 / v8.6.0 deferrals (Phase 18 structured view; resolved entries print "shipped"):',
   );
   for (const d of r.cycleFiveDeferrals) {
+    let state: string;
+    if (d.name === 'EstateTransition') {
+      state = d.shipsInV85x ? 'BREACH' : 'deferred';
+    } else {
+      // Challenge: shipping in v8.6.0 is the intended state.
+      state = d.shipsInV85x ? 'shipped' : 'still-deferred';
+    }
     lines.push(
-      `  [${d.shipsInV85x ? 'BREACH' : 'deferred'}] ${d.name} -> v${d.deferredUntil}`,
+      `  [${state}] ${d.name} -> v${d.deferredUntil}`,
     );
   }
   lines.push('');
