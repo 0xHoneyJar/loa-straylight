@@ -1,22 +1,30 @@
-// Phase 17B conformance -- Hounfour v8.5.x shadow integration.
+// Phase 17B / Phase 18 / Phase 21A conformance -- Hounfour v8.6.x
+// shadow integration.
 //
-// These tests pin the Phase 17B working-tree contract:
+// These tests pin the working-tree contract under the Phase 21A
+// v8.6 consumer-side intake:
 //
 //   * package.json declares the dependency with the user-authorized
-//     range (^8.5.0) and the hounfour:shadow-inspect npm script.
-//   * The installed Hounfour package resolves inside the 8.5.x
-//     line. Tests do not hard-pin 8.5.0 -- any 8.5.<patch> within
-//     ^8.5.0 is acceptable.
-//   * The 15 net-new v8.5.0 schemas (delta #12) ship in v8.5.x and
-//     each schema's $id matches /loa-hounfour/8.5.\d+/.
-//   * Challenge and EstateTransition schemas are absent at runtime
-//     (deltas #7 / #8); the deferral is honored by the actually-
-//     shipped surface, not just by docs.
+//     range (^8.6.0) and the hounfour:shadow-inspect npm script.
+//   * The installed Hounfour package resolves inside the 8.6.x
+//     line. Tests do not hard-pin 8.6.0 -- any 8.6.<patch> within
+//     ^8.6.0 is acceptable.
+//   * The 15 originally-net-new v8.5.0 schemas (delta #12) remain
+//     present in v8.6.x (strict-additive on v8.5.2) and each
+//     schema's $id matches /loa-hounfour/8.6.\d+/.
+//   * The Challenge schema family ships in v8.6.0 (delta #7
+//     resolved at the schema-byte surface). Challenge runtime
+//     semantics remain deferred at the Straylight wedge boundary.
+//   * EstateTransition remains absent at runtime (delta #8); the
+//     deferral is honored by the actually-shipped v8.6.x surface,
+//     not just by docs.
 //   * The Phase 17B alias module
 //     (src/straylight/hounfour-alias.ts) imports only from named
 //     subpaths (delta #9), aliases AgentIdentity as Actor (delta
 //     #10), and does not import or re-export Challenge or
-//     EstateTransition (deltas #7 / #8).
+//     EstateTransition (deltas #7 / #8) -- Challenge stays out of
+//     the alias surface even after it ships, because runtime
+//     wiring is not in Phase 21A scope.
 //   * Boundary preservation: src/straylight/index.ts does NOT
 //     import from @0xhoneyjar/loa-hounfour and does NOT re-export
 //     the alias module. Runtime / source integration remains
@@ -24,9 +32,9 @@
 //   * The inspector library is pure and does not import from
 //     @0xhoneyjar/loa-hounfour at the JS module boundary.
 //
-// These pins prove Phase 17B is internally consistent against the
-// actually-installed Hounfour v8.5.x package and does not silently
-// flip the wedge's public surface or breach the Challenge /
+// These pins prove the wedge stays internally consistent against
+// the actually-installed Hounfour v8.6.x package and does not
+// silently flip the wedge's public surface or breach the
 // EstateTransition deferral.
 
 import { existsSync, readFileSync } from 'node:fs';
@@ -89,7 +97,7 @@ describe('phase 17B -- package.json declares Hounfour dependency and shadow-insp
     expect(pkg.dependencies?.[HOUNFOUR_PACKAGE_NAME]).toBeDefined();
   });
 
-  it('package.json pins the user-authorized range ^8.5.0 (not a tighter rewrite)', () => {
+  it('package.json pins the user-authorized range ^8.6.0 (not a tighter rewrite)', () => {
     const pkg = JSON.parse(read(PACKAGE_JSON)) as PackageJson;
     expect(pkg.dependencies?.[HOUNFOUR_PACKAGE_NAME]).toBe(
       INTENDED_DEPENDENCY_RANGE,
@@ -105,7 +113,7 @@ describe('phase 17B -- package.json declares Hounfour dependency and shadow-insp
   });
 });
 
-describe('phase 17B -- installed Hounfour package resolves inside the 8.5.x line', () => {
+describe('phase 17B -- installed Hounfour package resolves inside the 8.6.x line', () => {
   it('node_modules/@0xhoneyjar/loa-hounfour/package.json exists', () => {
     expect(existsSync(HOUNFOUR_PACKAGE_JSON)).toBe(true);
   });
@@ -117,11 +125,11 @@ describe('phase 17B -- installed Hounfour package resolves inside the 8.5.x line
     expect(pkg.name).toBe(HOUNFOUR_PACKAGE_NAME);
   });
 
-  it('installed package version matches 8.5.<patch>', () => {
+  it('installed package version matches 8.6.<patch>', () => {
     const pkg = JSON.parse(read(HOUNFOUR_PACKAGE_JSON)) as {
       version?: string;
     };
-    expect(pkg.version).toMatch(/^8\.5\.\d+$/);
+    expect(pkg.version).toMatch(/^8\.6\.\d+$/);
   });
 });
 
@@ -137,7 +145,7 @@ describe('phase 17B -- inspector reports a structurally valid shadow report', ()
   it('report records the resolved package metadata', () => {
     expect(report.resolvedPackage.exists).toBe(true);
     expect(report.resolvedPackage.name).toBe(HOUNFOUR_PACKAGE_NAME);
-    expect(report.resolvedPackage.version).toMatch(/^8\.5\.\d+$/);
+    expect(report.resolvedPackage.version).toMatch(/^8\.6\.\d+$/);
   });
 
   it('report covers every Straylight schema candidate', () => {
@@ -150,13 +158,13 @@ describe('phase 17B -- inspector reports a structurally valid shadow report', ()
     }
   });
 
-  it('report covers every net-new v8.5.0 schema (delta #12)', () => {
+  it('report covers every originally-net-new v8.5.0 schema (delta #12; still required in v8.6.x)', () => {
     expect(report.netNewSchemas.length).toBe(
       NET_NEW_V850_SCHEMAS.length,
     );
   });
 
-  it('report covers every deferred-schema pattern (deltas #7 / #8)', () => {
+  it('report covers every deferred-schema pattern (delta #8 only under v8.6.x)', () => {
     expect(report.deferredSchemas.length).toBe(
       DEFERRED_SCHEMA_PATTERNS.length,
     );
@@ -175,11 +183,11 @@ describe('phase 17B -- inspector reports a structurally valid shadow report', ()
   });
 });
 
-describe('phase 17B -- 15 net-new v8.5.0 schemas (delta #12) ship and carry an 8.5.x $id', () => {
+describe('phase 21A -- 15 originally-net-new v8.5.0 schemas (delta #12) remain present in v8.6.x and carry an 8.6.x $id', () => {
   const report = inspect();
 
   it.each(NET_NEW_V850_SCHEMAS)(
-    'net-new schema %s is present in v8.5.x',
+    'originally-net-new schema %s is present in v8.6.x',
     (stem) => {
       const c = report.netNewSchemas.find((s) => s.stem === stem);
       expect(c, `report should include ${stem}`).toBeDefined();
@@ -188,7 +196,7 @@ describe('phase 17B -- 15 net-new v8.5.0 schemas (delta #12) ship and carry an 8
   );
 
   it.each(NET_NEW_V850_SCHEMAS)(
-    'net-new schema %s declares a $id under /loa-hounfour/8.5.\\d+/',
+    'originally-net-new schema %s declares a $id under /loa-hounfour/8.6.\\d+/',
     (stem) => {
       const c = report.netNewSchemas.find((s) => s.stem === stem);
       expect(c?.present).toBe(true);
@@ -199,8 +207,13 @@ describe('phase 17B -- 15 net-new v8.5.0 schemas (delta #12) ship and carry an 8
   );
 });
 
-describe('phase 17B -- Challenge and EstateTransition deferral honored at runtime (deltas #7 / #8)', () => {
+describe('phase 21A -- EstateTransition deferral honored at runtime (delta #8); Challenge no longer in DEFERRED_SCHEMA_PATTERNS because it ships in v8.6.0 (delta #7 resolved)', () => {
   const report = inspect();
+
+  it('DEFERRED_SCHEMA_PATTERNS contains exactly one pattern (estate-transition only)', () => {
+    expect(DEFERRED_SCHEMA_PATTERNS.length).toBe(1);
+    expect(DEFERRED_SCHEMA_PATTERNS[0]?.toString()).toMatch(/estate-transition/i);
+  });
 
   it.each(DEFERRED_SCHEMA_PATTERNS.map((p) => p.toString()))(
     'deferred-pattern %s does not match any shipped schema',
@@ -215,18 +228,18 @@ describe('phase 17B -- Challenge and EstateTransition deferral honored at runtim
   );
 
   it('inspector raises no blocker for deferred schemas', () => {
-    const challengeBlockers = report.blockers.filter((b) =>
+    const deferralBlockers = report.blockers.filter((b) =>
       /challenge|estate-transition/i.test(b),
     );
-    expect(challengeBlockers).toEqual([]);
+    expect(deferralBlockers).toEqual([]);
   });
 });
 
-describe('phase 17B -- inspector blockers list is empty (no Hounfour-side blockers from this run)', () => {
-  // Phase 17B is not authorized to file blockers; if the inspector
+describe('phase 21A -- inspector blockers list is empty under v8.6.x intake (no Hounfour-side blockers from this run)', () => {
+  // Phase 21A is not authorized to file blockers; if the inspector
   // surfaces one, the test fails so the user sees it before the
   // findings doc gets updated. Discrepancies short of blockers
-  // (e.g. NAME_DRIFT for audit-event) live in `notes` instead.
+  // (e.g. DISCOVERY_NOTE for audit-event) live in `notes` instead.
   it('report.blockers is empty', () => {
     const report = inspect();
     expect(
@@ -397,7 +410,7 @@ describe('phase 17B -- inspector files preserve subpath discipline themselves', 
 // ----------------------------------------------------------------
 // Phase 18 -- boundary-hardening pins.
 //
-// Phase 18 hardens the v8.5.x boundary by:
+// Phase 18 hardens the v8.6.x boundary by:
 //
 //   * formally classifying audit-event-transition.json as
 //     DISCOVERY_NOTE (never MISSING, never blocker),
@@ -568,7 +581,7 @@ describe('phase 18 -- safeCanonicalize subpath stays deferred with gate `no-conf
   });
 });
 
-describe('phase 18 -- Challenge and EstateTransition stay deferred until Hounfour v8.6.0', () => {
+describe('phase 21A -- Challenge ships in Hounfour v8.6.0 (delta #7 resolved); EstateTransition remains deferred (delta #8)', () => {
   const report = inspect();
 
   it('report.cycleFiveDeferrals contains exactly two entries: Challenge and EstateTransition', () => {
@@ -578,7 +591,7 @@ describe('phase 18 -- Challenge and EstateTransition stay deferred until Hounfou
   });
 
   it.each(['Challenge', 'EstateTransition'] as const)(
-    '%s entry is queued for v8.6.0',
+    '%s entry records its cycle-005 / v8.6.0 queue target',
     (name) => {
       const entry = report.cycleFiveDeferrals.find(
         (e) => e.name === name,
@@ -587,17 +600,21 @@ describe('phase 18 -- Challenge and EstateTransition stay deferred until Hounfou
     },
   );
 
-  it.each(['Challenge', 'EstateTransition'] as const)(
-    '%s does not ship in the installed v8.5.x package (shipsInV85x: false)',
-    (name) => {
-      const entry = report.cycleFiveDeferrals.find(
-        (e) => e.name === name,
-      );
-      expect(entry?.shipsInV85x).toBe(false);
-    },
-  );
+  it('Challenge has shipped in v8.6.x (shipsInV85x: true)', () => {
+    const entry = report.cycleFiveDeferrals.find(
+      (e) => e.name === 'Challenge',
+    );
+    expect(entry?.shipsInV85x).toBe(true);
+  });
 
-  it('the alias module imports neither Challenge nor EstateTransition from any subpath', () => {
+  it('EstateTransition has not shipped in v8.6.x (shipsInV85x: false)', () => {
+    const entry = report.cycleFiveDeferrals.find(
+      (e) => e.name === 'EstateTransition',
+    );
+    expect(entry?.shipsInV85x).toBe(false);
+  });
+
+  it('the alias module imports neither Challenge nor EstateTransition from any subpath (Phase 21A keeps runtime wiring deferred even though Challenge schemas ship)', () => {
     const aliasSrc = readFileSync(ALIAS_MODULE, 'utf8');
     expect(
       /^\s*import[^;]*\bChallenge\b[^;]*from/m.test(aliasSrc),
@@ -607,26 +624,21 @@ describe('phase 18 -- Challenge and EstateTransition stay deferred until Hounfou
     ).toBe(false);
   });
 
-  it('the deferral does not surface a blocker (informational only when honored at runtime)', () => {
+  it('neither Challenge nor EstateTransition surfaces a blocker (Challenge ships but is not in DEFERRED_SCHEMA_PATTERNS; EstateTransition is in DEFERRED_SCHEMA_PATTERNS but does not ship)', () => {
     const cycleFiveBlockers = report.blockers.filter((b) =>
       /challenge|estate-transition/i.test(b),
     );
     expect(cycleFiveBlockers).toEqual([]);
   });
 
-  it('the structured cycleFiveDeferrals view stays in sync with deferredSchemas absence checks', () => {
-    // Both views answer the same question: does v8.5.x ship a
-    // Challenge / EstateTransition schema? They MUST agree.
-    const challengeShips =
-      report.cycleFiveDeferrals.find((e) => e.name === 'Challenge')
-        ?.shipsInV85x ?? true;
+  it('the structured cycleFiveDeferrals view stays in sync with the schema directory for EstateTransition', () => {
+    // EstateTransition is the surviving member of
+    // DEFERRED_SCHEMA_PATTERNS, so its shipsInV85x flag must agree
+    // with the deferredSchemas absence sweep.
     const estateShips =
       report.cycleFiveDeferrals.find((e) => e.name === 'EstateTransition')
         ?.shipsInV85x ?? true;
 
-    const challengeSchemaPasses = report.deferredSchemas.find((d) =>
-      /challenge/i.test(d.pattern),
-    )?.pass;
     const estateSchemaPasses = report.deferredSchemas.find((d) =>
       /estate-transition/i.test(d.pattern),
     )?.pass;
@@ -634,7 +646,6 @@ describe('phase 18 -- Challenge and EstateTransition stay deferred until Hounfou
     // schema-pass: TRUE when no matching schema files (deferral
     // honored). cycleFive-shipsInV85x: TRUE when the schema ships.
     // They must be opposites.
-    expect(challengeShips).toBe(!challengeSchemaPasses);
     expect(estateShips).toBe(!estateSchemaPasses);
   });
 });
@@ -693,10 +704,10 @@ describe('phase 18 -- inspector report shape carries the new structured fields w
     expect(discoveryRows.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('blockers list remains empty under Phase 18 hardening', () => {
+  it('blockers list remains empty under Phase 21A v8.6.x intake', () => {
     expect(
       report.blockers,
-      `unexpected blockers under Phase 18:\n${report.blockers.join('\n')}`,
+      `unexpected blockers:\n${report.blockers.join('\n')}`,
     ).toEqual([]);
   });
 });
