@@ -351,3 +351,140 @@ otherwise renders the wedge's public-API output as published.
   policy-lane output; it does not collapse the boundary.
 - [`fixtures/dixie-governed-recall/`](../../fixtures/dixie-governed-recall/)
   — ten current-shape JSON examples (Dixie PR-A test inputs).
+
+---
+
+## Phase 24B refresh — recall-pack-inspection MVP boundary lock
+
+> Status: Phase 24B (append-only). This section is the **Phase 24B
+> refresh** to this Phase 12 boundary doc. It does **not** edit
+> any Phase 12 prose above. It records, in append-only form, how
+> the Phase 24A host-placement decision (ADR-024B: Dixie-first,
+> recall-pack-inspection-first) and the Phase 24B wire-shape lock
+> (ADR-024E) tighten the four-lane model for the recall-pack-
+> inspection MVP slice.
+>
+> Companion docs:
+> [`../decisions/ADR-024E-dixie-host-mvp-wire-shape.md`](../decisions/ADR-024E-dixie-host-mvp-wire-shape.md),
+> [`../decisions/ADR-024B-mvp-host-selection.md`](../decisions/ADR-024B-mvp-host-selection.md),
+> [`../decisions/ADR-024D-phase-24b-implementation-branch.md`](../decisions/ADR-024D-phase-24b-implementation-branch.md),
+> [`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md),
+> [`../specs/dixie-recall-host-validation-vectors.md`](../specs/dixie-recall-host-validation-vectors.md),
+> [`./phase-24b-dixie-recall-host-plan.md`](./phase-24b-dixie-recall-host-plan.md),
+> [`./phase-24a-hounfour-116-intake-and-host-decision.md`](./phase-24a-hounfour-116-intake-and-host-decision.md),
+> [`./hounfour-116-merge-intake.md`](./hounfour-116-merge-intake.md).
+
+### Lane disposition for Phase 24B
+
+The Phase 12 four-lane model (class / primitive / runtime /
+governed-recall-BFF) carries forward unchanged. Phase 24B
+narrows the four-lane disposition for the **recall-pack-
+inspection MVP slice** as follows:
+
+| Lane | Phase 24B disposition | Rationale |
+|---|---|---|
+| **Class lane** (`loa-hounfour`, after adoption) | **Unchanged.** Wedge owns class validation in-process until a Hounfour-side adoption PR lands. Hounfour #116 registered the `recall-wedge` category and the `0xhoneyjar:straylight:*` audit-event prefix family upstream as **substrate**, not as an adoption event. Phase 24B does **not** adopt either into the Straylight public surface or test suite. | Per ADR-020C / ADR-022C / ADR-024A / ADR-024C. #116 is upstream substrate; adoption requires Event A + Event B + Event C. |
+| **Primitive lane** (`loa-straylight`, permanent) | **Load-bearing for Phase 24B.** Every wedge primitive the host inspects (`RecallRequest`, `RecallPack`, `RecallReceipt`, `Assertion`, `AssertionStatus`, `Estate`, `Actor`, `Keyring`, `Policy`, `Revocation`, `AuditEvent` (wedge-private), `dispositionFor`, `privacyDispositionForFrame`, `verifyChain`, `StorageAdapter`) stays wedge-owned. See [`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md) §"Appendix A". | Per ADR-024A / ADR-022A / ADR-020A / ADR-024E §"Decision" 3. |
+| **Runtime lane** (`loa-finn`, later) | **Out of slice for Phase 24B.** Finn remains the **later runtime / enforcement collaborator**, not the Phase 24B host. Finn re-enters only when recall output is fed into model / tool execution — a *later* slice that requires a separate host-placement ADR. The Phase 10 Finn packet ([`./finn-runtime-enforcement-issue.md`](./finn-runtime-enforcement-issue.md), [`./finn-runtime-boundary.md`](./finn-runtime-boundary.md), [`./finn-enforcement-mapping.md`](./finn-enforcement-mapping.md)) is **not** refreshed by Phase 24B and **not** advanced by Phase 24B. | Per ADR-024B / ADR-024E §"Decision" 5. |
+| **Governed-recall / BFF / inspection lane** (`loa-dixie`, after adoption) | **Targeted for Phase 24B (recall-pack-inspection-first).** The eventual Dixie host inspects, relays, and renders the wedge's existing recall output under the wedge's existing fail-closed discipline. The host does **not** produce a `RecallPack`, does **not** produce a `RecallReceipt`, does **not** compute `dispositionFor`, does **not** publish a commitment root, and does **not** invent privacy-scope semantics. | Per ADR-024B / ADR-024E §"Decision" 1–2 / §"Decision" 4. |
+
+The lanes remain **separable in code, in test, and in test
+fixture**. Collapsing any two of them re-creates a known failure
+mode (see
+[`../schema-candidates/class-vs-policy-boundary.md`](../schema-candidates/class-vs-policy-boundary.md)).
+Phase 24B preserves the separation unchanged.
+
+### Straylight ↔ Dixie boundary (Phase 24B MVP)
+
+The Phase 24B MVP host plan is **shape (b) of ADR-022B
+criterion #2** — a precomputed `RecallPack` + `RecallReceipt`
+(emitted by the wedge) inspected by Dixie. The Straylight↔Dixie
+boundary for this slice is:
+
+| Side | Owns | Examples |
+|---|---|---|
+| Straylight (wedge) | Primitive semantics; recall execution; receipt emission; audit-chain persistence; fail-closed defaults; deterministic content-addressing; local canonicalization; the stable public API surface. | `executeRecall`; `RecallPack` / `RecallReceipt` emission; `dispositionFor`; `verifyChain`; `computeCommitmentRoot`. |
+| Dixie (host) | Operator-facing intake, relay, render. Receipt retrieval keyed by `receipt_id`. `excluded_summary[]` / `redacted[]` walks. `Assertion.provenance[]` walks under `privacy_scope`. Per-estate audit-chain lookup. Per-estate summary counts. Cross-tenant boundary at intake. | The six surfaces of [`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md). |
+
+The host does **not** produce a `RecallPack`. The host does
+**not** produce a `RecallReceipt`. The host does **not** compute
+`dispositionFor`. The host does **not** publish a commitment
+root. The host does **not** invent privacy-scope semantics.
+
+### Dixie ↔ Finn boundary (Phase 24B MVP)
+
+Per ADR-024E §"Decision" 5: **Finn is out of this slice.** The
+Phase 24B MVP host contract does **not** include a Finn-shaped
+runtime-tool-call surface. Finn re-enters only on a later slice
+that places a runtime-tool-call host under shape (a) of
+ADR-022B criterion #2 — under a separate ADR (most plausibly an
+ADR-024F or later).
+
+Concretely, for Phase 24B and for the future
+`phase-24c-dixie-recall-host-scaffold` branch:
+
+- Finn is **not** wired by `phase-24b-*` (per ADR-024D §4).
+- Finn is **not** wired by `phase-24c-*` (per ADR-024E §"The
+  next implementation branch" §3).
+- Finn does **not** appear in the Phase 24B MVP host contract
+  request/response shapes.
+- The Phase 10 Finn packet is the in-repo contract for the
+  later runtime slice — preserved unchanged; **not** advanced
+  by Phase 24B.
+
+### Hounfour and Freeside (Phase 24B disposition)
+
+- **Hounfour** remains schema / protocol / conformance
+  substrate only per ADR-020C / ADR-022A / ADR-022C / ADR-024A /
+  ADR-024E §"Decision" 7. Phase 24B does **not** make Hounfour a
+  host candidate.
+- **Freeside** remains the later app / community surface
+  consumer per ADR-024B / ADR-024E §"Decision" 6. Phase 24B does
+  **not** refresh the Freeside packet
+  ([`./freeside-community-surface-boundary.md`](./freeside-community-surface-boundary.md)).
+
+### Phase 24B refresh non-scope
+
+- **No edits to the existing Phase 12 prose above.** This
+  section is append-only.
+- **No new Dixie BFF surfaces beyond the six in
+  [`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md).**
+- **No schema authoring.**
+- **No `package.json` change.** No `loa-dixie` / `loa-finn` /
+  `loa-freeside` dependency. No Hounfour range bump.
+- **No sibling-repo edits.**
+- **No GitHub issue / comment / PR.**
+- **No `Challenge` / `EstateTransition` / `safeCanonicalize` /
+  `AuditEvent`-rename adoption.**
+- **No `0xhoneyjar:straylight:*` prefix family adoption** into
+  the Straylight public surface.
+- **No `recall-wedge` conformance category adoption** into the
+  Straylight test suite.
+- **No Hounfour five-step corpus import** from a working-tree
+  path.
+- **No Hounfour `main` / commit-SHA / git-source consumption.**
+- **No `.loa/` / `.claude/` / `.beads/` / `.run/` / `.github/`
+  edits.**
+- **No commit, no push, no PR.**
+
+### Phase 24B refresh cross-references
+
+- [`../decisions/ADR-024E-dixie-host-mvp-wire-shape.md`](../decisions/ADR-024E-dixie-host-mvp-wire-shape.md)
+  — Phase 24B decision-lock for the Dixie host MVP wire-shape.
+- [`../decisions/ADR-024B-mvp-host-selection.md`](../decisions/ADR-024B-mvp-host-selection.md)
+  — host placement (Dixie-first).
+- [`../decisions/ADR-024C-package-release-ambiguity.md`](../decisions/ADR-024C-package-release-ambiguity.md)
+  — package-release discipline for Hounfour-#116-derived
+  contracts.
+- [`../decisions/ADR-024D-phase-24b-implementation-branch.md`](../decisions/ADR-024D-phase-24b-implementation-branch.md)
+  — `phase-24b-*` allowable scope.
+- [`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md)
+  — per-Dixie-surface Phase 24B MVP host contract.
+- [`../specs/dixie-recall-host-validation-vectors.md`](../specs/dixie-recall-host-validation-vectors.md)
+  — per-vector validation matrix at the host inspection layer.
+- [`./phase-24b-dixie-recall-host-plan.md`](./phase-24b-dixie-recall-host-plan.md)
+  — Phase 24B summary handoff.
+- [`./phase-24a-hounfour-116-intake-and-host-decision.md`](./phase-24a-hounfour-116-intake-and-host-decision.md)
+  — Phase 24A summary handoff (the packet Phase 24B builds on).
+- [`./hounfour-116-merge-intake.md`](./hounfour-116-merge-intake.md)
+  — Phase 24A per-component intake.
