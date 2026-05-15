@@ -897,6 +897,96 @@ npm run typecheck
 npm test
 ```
 
+## Phase 24B — Dixie recall-host plan packet
+
+Phase 24B is a **narrow, in-repo docs/spec packet** staged on the
+`phase-24b-dixie-recall-host-plan` branch inside `loa-straylight`
+after Phase 24A's ADR series (ADR-024A–D) and intake doc merged.
+Phase 24B locks the **Straylight↔Dixie wire-shape** the
+recall-pack-inspection MVP host targets, the **Dixie↔Finn
+boundary** for this slice (Finn out), the **package-release
+gate** for Hounfour-#116-derived contracts (re-anchored to
+ADR-024C), the **validation / demo plan** at the host inspection
+layer, and the **next implementation branch**
+(`phase-24c-dixie-recall-host-scaffold`) — **without authoring
+any schema, fixture, or test, without flipping any import, and
+without bumping the Hounfour dependency range**. Phase 24B is
+**docs/spec only** — it is **not endpoint-wired**, **not
+runtime-wired**, **not the full Recall Wedge**, **not governed
+recall in Finn / Dixie / Freeside runtime**, **not Hounfour-side
+schema work**, and **not Hounfour-package consumption beyond
+the existing `^8.6.0` published range**. **No endpoint /
+runtime integration is authorized by this packet, no schema is
+authored, no test is added, no fixture is added, and no
+Hounfour dependency-range bump is performed.**
+
+Phase 24B does **not** flip any wedge import, change
+`package.json` / `package-lock.json`, change the Hounfour
+dependency range or resolved patch, consume Hounfour `main` or
+any unpublished commit, modify [`../../src/straylight/`](../../src/straylight/),
+modify any script under [`../../scripts/`](../../scripts/), wire
+any sibling-repo runtime, add a Dixie endpoint, add a Finn
+endpoint, edit any sibling repo, implement `Challenge` locally,
+implement `EstateTransition` locally, reach into unexported
+Hounfour internals, add a `safeCanonicalize` subpath import,
+publish a public commitment root, add a network surface, change
+persistence, add or modify any test, add or modify any fixture,
+author any TypeBox / JSON Schema, **file** any GitHub issue or
+comment, or touch `.loa/` / `.claude/` / `.beads/` / `.run/` /
+`.github/`. It does **not** commit and does **not** open a PR.
+
+| Document | Purpose |
+|---|---|
+| [`phase-24b-dixie-recall-host-plan.md`](./phase-24b-dixie-recall-host-plan.md) | Phase 24B summary handoff: executive summary (Dixie-first; recall-pack-inspection-first; six in-slice host surfaces; vectors 1–8 reframed at host layer; vector 9 not in slice / cross-reference only per ADR-024D §3.b; vectors 10/11 remain gates; no test / fixture / schema authored by Phase 24B), v8.6-plus-#116-plus-Phase-24A inherited state recap with the Phase 24B deltas, the eight required definitional points (host plan; minimum slice; Straylight primitives; Straylight↔Dixie boundary; Dixie↔Finn boundary; package-release gate; validation / demo plan; next implementation branch), Straylight↔Dixie boundary, Dixie↔Finn boundary, Freeside disposition, Hounfour disposition, package-release gate (Event A + Event B + Event C; each necessary, none sufficient), validation / demo plan (no new tests; no new fixtures; host demo evidence produced in a later phase), next implementation branch (`phase-24c-dixie-recall-host-scaffold`) with entry / non-go conditions, blockers vs non-blockers tables (four runtime-integration blockers; six non-blocking discovery notes), explicit non-scope, what this packet does *not* claim, validation evidence (`npm run typecheck`, `npm test`). |
+| [`../decisions/ADR-024E-dixie-host-mvp-wire-shape.md`](../decisions/ADR-024E-dixie-host-mvp-wire-shape.md) | Phase 24B decision-lock: pins the Straylight↔Dixie wire-shape (shape (b) of ADR-022B criterion #2 — precomputed `RecallPack` + `RecallReceipt` inspected by Dixie; no `executeRecall` at the host); the minimum MVP slice (recall-pack inspection / provenance / receipt display — not generic retrieval); the exact in-slice Straylight primitives; the Straylight↔Dixie boundary (wedge produces; host inspects); the Dixie↔Finn boundary (Finn out of this slice; later runtime / enforcement collaborator only); the package-release gate for Hounfour-#116-derived contracts (re-anchored to ADR-024C: Event A + Event B + Event C); and the next implementation branch (`phase-24c-dixie-recall-host-scaffold`) with allowable scope, hard non-scope, entry conditions, and non-go conditions. |
+| [`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md) | Phase 24B primary spec — per-Dixie-surface MVP host contract. Six in-slice surfaces (recall intake & response; receipt retrieval & display; excluded-assertion reason display; provenance inspection; audit-chain lookup; estate summary), each with purpose, wedge primitive(s) inspected, TypeScript-style request/response shape (no schema authored), fail-closed posture, Phase 24A non-scope preserved. Appendices: (A) exact Straylight primitives in-slice — all wedge-owned, already shipped under [`../../src/straylight/`](../../src/straylight/); (B) out-of-slice primitives (`Challenge` / `EstateTransition` / `safeCanonicalize` / `AuditEvent` rename / `Commitment` publication / `0xhoneyjar:straylight:*` adoption / `recall-wedge` adoption / corpus import / sibling-repo wiring / dependency bumps), each pinned to its ADR gate; (C) mapping to Phase 12 Dixie surfaces (six in-slice; rest deferred to a later slice). |
+| [`../specs/dixie-recall-host-validation-vectors.md`](../specs/dixie-recall-host-validation-vectors.md) | Phase 24B companion spec — per-vector validation matrix at the host inspection layer. Phase 23A vectors 1–8 reframed against the six host surfaces (vector 9 not in slice / cross-reference only per ADR-024D §3.b) and the six receipt categories (`included` / `excluded` / `redacted` / `challenged` / `revoked` / `blocked-by-policy`). Vectors 10 (`EstateTransition` on the wire) and 11 (`safeCanonicalize` on the wire) explicitly remain gates — **not** exercised by Phase 24B or by `phase-24c-dixie-recall-host-scaffold`. Demo plan: no new tests in Phase 24B; no new fixtures in Phase 24B; host demo-evidence packet produced in a later phase (by `phase-24c-*` under ADR-024D §3.a–c or by a successor demo-evidence phase). Layer separation re-pinned: Phase 8 schema-candidate-layer + Phase 23A wedge-runtime-layer + Phase 24B host-inspection-layer are coordinate, not subordinate. |
+| [`dixie-governed-recall-boundary.md`](./dixie-governed-recall-boundary.md) (Phase 24B refresh appended) | Phase 12 boundary doc with a Phase 24B append-only section. Pins the four-lane disposition for the recall-pack-inspection MVP slice (class lane unchanged; primitive lane load-bearing for Phase 24B; runtime lane out of slice; governed-recall lane targeted for Phase 24B), the Straylight↔Dixie boundary, and the Dixie↔Finn boundary. Existing Phase 12 prose unchanged. |
+| [`dixie-governed-recall-issue.md`](./dixie-governed-recall-issue.md) (Phase 24B refresh appended) | Phase 12 issue handoff with a Phase 24B append-only section. Pins the Phase 24B MVP shape (recall-pack-inspection-first; six in-slice surfaces; vectors 1–8 reframed at host layer, vector 9 not in slice / cross-reference only per ADR-024D §3.b, vectors 10–11 remain gates), what Phase 24B changes (a new ADR; two new specs; a summary handoff; three append-only refreshes), what Phase 24B does *not* change (Phase 12 prose; wedge public API; `package.json`; sibling repos), the package-release gate, and the next implementation branch. Existing Phase 12 prose unchanged. |
+| [`dixie-recall-mapping.md`](./dixie-recall-mapping.md) (Phase 24B refresh appended) | Phase 12 mapping doc with a Phase 24B append-only section. Maps each in-slice Phase 24B host surface to its Phase 12 row; explicitly defers the remaining Phase 12 surfaces (assertion-status inspection; governance-record awareness; environment-frame routing; high-risk review-queue management surface; cross-tenant prevention as cross-cutting only) to a later slice; per-surface validation-vector mapping. Existing Phase 12 mapping rows unchanged. |
+
+The Phase 24B packet consumes the Phase 24A summary handoff
+([`phase-24a-hounfour-116-intake-and-host-decision.md`](./phase-24a-hounfour-116-intake-and-host-decision.md)),
+the Phase 24A per-component intake
+([`hounfour-116-merge-intake.md`](./hounfour-116-merge-intake.md)),
+the four Phase 24A ADRs
+([`../decisions/ADR-024A-hounfour-116-substrate-intake.md`](../decisions/ADR-024A-hounfour-116-substrate-intake.md)
+through
+[`../decisions/ADR-024D-phase-24b-implementation-branch.md`](../decisions/ADR-024D-phase-24b-implementation-branch.md)),
+the Phase 23A MVP schema-contract draft and its two spec docs,
+the Phase 22A MVP decision-lock series, the Phase 21B
+schema-readiness lock, the Phase 19A upstream-review packet
+that pins the load-bearing pending feedback gate (still
+pending; not satisfied by Phase 24B), the Phase 12 Dixie packet
+([`dixie-governed-recall-issue.md`](./dixie-governed-recall-issue.md),
+[`dixie-governed-recall-boundary.md`](./dixie-governed-recall-boundary.md),
+[`dixie-recall-mapping.md`](./dixie-recall-mapping.md))
+refreshed in append-only form by Phase 24B, the Phase 10 Finn
+packet (preserved unchanged), the Phase 14 Freeside packet
+(preserved unchanged), the existing Recall Wedge implementation
+under [`../../src/straylight/`](../../src/straylight/)
+(read-only), the existing Phase 12 fixtures under
+[`../../fixtures/dixie-governed-recall/`](../../fixtures/dixie-governed-recall/)
+(unchanged), and the existing wedge tests (Phase 4 demo,
+Phase 5 hardening, Phase 20B local scaffold, Phase 20C demo
+evidence, storage conformance, dixie-governed-recall handoff)
+(unchanged). It produces this summary handoff, the new ADR
+(ADR-024E), the two new specs, the three append-only refreshes
+to the Phase 12 Dixie handoffs, and this README index entry. It
+produces no new fixture, no new test, no source / script /
+package change, no new sibling-repo handoff packet, and no
+GitHub-side action. The Phase 9 / 10 / 12 / 14 / 15 / 19A / 20
+/ 21B / 22A / 23A / 24A in-repo rows above are unchanged by
+Phase 24B except for the three append-only Phase 24B sections
+in the Phase 12 Dixie handoffs.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+```
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.

@@ -117,3 +117,113 @@
   fail-closed defenses the BFF must preserve.
 - [`fixtures/dixie-governed-recall/`](../../fixtures/dixie-governed-recall/)
   — ten current-shape JSON examples (Dixie PR-A test inputs).
+
+---
+
+## Phase 24B refresh — per-surface mapping to the MVP host contract
+
+> Status: Phase 24B (append-only). This section is the **Phase 24B
+> refresh** to this Phase 12 mapping doc. It does **not** edit
+> any Phase 12 prose above. It links each Phase 12 mapping row
+> to the corresponding row in the Phase 24B per-surface MVP host
+> contract spec
+> ([`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md)),
+> so a future `phase-24c-dixie-recall-host-scaffold` reviewer can
+> verify scope alignment at glance.
+>
+> Companion docs:
+> [`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md),
+> [`../specs/dixie-recall-host-validation-vectors.md`](../specs/dixie-recall-host-validation-vectors.md),
+> [`../decisions/ADR-024E-dixie-host-mvp-wire-shape.md`](../decisions/ADR-024E-dixie-host-mvp-wire-shape.md),
+> [`./phase-24b-dixie-recall-host-plan.md`](./phase-24b-dixie-recall-host-plan.md),
+> [`./dixie-governed-recall-boundary.md`](./dixie-governed-recall-boundary.md)
+> (Phase 24B refresh),
+> [`./dixie-governed-recall-issue.md`](./dixie-governed-recall-issue.md)
+> (Phase 12 issue handoff; Phase 24B refresh appended).
+
+### Phase 24B in-slice surfaces (six)
+
+Each Phase 24B in-slice surface maps to its Phase 12 row in this
+doc:
+
+| Phase 24B host surface | Phase 12 mapping row (above) | Spec section | Receipt categories surfaced |
+|---|---|---|---|
+| Surface 1 — Recall intake & response | "Recall intake and response" mapping row | [`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md) §"Surface 1" | `included`, `excluded`, `redacted`, `challenged`, `revoked`, `blocked-by-policy` (the full ADR-020D §6 set, surfaced via `RecallReceipt`) |
+| Surface 2 — Receipt retrieval & display | "Receipt retrieval and display" mapping row | [`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md) §"Surface 2" | (retrieves any persisted receipt by `receipt_id`) |
+| Surface 3 — Excluded-assertion reason display | "Excluded-assertion reason display" mapping row | [`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md) §"Surface 3" | `excluded`, `redacted`, `challenged`, `revoked`, `blocked-by-policy` |
+| Surface 4 — Provenance inspection | "Provenance inspection" mapping row | [`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md) §"Surface 4" | (walks `Assertion.provenance[]` under `privacy_scope`; refuses on `actor_private` × `public_discord`) |
+| Surface 5 — Audit-chain lookup | "Audit-chain lookup" mapping row | [`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md) §"Surface 5" | (surfaces wedge-private `AuditEvent[]` + `verifyChain` result; break index on chain break) |
+| Surface 6 — Estate summary | "Estate summary" mapping row | [`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md) §"Surface 6" | (counts by class / status / privacy scope / risk level; respects privacy frame) |
+
+### Phase 12 surfaces explicitly out of slice for Phase 24B MVP
+
+The Phase 12 mapping above proposes additional Dixie surfaces.
+Phase 24B **narrows** the MVP slice to the six surfaces in the
+table above. The remaining Phase 12 surfaces are **not removed**
+from the Phase 12 packet — they remain in this doc as the
+in-repo contract for **a later slice** — but they are
+**explicitly out of scope for the Phase 24B MVP host plan**:
+
+| Phase 12 surface (above) | Phase 24B disposition |
+|---|---|
+| Assertion-status inspection | Out of slice for Phase 24B MVP. Covered at the summary granularity by Surface 6 (counts by status). Per-assertion inspection is deferred to a later slice. |
+| Governance-record awareness | Out of slice for Phase 24B MVP. Deferred. |
+| Environment-frame routing | Out of slice for Phase 24B MVP. The host accepts a `frame` on the caller envelope (Surfaces 4 and 6) but does not run routing logic. |
+| High-risk recall handling (review queue) | Out of slice for the docs/spec lock. Surface 1 surfaces `needs_review` outcomes (and emits a `review_queue_id` handle) but the review-queue management surface (intake/list/sign-off) is deferred to a later slice. |
+| Cross-tenant recall prevention | Cross-cutting; not a standalone Phase 24B surface. Enforced at every Phase 24B surface's intake under the host invariant set ([`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md) §"Host invariants" invariant 5). |
+
+### Per-surface validation-vector mapping
+
+Each Phase 24B in-slice surface is exercised by a subset of the
+Phase 24B per-vector validation matrix
+([`../specs/dixie-recall-host-validation-vectors.md`](../specs/dixie-recall-host-validation-vectors.md) §"Vector matrix"):
+
+| Vector # | Surfaces exercised | Receipt category surfaced |
+|---|---|---|
+| 1 — Class-valid carrier, policy-allowed, included | Surfaces 1, 2, 3 | `included` |
+| 2 — Class-valid carrier, policy-excluded | Surfaces 1, 3 | `excluded` |
+| 3 — Class-valid carrier, privacy-redacted | Surfaces 1, 3, 4 | `redacted` |
+| 4 — Contested assertion marked | Surfaces 1, 3 | `challenged` |
+| 5 — Revoked assertion excluded | Surfaces 1, 3 | `revoked` |
+| 6 — Forgotten assertion excluded but auditable | Surfaces 1, 3, 5 | `excluded` (+ audit event) |
+| 7 — Cross-tenant recall refused | Surfaces 1, 2, 4, 5, 6 | `blocked-by-policy` |
+| 8 — Denied private-in-public | Surfaces 1, 3, 4 | `blocked-by-policy` or `redacted` |
+| 9 — Signer not competent for `RecallRequest` envelope | — (not in slice; `keyring_validation` lane; not exercised by Phase 24B per ADR-024D §3.b) | — |
+| 10 — `EstateTransition` on the wire | — (gate; not exercised) | — |
+| 11 — `safeCanonicalize` on the wire | — (gate; not exercised) | — |
+
+### Phase 24B refresh non-scope
+
+- **No edits to the existing Phase 12 mapping rows above.**
+  Append-only.
+- **No additional Phase 12 surfaces added or removed.** Phase 24B
+  narrows the MVP slice via this mapping; the Phase 12 packet's
+  full surface set remains in this doc for a later slice.
+- **No schema authoring.**
+- **No `package.json` change.**
+- **No sibling-repo edits.**
+- **No GitHub issue / comment / PR.**
+- **No `Challenge` / `EstateTransition` / `safeCanonicalize` /
+  `AuditEvent`-rename adoption.**
+- **No `0xhoneyjar:straylight:*` prefix family adoption** or
+  `recall-wedge` conformance category adoption.
+- **No Hounfour five-step corpus import.**
+- **No Hounfour `main` / commit-SHA / git-source consumption.**
+- **No `.loa/` / `.claude/` / `.beads/` / `.run/` / `.github/`
+  edits.**
+- **No commit, no push, no PR.**
+
+### Phase 24B refresh cross-references
+
+- [`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md)
+- [`../specs/dixie-recall-host-validation-vectors.md`](../specs/dixie-recall-host-validation-vectors.md)
+- [`../decisions/ADR-024E-dixie-host-mvp-wire-shape.md`](../decisions/ADR-024E-dixie-host-mvp-wire-shape.md)
+- [`../decisions/ADR-024B-mvp-host-selection.md`](../decisions/ADR-024B-mvp-host-selection.md)
+- [`../decisions/ADR-024D-phase-24b-implementation-branch.md`](../decisions/ADR-024D-phase-24b-implementation-branch.md)
+- [`./phase-24b-dixie-recall-host-plan.md`](./phase-24b-dixie-recall-host-plan.md)
+- [`./dixie-governed-recall-boundary.md`](./dixie-governed-recall-boundary.md)
+  (Phase 24B refresh appended)
+- [`./dixie-governed-recall-issue.md`](./dixie-governed-recall-issue.md)
+  (Phase 24B refresh appended)
+- [`./phase-24a-hounfour-116-intake-and-host-decision.md`](./phase-24a-hounfour-116-intake-and-host-decision.md)
+- [`./hounfour-116-merge-intake.md`](./hounfour-116-merge-intake.md)
