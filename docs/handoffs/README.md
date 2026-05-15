@@ -987,6 +987,113 @@ npm run typecheck
 npm test
 ```
 
+## Phase 24C — Dixie recall-host local scaffold packet
+
+Phase 24C is a **local additive scaffold packet** staged on the
+`phase-24c-dixie-recall-host-scaffold` branch inside
+`loa-straylight` after Phase 24B's docs/spec packet (ADR-024E +
+the two new specs + the three append-only refreshes to the
+Phase 12 Dixie handoffs + the Phase 24B summary handoff + the
+Phase 24B README index entry) merged. Phase 24C lands the
+**TypeScript host-surface scaffold** under
+[`../../src/straylight/host/`](../../src/straylight/host/) that
+expresses the six in-slice Dixie MVP host surfaces from
+[`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md)
+against the wedge's existing stable public API, plus additive
+vitest coverage exercising Phase 24B validation vectors 1–8 at
+the host inspection layer. Phase 24C is **not endpoint-wired**,
+**not runtime-wired**, **not a sibling-repo PR**, **not a
+Hounfour package bump**, **not a wedge public-API change**, and
+**not a schema authoring event**. The host module is **not**
+re-exported through
+[`../../src/straylight/index.ts`](../../src/straylight/index.ts);
+consumers must import from
+[`../../src/straylight/host/index.ts`](../../src/straylight/host/index.ts)
+directly.
+
+Phase 24C does **not** edit
+[`../../src/straylight/index.ts`](../../src/straylight/index.ts)
+or any existing wedge module under
+[`../../src/straylight/`](../../src/straylight/); does **not**
+flip a wedge import; does **not** change `package.json` /
+`package-lock.json`; does **not** consume Hounfour `main` or any
+unpublished commit; does **not** import the Hounfour `#116`
+five-step conformance corpus; does **not** adopt the
+`0xhoneyjar:straylight:*` audit-event prefix family into the
+Straylight public surface; does **not** adopt the `recall-wedge`
+Hounfour conformance category into the Straylight test suite;
+does **not** wire `loa-dixie` / `loa-finn` / `loa-freeside`;
+does **not** add an HTTP / NATS / Discord / Telegram surface;
+does **not** publish a public commitment root; does **not**
+advance any ADR-022E gate; and does **not** touch `.loa/` /
+`.claude/` / `.beads/` / `.run/` / `.github/`. It does **not**
+commit and does **not** open a PR.
+
+| Document / artifact | Purpose |
+|---|---|
+| [`phase-24c-dixie-recall-host-scaffold.md`](./phase-24c-dixie-recall-host-scaffold.md) | Phase 24C summary handoff: executive summary (local additive scaffold; six host surfaces; vectors 1–8 in slice; vector 9 cross-reference only; vectors 10/11 remain gates; tenant resolver is REQUIRED with no production default; host barrel NOT re-exported through wedge public API; no Hounfour-#116 adoption; no sibling-repo wiring; no endpoint), what this packet ships (10 source files under `src/straylight/host/` + 6 test files under `tests/` + this doc + this README row; **no** fixture / script / package change; **no** edits to existing wedge modules), architecture summary (wedge → host one-way dependency; host barrel local-only), intentional deviations from the Phase 24B spec (3 documented: Surface 1 denied/needs_review carry no synthesised RecallReceipt; Surface 3 aggregate-by-reason for excluded/redacted with per-assertion granularity only on marked[]; Surface 6 surfaces both spec 2-key `by_privacy_scope` AND raw `_widened_privacy_scope` 4-key map), vector mapping pin (each Phase 24B vector 1–8 → host test file + surface(s) + receipt category), validation evidence (`npm run typecheck` clean; `npm test` 720 passed; phase-24c-host-only run 55 passed; regression-pin run 107 passed), open questions / followups (no wedge `tenant_id` field; `HostFrame` narrower than wedge `EnvironmentFrame`; demo evidence deferred; `review_queue_id` is a deterministic placeholder), explicit non-scope (all forbidden paths preserved), cross-references. |
+| [`../../src/straylight/host/types.ts`](../../src/straylight/host/types.ts) | Per-surface TypeScript request/response shapes for the six MVP surfaces + `HostFrame` / `HostCaller` / `DeniedReason` / `ExclusionReason` enums. NO schema; no `$id`; no validator. |
+| [`../../src/straylight/host/tenancy.ts`](../../src/straylight/host/tenancy.ts) | `TenantResolver` contract + `checkSameTenant` primitive. NO production default resolver — callers MUST inject explicitly; ambiguity (resolver returns `undefined`) fails closed with `tenant_resolution_failed`. |
+| [`../../src/straylight/host/intake-log.ts`](../../src/straylight/host/intake-log.ts) | In-memory host-side intake-deny log for vectors 7 / 8. Per-tenant view via `listForTenant`; cross-tenant chain links forbidden. Content-addressed entry ids. |
+| [`../../src/straylight/host/intake.ts`](../../src/straylight/host/intake.ts) | **Surface 1** — Recall intake & response (`handleRecallIntake`). Cross-tenant intake guard; delegates to wedge `executeRecall`; maps `RecallOutcome` → served / denied / needs_review with classified `DeniedReason`. Denied path never carries synthesised pack/receipt. |
+| [`../../src/straylight/host/receipt.ts`](../../src/straylight/host/receipt.ts) | **Surface 2** — Receipt retrieval & display (`handleReceiptRetrieval`). Returns wedge's persisted receipt verbatim; detail-level redaction stays wedge-applied. Cross-tenant lookup → intake-deny log entry + `cross_tenant_refused`. |
+| [`../../src/straylight/host/exclusion.ts`](../../src/straylight/host/exclusion.ts) | **Surface 3** — Excluded-assertion reason display (`handleExclusionDisplay`). Pure render over `RecallPack.excluded_summary[]` / `redacted[]` / `marked[]`; wedge reasons classified into the six-receipt-category enum from ADR-020D §6 with verbatim `raw_reason` preserved for trace. |
+| [`../../src/straylight/host/provenance.ts`](../../src/straylight/host/provenance.ts) | **Surface 4** — Provenance inspection (`handleProvenanceWalk`). Walks `Assertion.provenance[]`; refuses `actor_private` parent under `public_discord` caller frame; refuses `sealed` parent regardless of frame; never synthesises provenance for unknown assertions. |
+| [`../../src/straylight/host/audit-lookup.ts`](../../src/straylight/host/audit-lookup.ts) | **Surface 5** — Audit-chain lookup (`handleAuditChainLookup`). Surfaces wedge's `AuditLog.verifyChain` outcome; on break, returns events up to break + `break_index` + `break_reason`; never hides a break. ADR-022E gate #5 unchanged — `AuditEvent` not renamed. |
+| [`../../src/straylight/host/estate-summary.ts`](../../src/straylight/host/estate-summary.ts) | **Surface 6** — Estate summary (`handleEstateSummary`). Wedge 4-key `PrivacyScope` projects to spec 2-key `by_privacy_scope` (`public + tenant → public_discord`; `actor_private + sealed → actor_private`); frame discipline (zero `actor_private` under `public_discord` caller frame) applied to the 2-key shape; raw 4-key map surfaced under `_widened_privacy_scope` for trace. |
+| [`../../src/straylight/host/index.ts`](../../src/straylight/host/index.ts) | Local barrel. **NOT re-exported through `../../src/straylight/index.ts`** (the wedge public API). Wedge does not import host. |
+| [`../../tests/phase-24c-host-surface-shape.test.ts`](../../tests/phase-24c-host-surface-shape.test.ts) | Surface-shape pin: six handlers + helpers exported from host barrel; wedge public surface does NOT re-export host symbols; wedge 11-section public API preserved; no forbidden imports under `src/straylight/host/` (no `loa-dixie` / `loa-finn` / `loa-freeside` / `@0xhoneyjar/loa-hounfour` / `hounfour-alias`); wedge does not import host. |
+| [`../../tests/phase-24c-host-vectors-1-to-3.test.ts`](../../tests/phase-24c-host-vectors-1-to-3.test.ts) | Vectors 1 / 2 / 3 at the host inspection layer. |
+| [`../../tests/phase-24c-host-vectors-4-to-6.test.ts`](../../tests/phase-24c-host-vectors-4-to-6.test.ts) | Vectors 4 / 5 / 6 — including Vector 6 via the wedge's real forget transition so the audit chain carries `assertion_forgotten_from_recall`. |
+| [`../../tests/phase-24c-host-vectors-7-to-8.test.ts`](../../tests/phase-24c-host-vectors-7-to-8.test.ts) | Vectors 7 / 8 — cross-tenant refusal across S1 / S2 / S4 / S5 / S6; intake-deny log entry on caller tenant only; private-in-public denial. |
+| [`../../tests/phase-24c-host-fail-closed.test.ts`](../../tests/phase-24c-host-fail-closed.test.ts) | Unknown ids → typed refusals; resolver `undefined` → `tenant_resolution_failed`; out-of-enum frame → `frame_unsupported`; sealed parent → `privacy_scope_refusal`; storage throw → `storage_unavailable`; tampered audit chain → `outcome: 'broken'`; denied intake never carries pack/receipt. |
+| [`../../tests/phase-24c-host-intake-log.test.ts`](../../tests/phase-24c-host-intake-log.test.ts) | Per-tenant `listForTenant` scoping; content-addressed entry ids; vector-7 cross-tenant intake records on caller tenant only; wedge `recall_denied` audit_event_id captured in `wedge_audit_event_ref`. |
+
+The Phase 24C packet consumes the Phase 24B summary handoff
+([`phase-24b-dixie-recall-host-plan.md`](./phase-24b-dixie-recall-host-plan.md)),
+the Phase 24B decision-lock
+([`../decisions/ADR-024E-dixie-host-mvp-wire-shape.md`](../decisions/ADR-024E-dixie-host-mvp-wire-shape.md)),
+the two Phase 24B specs
+([`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md),
+[`../specs/dixie-recall-host-validation-vectors.md`](../specs/dixie-recall-host-validation-vectors.md)),
+the four Phase 24A ADRs (ADR-024A through ADR-024D), the
+Phase 24A summary handoff and per-component intake doc, the
+Phase 23A MVP schema-contract draft, the Phase 22A MVP
+decision-lock series, the Phase 21B schema-readiness lock, the
+Phase 19A upstream-review packet (pending feedback gate still
+pending; not satisfied by Phase 24C), the Phase 12 Dixie packet
+(unchanged by Phase 24C), the Phase 10 Finn packet (preserved
+unchanged), the Phase 14 Freeside packet (preserved unchanged),
+the existing Recall Wedge implementation under
+[`../../src/straylight/`](../../src/straylight/) (read-only —
+the host scaffold imports the wedge public API; the wedge does
+NOT import the host), the existing wedge tests (unchanged by
+Phase 24C; all preserved and passing), and the existing
+Phase 12 fixtures under
+[`../../fixtures/dixie-governed-recall/`](../../fixtures/dixie-governed-recall/)
+(unchanged — Phase 24C adds no fixture). It produces this
+summary handoff, the 10 source files under
+[`../../src/straylight/host/`](../../src/straylight/host/), the
+6 additive tests under [`../../tests/`](../../tests/), and this
+README index entry. It produces no new fixture, no new script,
+no `package.json` / `package-lock.json` change, no edit to any
+existing wedge source / test file, no new sibling-repo handoff
+packet, and no GitHub-side action. All Phase 9 / 10 / 12 / 14 /
+15 / 19A / 20 / 21B / 22A / 23A / 24A / 24B in-repo rows above
+are unchanged by Phase 24C.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+npx vitest run tests/phase-24c-host*.test.ts
+npx vitest run tests/phase-5-hardening.test.ts \
+                tests/phase-20b-recall-wedge-local-scaffold.test.ts \
+                tests/storage-conformance.test.ts \
+                tests/dixie-governed-recall-handoff.test.ts
+```
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
