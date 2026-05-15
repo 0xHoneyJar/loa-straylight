@@ -906,7 +906,8 @@ The per-surface contract is docs-locked in
 The per-vector validation matrix the host must distinguish is
 docs-locked in
 [`../specs/dixie-recall-host-validation-vectors.md`](../specs/dixie-recall-host-validation-vectors.md)
-(Phase 23A vectors 1–9 reframed at the host inspection layer;
+(Phase 23A vectors 1–8 reframed at the host inspection layer;
+vector 9 not in slice / cross-reference only per ADR-024D §3.b;
 vectors 10 and 11 remain gates, not exercised).
 
 ### What Phase 24B changes
@@ -988,8 +989,10 @@ The next implementation branch after Phase 24B is named
 next implementation branch." Its allowable scope is the union of
 ADR-024D §3 (local additive scaffolding inside `loa-straylight`
 only) and the Phase 24B docs-locked wire-shape (additive host
-surfaces against vectors 1–9; additive tests; additive
-fixtures; additive docs). Its hard non-scope inherits ADR-024D
+surfaces against vectors 1–8 — vector 9 not in slice /
+cross-reference only per ADR-024D §3.b; vectors 10–11 remain
+gates; additive tests; additive fixtures; additive docs). Its
+hard non-scope inherits ADR-024D
 §4 in full and adds Phase 24B-specific refusals (no `RecallPack`
 / `RecallReceipt` production outside the wedge runtime; no
 host-side `dispositionFor`; no `executeRecall` ahead of policy
