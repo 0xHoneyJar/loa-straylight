@@ -786,6 +786,117 @@ npm run typecheck
 npm test
 ```
 
+## Phase 24A — Hounfour #116 intake + next-host decision packet
+
+Phase 24A is a **narrow, in-repo intake + decision-lock packet**
+staged on the `phase-24a-hounfour-recall-wedge-intake` branch
+inside `loa-straylight` after Hounfour PR
+[`0xHoneyJar/loa-hounfour#116`](https://github.com/0xHoneyJar/loa-hounfour/pull/116)
+merged to Hounfour `main`. PR #116 is a Hounfour-side substrate
+event: it registered the `0xhoneyjar:straylight:*` audit-event
+prefix family upstream, registered `recall-wedge` as a
+conformance category upstream, added an upstream
+`docs/architecture/recall-wedge-composition.md`, added a five-step
+recall-wedge conformance corpus upstream, added recall-wedge
+vector tests upstream, and regenerated the Hounfour
+`schema/dist/release-integrity` outputs — while preserving the
+Hounfour boundary explicitly (schema / protocol / conformance
+only, no Straylight runtime wired upstream). Phase 24A intakes
+that substrate event, updates the Hounfour dependency / status
+ledger, pins the resulting package-release ambiguity discipline,
+places the next MVP host (Dixie-first, recall-pack-inspection-
+first), and scopes the next implementation branch
+(`phase-24b-*`, local additive scaffolding only) — **without
+authoring any schema, fixture, or test, without flipping any
+import, and without bumping the Hounfour dependency range**.
+Phase 24A is **intake + decision-lock only** — it is **not
+endpoint-wired**, **not runtime-wired**, **not the full Recall
+Wedge**, **not governed recall in Finn / Dixie / Freeside
+runtime**, **not Hounfour-side schema work**, **not Hounfour
+`main` consumption**, and **not schema-authoring**. **No
+endpoint / runtime integration is authorized by this packet, no
+schema is authored, and no Hounfour dependency-range bump is
+performed.**
+
+Phase 24A does **not** flip any wedge import, change
+`package.json` / `package-lock.json`, change the Hounfour
+dependency range or resolved patch, consume Hounfour `main` or
+any unpublished commit, modify [`../../src/straylight/`](../../src/straylight/),
+modify any script under [`../../scripts/`](../../scripts/), wire
+any sibling-repo runtime, add a Dixie endpoint, add a Finn
+endpoint, edit any sibling repo, implement `Challenge` locally,
+implement `EstateTransition` locally, reach into unexported
+Hounfour internals (including internals that only exist on
+`main`), add a `safeCanonicalize` subpath import, publish a
+public commitment root, add a network surface, change
+persistence, add or modify any test, add or modify any fixture,
+author any TypeBox / JSON Schema, **file** any GitHub issue or
+comment, or touch `.loa/` / `.claude/`. It does **not** commit
+and does **not** open a PR.
+
+| Document | Purpose |
+|---|---|
+| [`phase-24a-hounfour-116-intake-and-host-decision.md`](./phase-24a-hounfour-116-intake-and-host-decision.md) | Phase 24A summary handoff: executive summary (intake + decision-lock only; Dixie-first host placed; package-release ambiguity disciplined; Phase 24B scope defined as local additive scaffolding only; no endpoint / runtime / schema-authoring authorized), v8.6-plus-#116 inherited state recap, Hounfour dependency / status ledger (one-line view), blockers vs non-blockers tables (four runtime-integration blockers; six non-blocking discovery notes), next-phase recommendation (`phase-24b-*` allowable scope + hard non-scope; behavior if a Hounfour release publishes #116 outputs mid-Phase-24B; behavior if Phase 19A feedback for issue #70 arrives), Phase 24 entry / non-go conditions, explicit non-scope, what this packet does *not* claim, validation evidence (`npm run typecheck`, `npm test`). |
+| [`hounfour-116-merge-intake.md`](./hounfour-116-merge-intake.md) | Phase 24A per-component intake doc: records the merge event of `0xHoneyJar/loa-hounfour#116`, per-component summary of what #116 added Hounfour-side (registered `0xhoneyjar:straylight:*` audit-event prefix family; registered `recall-wedge` conformance category; added `docs/architecture/recall-wedge-composition.md` upstream; added the five-step recall-wedge conformance corpus; added the recall-wedge vector tests; regenerated `schema/dist/release-integrity` outputs), Hounfour boundary preservation note (schema / protocol / conformance only — no Straylight runtime wired upstream), Hounfour dependency / status ledger (21-row table updated for Phase 24A), package-release ambiguity (Hounfour `main` may include #116 before a GitHub Packages release exists), anti-collapse rules preserved, and what this intake does *not* claim. |
+| [`../decisions/ADR-024A-hounfour-116-substrate-intake.md`](../decisions/ADR-024A-hounfour-116-substrate-intake.md) | Phase 24A substrate-intake decision-lock: reaffirms Loa-Straylight as semantic / control-plane owner post-#116; pins that the `0xhoneyjar:straylight:*` audit-event prefix family is Straylight-owned even though registered upstream; pins that the `recall-wedge` conformance category is Straylight-defined even though registered upstream; pins that the Hounfour five-step conformance corpus is upstream test substrate, not Straylight runtime substrate; preserves all anti-collapse rules (class-vs-policy, receipt-or-audit, Hounfour-substrate-not-owner, `PolicyDecision`-wedge-only, no-reach-into-unexported-internals, no-silent-adoption); ADR-022E gates #1 / #2 / #4 / #5 unchanged. |
+| [`../decisions/ADR-024B-mvp-host-selection.md`](../decisions/ADR-024B-mvp-host-selection.md) | Phase 24A MVP host selection: tightens ADR-022B's criteria + preference (Dixie default; Finn fallback) into a **placement** — Dixie-first (recall-pack-inspection-first). Rationale: the next Straylight slice is governed recall / recall-pack inspection / provenance / receipt behavior, not runtime action enforcement; the recall-pack-inspection MVP shape is shape (b) under ADR-022B criterion #2 and satisfies all seven ADR-022B criteria without triggering ADR-022E gates #1 or #2. Finn remains the later runtime collaborator / enforcement boundary; Freeside remains the later community / app surface consumer; Hounfour remains schema / protocol / conformance substrate only. No endpoint is wired by Phase 24A. |
+| [`../decisions/ADR-024C-package-release-ambiguity.md`](../decisions/ADR-024C-package-release-ambiguity.md) | Phase 24A package-release ambiguity discipline: Straylight consumes only published GitHub Packages releases of `@0xhoneyjar/loa-hounfour`. Hounfour `main`, commit-SHA pins, git-source dependencies, and Hounfour `dist/` paths that only exist on `main` are all refused. The currently-pinned range stays `^8.6.0`; the currently-resolved patch stays `8.6.0`. Adopting #116's outputs requires three independent events (Event A: Hounfour publishes a release including the #116 outputs; Event B: a separate ADR adopts the new range; Event C: a shadow-integration check); each necessary, none sufficient. Phase 24A pre-authorizes none of them and drafts no coordination signal asking for a release. |
+| [`../decisions/ADR-024D-phase-24b-implementation-branch.md`](../decisions/ADR-024D-phase-24b-implementation-branch.md) | Phase 24A Phase 24B implementation-branch scope: defines `phase-24b-*` as **local additive scaffolding inside `loa-straylight` only**. Allowable scope: additive TypeScript types pinning the recall-pack-inspection MVP host contract; additive tests exercising vectors 1–8 of the Phase 23A eleven-vector matrix via locally-owned shapes; additive fixtures; additive docs under `docs/handoffs/` / `docs/specs/` / `docs/decisions/`; a Dixie-side handoff packet refresh (in-repo only). Hard non-scope: no `package.json` / `package-lock.json` change; no Hounfour `main` / commit-SHA / git-source consumption; no endpoint in `loa-straylight`; no sibling-repo edits; no schema authoring; no `Challenge` / `EstateTransition` / `safeCanonicalize` / `AuditEvent`-rename adoption; no public commitment-root publication; no persistence wiring beyond the MVP adapters; no adoption of the `0xhoneyjar:straylight:*` prefix family or `recall-wedge` conformance category on the strength of #116 alone; no import of the Hounfour five-step conformance corpus; no `.loa/` / `.claude/` / `.beads/` / `.run/` / `.github/` edits; no GitHub-side action. Phase 24A does **not** open `phase-24b-*`. |
+
+The Phase 24A packet consumes the Phase 23A MVP schema-contract
+draft
+([`phase-23a-mvp-schema-contract-draft.md`](./phase-23a-mvp-schema-contract-draft.md))
+and its two spec docs
+([`../specs/recall-wedge-schema-contract.md`](../specs/recall-wedge-schema-contract.md),
+[`../specs/recall-wedge-conformance-vectors.md`](../specs/recall-wedge-conformance-vectors.md)),
+the Phase 22A MVP decision-lock
+([`phase-22a-mvp-decision-lock.md`](./phase-22a-mvp-decision-lock.md))
+and its five ADRs
+([`../decisions/ADR-022A-straylight-semantic-home.md`](../decisions/ADR-022A-straylight-semantic-home.md)
+through
+[`../decisions/ADR-022E-phase-22-deferred-features.md`](../decisions/ADR-022E-phase-22-deferred-features.md))
+that constrain Phase 24's allowable shapes, the Phase 22A drafted
+Hounfour status comment
+([`hounfour-v86-status-comment-draft.md`](./hounfour-v86-status-comment-draft.md))
+filed by the user before Phase 23A as a separate human-reviewed
+event (the filed comment remains an open status request, not an
+answer to the Phase 19A pending feedback gate), the Phase 21B
+schema-readiness lock
+([`phase-21b-v86-schema-readiness-lock.md`](./phase-21b-v86-schema-readiness-lock.md)),
+the Phase 21A v8.6.x shadow-inspection output
+([`hounfour-v86-shadow-inspection-output.txt`](./hounfour-v86-shadow-inspection-output.txt)),
+the Phase 19A upstream-review packet
+([`hounfour-v850-shadow-review-packet.md`](./hounfour-v850-shadow-review-packet.md))
+that pins the load-bearing pending feedback gate this packet
+does not satisfy, the Phase 16 / 17B intake precedents
+([`hounfour-adaptation-delta.md`](./hounfour-adaptation-delta.md),
+[`hounfour-response-intake.md`](./hounfour-response-intake.md),
+[`hounfour-rc-shadow-integration-checklist.md`](./hounfour-rc-shadow-integration-checklist.md),
+[`hounfour-shadow-integration-findings.md`](./hounfour-shadow-integration-findings.md))
+that Phase 24A inherits the boundary discipline from, the
+Phase 20A decision-lock packet and the five ADR-020-series
+decision-locks under [`../decisions/`](../decisions/), the
+class-vs-policy boundary doc
+([`../schema-candidates/class-vs-policy-boundary.md`](../schema-candidates/class-vs-policy-boundary.md))
+that pins the per-lane separation Phase 24A reuses, and the
+existing Recall Wedge implementation under
+[`../../src/straylight/`](../../src/straylight/) (read-only). It
+produces this summary handoff, the per-component intake doc, the
+four Phase 24A ADRs, and this README index entry. It produces no
+fixture changes, no runtime changes, no script changes, no test
+additions, no package changes, no new spec doc, no new
+sibling-repo handoff packet, and no GitHub-side action. The four
+filed sibling-repo issue rows above (Hounfour / Finn / Dixie /
+Freeside) and the prior Phase 20A / 20B / 20C / 20D / 20E / 21B /
+22A / 23A in-repo rows are unchanged by Phase 24A.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+```
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
