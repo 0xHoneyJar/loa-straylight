@@ -1374,6 +1374,120 @@ Phase 24E post-merge baseline; empty `git diff` for `src/`,
 `tests/`, `fixtures/`, `scripts/`, `package.json`, and
 `package-lock.json`.
 
+## Phase 24G — Host package-consumption readiness plan (docs-only)
+
+Phase 24G is a **docs-only readiness handoff** staged on the
+`phase-24g-host-package-consumption-readiness-plan` branch inside
+`loa-straylight` after Phase 24F's paste-ready Dixie-side issue /
+first-PR handoff draft merged. Phase 24G records the package-
+consumption blockers that currently prevent `loa-dixie` (and any
+other consumer) from replacing its local adapter mirror with a
+real `import type { ... } from '@loa/straylight/host'`, pins a
+policy frame for exposing `./host` as a future Straylight package
+subpath, and defines the entry / non-go conditions for a later
+implementation phase that may add the minimum package / build /
+export surface required to make `@loa/straylight/host` actually
+consumable. The companion decision-lock is
+[`../decisions/ADR-024F-host-package-consumption-readiness.md`](../decisions/ADR-024F-host-package-consumption-readiness.md).
+
+Phase 24G is **not a bugfix**. It is a **public-surface /
+package-boundary decision-lock** that locks the policy frame so a
+later implementation phase has a reviewable target. Phase 24G
+does **not** edit
+[`../../package.json`](../../package.json) /
+[`../../package-lock.json`](../../package-lock.json) /
+[`../../tsconfig.json`](../../tsconfig.json) /
+[`../../vitest.config.ts`](../../vitest.config.ts) /
+[`../../.npmrc`](../../.npmrc); does **not** add an `exports`
+map, a `./host` subpath, a `types` / `typings` field, a `files`
+field, or a `build` script; does **not** emit declarations or JS
+or a `dist/` directory; does **not** un-`"private"` the package;
+does **not** publish to any registry; does **not** edit
+[`../mvp/package-boundary.md`](../mvp/package-boundary.md); does
+**not** edit any prior ADR or any prior handoff (other than this
+README index entry); does **not** edit any source under
+[`../../src/`](../../src/) (no edit to the wedge surface; no
+edit to the host scaffold; no re-export of the host barrel
+through the wedge public API); does **not** edit any test,
+fixture, or script; does **not** edit any sibling repo (no
+`loa-dixie` change; no `loa-finn` change; no `loa-freeside`
+change; no `loa-hounfour` change); does **not** file or edit any
+GitHub issue / comment / PR; does **not** bump, downgrade, or
+reconcile the Hounfour dependency range; does **not** consume
+Hounfour `main` or any unpublished commit; does **not** import
+the Hounfour `#116` five-step conformance corpus; does **not**
+adopt the `0xhoneyjar:straylight:*` audit-event prefix family
+into the Straylight public surface; does **not** adopt the
+Hounfour `recall-wedge` conformance category into the Straylight
+test suite; does **not** publish a public commitment root; does
+**not** advance any ADR-022E gate; does **not** widen vector
+scope beyond Phase 24B's vectors 1–8; does **not** request or
+run Flatline / Bridgebuilder / red-team review; and does **not**
+touch `.loa/` / `.loa.config.yaml` / `.claude/` / `.beads/` /
+`.run/` / `.github/` / `grimoires/loa/a2a/`. It does **not**
+commit and does **not** open a PR. The Phase 19A pending
+feedback gate on
+[`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70)
+remains pending and is **not** advanced by Phase 24G.
+
+| Document / artifact | Purpose |
+|---|---|
+| [`phase-24g-host-package-consumption-readiness-plan.md`](./phase-24g-host-package-consumption-readiness-plan.md) | Phase 24G handoff packet: status banner (docs-only; no source / package / test / sibling-repo / fixture / script changes; companion ADR-024F), executive summary (Dixie PR #96 landed a local adapter boundary, not real `@loa/straylight` consumption; `@loa/straylight/host` is not currently consumable because Straylight is not package-consumable yet; Phase 24G records the blockers and defines the next implementation gate), current package / export / build state (`package.json` facts: `name @loa/straylight`, `version 0.0.1`, `private: true`, `type: module`, `main` points at TS source, no `exports` map, no `types` field, no `build` script, no `dist/`, Hounfour declared at `^8.6.0`; `tsconfig.json` facts: `declaration: false`, `noEmit: true`, ESM `Bundler` resolution; source layout facts: wedge index and host barrel separate, host barrel intentionally **not** re-exported through the wedge public API per ADR-024E; package-boundary doc facts: only the wedge index named as stable), **Dixie import blocker checklist** (nine blockers, each with current state / why it blocks Dixie / required future state / Phase 24G posture: missing `exports`; missing `./host` subpath; no declaration output; no JS output / no `dist/`; source-only package entry; private package / no publish discipline; no tag/release consumption rule; public-surface widening decision; Hounfour version skew — plus a blocker summary table), package-boundary implications (`./host` not snuck into public surface; host subpath is a deliberate future surface; wedge public API unchanged; one-way wedge↔host dependency preserved), Dixie follow-up implication (PR #96 remains correct as a pre-consumption adapter boundary; future Dixie PR may replace local mirrors only after Phase 24H-like package-readiness lands; Dixie Issue #95 remains partially satisfied, not fully completed, until actual dependency wiring happens), validation baseline (`npm run typecheck`, `npm test`, forbidden-path diff empty), explicit non-scope (no `package.json` / `package-lock.json` / `tsconfig.json` / `vitest.config.ts` / `.npmrc` edit; no source / test / fixture / script edit; no `package-boundary.md` edit; no prior ADR / prior handoff edit; no sibling-repo edit; no `npm install` / `npm update` / `npm ci` / `npm publish` / `npm pack`; no Hounfour bump or adoption; no `#116` corpus import; no `0xhoneyjar:straylight:*` adoption; no `recall-wedge` category adoption; no endpoint; no public commitment root; no ADR-022E gate advance; no vector 9 / 10 / 11 widening; no rendering implementation; no Flatline / Bridgebuilder request), open questions / follow-ups (exact Phase 24H branch name not pinned; declaration-only vs declarations-plus-JS choice deferred; private-package-with-tag-pin vs GitHub-Packages-publishing choice deferred; Dixie / Hounfour skew resolution deferred to follow-up phase's opening doc; future `package-boundary.md` update for `./host` deferred; one-way wedge↔host dependency guard implementation shape deferred; Hounfour `#70` pending and not advanced), cross-references. |
+| [`../decisions/ADR-024F-host-package-consumption-readiness.md`](../decisions/ADR-024F-host-package-consumption-readiness.md) | Phase 24G decision-lock: Status (Accepted-for-Phase-24G; docs-only readiness; no implementation), Context (eleven independently-load-bearing facts pinning why `@loa/straylight/host` is not currently consumable), **Decision** (seven rules: do not implement in Phase 24G; treat `./host` exposure as public-surface widening; require a follow-up implementation phase before any consumer can `import type` from `@loa/straylight/host`; keep wedge and host entrypoints separate with strictly one-way dependency; future consumption must be tag-pinned or release-pinned; do not resolve Dixie / Hounfour skew by downgrading Straylight or consuming Hounfour `main`; do not adopt `#116` / `0xhoneyjar:straylight:*` / `recall-wedge` as part of package-readiness), Recommended future implementation posture (advisory: branch named "Phase 24H or later"; prefer ESM-only; prefer declaration-only emission if first consumer's need is type-only; runtime JS emission is strictly larger widening; preserve `"private": true` with tag-pin OR un-private with GitHub Packages, no hybrid; preserve one-way wedge↔host dependency via automated guard), Hounfour version-skew stance (Straylight `^8.6.0` floor unchanged; Dixie's older pin acknowledged; three acceptable postures for follow-up phase: Dixie bumps to match, Straylight raises floor under ADR-024C discipline, or both sides hold under explicit duplicate-Hounfour isolation; silent duplicate Hounfour resolution non-conforming), Future Phase 24H entry conditions (ADR-024F merged; Phase 24G handoff merged; package / export / build scope explicitly approved; no sibling-repo wiring in same PR; no Dixie dependency flip until Straylight package output is testable), Future Phase 24H non-goals (no Dixie / Finn / Freeside / Hounfour edits; no Hounfour bump; no Hounfour `main` / unpublished consumption; no `#116` corpus import; no `0xhoneyjar:straylight:*` adoption; no `recall-wedge` category adoption; no vector 9; no vectors 10–11; no public commitment root; no endpoint; no runtime Dixie wiring), Consequences (Dixie PR #96 local mirrors remain transitional; `@loa/straylight/host` remains unavailable until package-readiness implementation phase lands; package-readiness is now explicit and reviewable; wedge public surface unchanged; ADR-024F supersedes nothing, additive to ADR-024A through ADR-024E), Non-scope, Source files inspected. |
+
+The Phase 24G packet consumes the Phase 24F summary handoff
+([`phase-24f-dixie-host-issue-draft.md`](./phase-24f-dixie-host-issue-draft.md)),
+the Phase 24E summary handoff
+([`phase-24e-dixie-host-handoff-packet.md`](./phase-24e-dixie-host-handoff-packet.md)),
+the Phase 24D summary handoff
+([`phase-24d-host-scaffold-hardening.md`](./phase-24d-host-scaffold-hardening.md)),
+the Phase 24C summary handoff
+([`phase-24c-dixie-recall-host-scaffold.md`](./phase-24c-dixie-recall-host-scaffold.md)),
+the Phase 24B summary handoff
+([`phase-24b-dixie-recall-host-plan.md`](./phase-24b-dixie-recall-host-plan.md)),
+the Phase 24A summary handoff
+([`phase-24a-hounfour-116-intake-and-host-decision.md`](./phase-24a-hounfour-116-intake-and-host-decision.md)),
+the Phase 24A ADR series (ADR-024A through ADR-024D), the
+Phase 24B decision-lock
+([`../decisions/ADR-024E-dixie-host-mvp-wire-shape.md`](../decisions/ADR-024E-dixie-host-mvp-wire-shape.md)),
+the Phase 24B specs
+([`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md),
+[`../specs/dixie-recall-host-validation-vectors.md`](../specs/dixie-recall-host-validation-vectors.md)),
+the Phase 5 stable-surface freeze
+([`../mvp/package-boundary.md`](../mvp/package-boundary.md), read-
+only — Phase 24G does not edit it), and the current
+[`../../package.json`](../../package.json) /
+[`../../tsconfig.json`](../../tsconfig.json) /
+[`../../src/straylight/index.ts`](../../src/straylight/index.ts) /
+[`../../src/straylight/host/index.ts`](../../src/straylight/host/index.ts)
+state (read-only — Phase 24G touches no source or config). It
+produces this single summary handoff, the companion ADR-024F,
+and this README index entry. It produces no new fixture, no new
+script, no `package.json` / `package-lock.json` change, no edit
+to any existing wedge or host source / test file, no append to
+any prior handoff packet (the Phase 12 docs already carry
+Phase 24B + Phase 24E refreshes; Phase 24G does **not** add a
+third refresh), no new sibling-repo handoff packet, and no
+GitHub-side action. All Phase 9 / 10 / 12 / 14 / 15 / 19A / 20 /
+21B / 22A / 23A / 24A / 24B / 24C / 24D / 24E / 24F in-repo rows
+above are unchanged by Phase 24G.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+git status --short
+git diff --stat
+git diff -- src/ tests/ fixtures/ scripts/ package.json package-lock.json tsconfig.json vitest.config.ts .npmrc
+```
+
+Expected: `npm run typecheck` clean; `npm test` identical to the
+Phase 24F post-merge baseline; empty `git diff` for `src/`,
+`tests/`, `fixtures/`, `scripts/`, `package.json`,
+`package-lock.json`, `tsconfig.json`, `vitest.config.ts`, and
+`.npmrc`.
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
