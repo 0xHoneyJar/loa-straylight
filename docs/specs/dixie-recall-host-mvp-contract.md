@@ -553,6 +553,136 @@ implements. Per ADR-024D §3.d and ADR-024E:
   edits.**
 - **No commit, no push, no PR.**
 
+## Phase 24D — Host scaffold hardening addendum
+
+> Status: Phase 24D, additive over the Phase 24C scaffold. Six
+> non-blocking concerns surfaced by the Phase 24C read-only review
+> are pinned here. Every item in this addendum is implemented in the
+> existing host scaffold under
+> [`../../src/straylight/host/`](../../src/straylight/host/) and
+> covered by the test pin
+> [`../../tests/phase-24d-host-hardening.test.ts`](../../tests/phase-24d-host-hardening.test.ts).
+> The addendum changes **no** surface request/response shape and
+> introduces **no** new wedge primitive. It tightens the existing
+> fail-closed posture each surface already carries.
+>
+> Phase 24D is in-repo only. It does **not** open a sibling-repo
+> PR, **not** adopt `0xhoneyjar:straylight:*`, **not** import the
+> Hounfour `recall-wedge` conformance category, **not** advance any
+> ADR-022E gate, and **not** add an HTTP / REST / NATS / Discord /
+> Telegram surface. The host barrel remains intentionally NOT
+> re-exported through the wedge's public API
+> ([`../../src/straylight/index.ts`](../../src/straylight/index.ts)).
+
+### Tenancy (Phase 24D hardening)
+
+`checkSameTenant` ([`../../src/straylight/host/tenancy.ts`](../../src/straylight/host/tenancy.ts))
+fails closed when either input that names a tenant is the empty
+string:
+
+- An empty `callerTenant` returns `{ ok: false, reason:
+  'tenant_unresolved' }` **before** the resolver is consulted. A
+  buggy caller cannot smuggle a blank tenant past the check on a
+  resolver that happens to return `""`.
+- An empty resolver result (`''`) is treated identically to
+  `undefined`: not a valid tenant slug, never a match.
+
+Both checks emit the existing `tenant_unresolved` reason; no new
+reason string is introduced. Surfaces 1, 2, 4, 5, 6 all inherit
+the tightened behaviour through their existing `checkSameTenant`
+call.
+
+### Surface 4 — tenant-scoped parent under public_discord (Phase 24D hardening)
+
+`handleProvenanceWalk`
+([`../../src/straylight/host/provenance.ts`](../../src/straylight/host/provenance.ts))
+refuses with `privacy_scope_refusal` when:
+
+- the parent assertion's `privacy_scope` is `tenant`, **and**
+- the caller's `frame` is `public_discord`.
+
+This matches the wedge's existing `privacy_tenant_in_public_frame`
+redaction discipline (see
+[`./recall-wedge-schema-contract.md`](./recall-wedge-schema-contract.md)).
+The host MUST NOT leak tenant-scoped provenance through Surface 4
+where the wedge would have redacted the same material on Surface
+1. Under the `actor_private` frame, the same tenant-scoped parent
+walk remains permitted (the wedge does not redact tenant-scoped
+material there). The response-shape `reason` enum already
+contains `privacy_scope_refusal`; Phase 24D introduces no new
+reason string.
+
+### Surface 6 — optional intake-deny log on cross-tenant refusal (Phase 24D hardening)
+
+`handleEstateSummary`
+([`../../src/straylight/host/estate-summary.ts`](../../src/straylight/host/estate-summary.ts))
+gains an **optional** `intakeLog?: IntakeDenyLog` dependency. When
+provided, a cross-tenant target refusal appends an entry on the
+caller's tenant (matching the Surface 1 / 2 / 4 discipline). When
+the dependency is omitted, the refusal still surfaces in the
+response under the existing
+`{ outcome: 'refused', reason: 'cross_tenant_refused' }` shape —
+Phase 24C call sites continue to compile and behave identically.
+
+The intake-deny entry payload carries:
+
+- `caller_tenant`, `caller_actor_id` (per host-invariant #5, the
+  entry is scoped to the caller's tenant; cross-tenant chain
+  links remain forbidden);
+- `target_estate_id`, `target_actor_id` (the cross-tenant target
+  of the refusal);
+- `reason: 'cross_tenant_estate_summary'` or
+  `'tenant_resolution_failed'` depending on the
+  `checkSameTenant` outcome;
+- `ts` (the dep-provided logical now).
+
+### Surface 1 — `needs_review` is not a denial (Phase 24D clarification)
+
+`handleRecallIntake`
+([`../../src/straylight/host/intake.ts`](../../src/straylight/host/intake.ts))
+documents inline that a `needs_review` outcome from the wedge is
+NOT a denial: the host issues a deterministic review queue handle
+and writes **no** intake-deny log entry. The intake-deny log is
+reserved for refusals (cross-tenant, frame, storage, wedge-side
+deny). If a human reviewer later denies the queued request, the
+denial event lives in the wedge's own audit chain — not in this
+host's intake-deny log.
+
+### Surface 3 — unknown wedge exclusion reason is safe-default (Phase 24D clarification)
+
+`classifyExclusionReason`
+([`../../src/straylight/host/exclusion.ts`](../../src/straylight/host/exclusion.ts))
+maps any wedge exclusion reason it does not recognise to the
+generic `excluded` bucket and preserves the verbatim wedge string
+in `raw_reason`. This is fail-closed in the sense that an
+unrecognised reason can never become `included`; it is also
+intentionally distinct from the other branches so a future wedge
+reason surfaces here without being silently absorbed by a more
+specific prefix match. The host has no authority to re-classify
+an unknown reason into a narrower category (`revoked` /
+`challenged`) — that classification is the wedge's, not the
+host's.
+
+### Phase 24D non-scope
+
+This addendum makes the same Phase 24A / 24B / 24C non-scope
+inheritance explicit:
+
+- **No new surface, no new request/response shape.**
+- **No new wedge primitive.**
+- **No re-export of `src/straylight/host/*` through
+  `src/straylight/index.ts`.**
+- **No HTTP / REST / NATS / Discord / Telegram surface added.**
+- **No sibling-repo edit.** No Hounfour `#116` adoption, no
+  Hounfour main / commit-SHA / corpus import, no
+  `0xhoneyjar:straylight:*` prefix family adoption, no
+  `recall-wedge` conformance category adoption.
+- **No ADR-022E gate advanced.**
+- **No `.loa/` / `.loa.config.yaml` / `.claude/` / `.run/` /
+  `.github/` edits.**
+- **No fixture / script / package edits.**
+- **No commit, no push, no PR by Phase 24D.**
+
 ## Cross-references
 
 - [`./recall-wedge-schema-contract.md`](./recall-wedge-schema-contract.md)

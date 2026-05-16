@@ -79,6 +79,11 @@ export function handleProvenanceWalk(
 
   // 5. Privacy-scope discipline.
   //    - `actor_private` parent + `public_discord` caller frame → refused.
+  //    - `tenant` parent + `public_discord` caller frame → refused. The
+  //      wedge already redacts tenant-scoped material under public frames
+  //      via `privacy_tenant_in_public_frame`; the host's Surface 4 walk
+  //      MUST match that discipline rather than leak tenant provenance
+  //      through a parallel path.
   //    - `sealed` parent → refused regardless of frame (Surface 4 is not the
   //      audit_review surface; sealed bodies never travel through it).
   const parentScope = assertion.privacy_scope ?? 'tenant';
@@ -86,6 +91,9 @@ export function handleProvenanceWalk(
     return { outcome: 'refused', reason: 'privacy_scope_refusal' };
   }
   if (parentScope === 'actor_private' && req.caller.frame === 'public_discord') {
+    return { outcome: 'refused', reason: 'privacy_scope_refusal' };
+  }
+  if (parentScope === 'tenant' && req.caller.frame === 'public_discord') {
     return { outcome: 'refused', reason: 'privacy_scope_refusal' };
   }
 

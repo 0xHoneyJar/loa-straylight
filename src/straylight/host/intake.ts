@@ -95,6 +95,14 @@ export function handleRecallIntake(
   // No real queue is wired (host is local additive scaffolding; no runtime
   // surface). The handle is content-addressed from the request id + now so
   // tests can pin it deterministically.
+  //
+  // `needs_review` is INTENTIONALLY NOT a denial. The wedge has neither
+  // denied nor served the request — it has routed it to a review queue.
+  // Per Phase 24C invariants the intake-deny log is reserved for refusals
+  // (cross-tenant, frame, storage, wedge-side deny). A `needs_review`
+  // outcome therefore writes NO intake-deny entry. If the human reviewer
+  // later denies the queued request, the denial event lives in the wedge's
+  // own audit chain — not in this host's intake-deny log.
   if (outcome.policy_decision.decision === 'needs_review') {
     const handle = contentId(
       { recall_request_id: req.request.recall_request_id, now: deps.now },
