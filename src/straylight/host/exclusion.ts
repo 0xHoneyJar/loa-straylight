@@ -81,8 +81,18 @@ function classifyExclusionReason(reason: string): ExclusionReason {
   if (reason.startsWith('provenance_')) return 'excluded';
   // Truncation exclusions.
   if (reason.startsWith('max_items_truncation')) return 'excluded';
-  // Unknown wedge reason — fall back to the safe default (still excluded
-  // from the pack, even if the host can't name the category precisely).
+  // Unknown wedge reason — intentional safe default.
+  //
+  // An assertion that appears in `excluded_summary[]` is by definition NOT
+  // in the served pack: the wedge already decided to keep it out. The host
+  // does not have authority to re-classify it into a narrower category
+  // (`revoked` / `challenged`), so it maps to the generic `excluded`
+  // bucket and preserves the verbatim wedge string in `raw_reason` for
+  // trace. This is fail-closed in the sense that an unrecognised reason
+  // can never accidentally become `included`; it is also intentionally
+  // distinct from the other branches above so a future wedge reason
+  // surfaces here without silently being absorbed by a more specific
+  // prefix match.
   return 'excluded';
 }
 

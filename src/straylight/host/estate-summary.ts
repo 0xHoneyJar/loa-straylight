@@ -17,6 +17,7 @@
 
 import type { StorageAdapter } from '../storage/types.js';
 import { checkSameTenant, type TenantResolver } from './tenancy.js';
+import type { IntakeDenyLog } from './intake-log.js';
 import type {
   EstateSummaryCounts,
   EstateSummaryRequest,
@@ -30,6 +31,13 @@ import type {
 
 export interface EstateSummaryDeps {
   tenantResolver: TenantResolver;
+  /**
+   * Optional. When provided, cross-tenant target refusals append an
+   * intake-deny entry on the caller's tenant (matching Surface 1 / 2 / 4
+   * discipline). Phase 24C callers without an `intakeLog` continue to
+   * work unchanged; the refusal still surfaces in the response.
+   */
+  intakeLog?: IntakeDenyLog;
   now: string;
 }
 
@@ -85,6 +93,24 @@ export function handleEstateSummary(
   // 4. Estate tenant.
   const targetCheck = checkSameTenant(req.caller.tenant_id, estate.actor_id, deps.tenantResolver);
   if (!targetCheck.ok) {
+    // Optional intake-deny log entry on caller's tenant. Matches the
+    // discipline of Surfaces 1 / 2 / 4: cross-tenant target refusal is
+    // recorded on the caller's per-tenant trail. Callers that did not
+    // pass an `intakeLog` (Phase 24C call sites) continue to refuse
+    // without writing an entry.
+    if (deps.intakeLog) {
+      deps.intakeLog.append({
+        caller_tenant: req.caller.tenant_id,
+        caller_actor_id: req.caller.actor_id,
+        target_estate_id: req.estate_id,
+        target_actor_id: estate.actor_id,
+        reason:
+          targetCheck.reason === 'tenant_unresolved'
+            ? 'tenant_resolution_failed'
+            : 'cross_tenant_estate_summary',
+        ts: deps.now,
+      });
+    }
     return {
       outcome: 'refused',
       reason:

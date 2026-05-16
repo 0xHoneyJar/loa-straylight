@@ -1094,6 +1094,96 @@ npx vitest run tests/phase-5-hardening.test.ts \
                 tests/dixie-governed-recall-handoff.test.ts
 ```
 
+## Phase 24D — Dixie recall-host scaffold hardening packet
+
+Phase 24D is a **local additive hardening pass on top of the
+Phase 24C host scaffold** staged on the
+`phase-24d-host-scaffold-hardening-plan` branch inside
+`loa-straylight` after Phase 24C's scaffold packet merged. Phase
+24D tightens the Phase 24C scaffold under
+[`../../src/straylight/host/`](../../src/straylight/host/) along
+six non-blocking concerns surfaced by the Phase 24C read-only
+review. Phase 24D introduces **no** new host surface, **no** new
+request/response shape, **no** new wedge primitive, **no**
+fixture, **no** script, **no** `package.json` change, **no** edit
+to [`../../src/straylight/index.ts`](../../src/straylight/index.ts),
+**no** re-export of `src/straylight/host/*` through the wedge
+public API, **no** sibling-repo edit, **no** ADR-022E gate
+advance, and **no** Hounfour `#116` adoption.
+
+Phase 24D does **not** flip a wedge import; does **not** change
+`package.json` / `package-lock.json`; does **not** consume
+Hounfour `main` or any unpublished commit; does **not** import the
+Hounfour `#116` five-step conformance corpus; does **not** adopt
+the `0xhoneyjar:straylight:*` audit-event prefix family into the
+Straylight public surface; does **not** adopt the `recall-wedge`
+Hounfour conformance category into the Straylight test suite;
+does **not** wire `loa-dixie` / `loa-finn` / `loa-freeside`; does
+**not** add an HTTP / NATS / Discord / Telegram surface; does
+**not** publish a public commitment root; does **not** advance
+any ADR-022E gate; and does **not** touch `.loa/` /
+`.loa.config.yaml` / `.claude/` / `.beads/` / `.run/` /
+`.github/`. It does **not** commit and does **not** open a PR.
+
+| Document / artifact | Purpose |
+|---|---|
+| [`phase-24d-host-scaffold-hardening.md`](./phase-24d-host-scaffold-hardening.md) | Phase 24D summary handoff: executive summary (six non-blocking review concerns pinned: tenancy empty-input fail-closed; Surface 4 tenant + public_discord refusal; Surface 6 optional intake-deny log on cross-tenant refusal; Surface 1 `needs_review` is not a denial; Surface 3 unknown wedge reason → safe-default `excluded`; tightened vectors-7-to-8 receipt-not-found assertion), what this packet ships (5 source-edits under `src/straylight/host/` — `tenancy.ts`, `provenance.ts`, `estate-summary.ts`, `intake.ts`, `exclusion.ts` — plus 1 new test file `tests/phase-24d-host-hardening.test.ts`, plus the tightened `tests/phase-24c-host-vectors-7-to-8.test.ts`, plus the appended Phase 24D addendum to `docs/specs/dixie-recall-host-mvp-contract.md`, plus this doc, plus this README row; **no** fixture / script / package change; **no** new host surface, **no** new request/response shape; **no** new wedge primitive; **no** re-export of host symbols through the wedge public API), hardening concern mapping table (concern → source edit → test), architecture summary (wedge → host one-way dependency unchanged; host barrel local-only unchanged), validation evidence (`npm run typecheck` clean; `npm test` clean; Phase 24C+24D host suite + regression pin clean), open questions / followups (Surface 6 `intakeLog` remains optional; wedge-side `privacy_tenant_in_public_frame` widening would require host-side widening in lock-step; unknown wedge exclusion reason is a wedge-side code smell), explicit non-scope (all forbidden paths preserved), cross-references. |
+| [`../../src/straylight/host/tenancy.ts`](../../src/straylight/host/tenancy.ts) | **Concern 1** — `checkSameTenant` rejects empty `callerTenant` BEFORE invoking the resolver; rejects empty resolver result identically to `undefined`. Both paths emit existing `tenant_unresolved` reason. |
+| [`../../src/straylight/host/provenance.ts`](../../src/straylight/host/provenance.ts) | **Concern 2** — Surface 4 refuses `privacy_scope_refusal` when parent `privacy_scope === 'tenant'` AND caller `frame === 'public_discord'`. Aligns the host's Surface 4 with the wedge's `privacy_tenant_in_public_frame` Surface 1 redaction. The same parent under `actor_private` caller frame remains permitted. |
+| [`../../src/straylight/host/estate-summary.ts`](../../src/straylight/host/estate-summary.ts) | **Concern 3** — `EstateSummaryDeps` gains optional `intakeLog?: IntakeDenyLog`. When provided, cross-tenant target refusals append an intake-deny entry on the CALLER's tenant with `reason: 'cross_tenant_estate_summary'` (or `'tenant_resolution_failed'`). Backward-compatible without the dep. |
+| [`../../src/straylight/host/intake.ts`](../../src/straylight/host/intake.ts) | **Concern 4** — Inline documentation pinning `needs_review` is NOT a denial and writes no intake-deny entry. |
+| [`../../src/straylight/host/exclusion.ts`](../../src/straylight/host/exclusion.ts) | **Concern 5** — Inline documentation pinning unknown wedge reason → safe-default `excluded`; `raw_reason` preserved verbatim; host never re-classifies into a narrower category. |
+| [`../../tests/phase-24d-host-hardening.test.ts`](../../tests/phase-24d-host-hardening.test.ts) | New Phase 24D test pin covering concerns 1–7 (empty caller tenant; empty resolver result; Surface 4 tenant + public_discord refusal; Surface 4 tenant + actor_private permit; Surface 6 with intakeLog; Surface 6 without intakeLog; Surface 3 unknown wedge reason safe-default). |
+| [`../../tests/phase-24c-host-vectors-7-to-8.test.ts`](../../tests/phase-24c-host-vectors-7-to-8.test.ts) | **Concern 6** — Tightened Surface 2 cross-tenant assertion: previously `['unknown_receipt_id', 'cross_tenant_refused', 'tenant_resolution_failed']`; now exactly `unknown_receipt_id`. The host MUST NOT infer tenant identity from a missing record. |
+| [`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md) | Append-only "Phase 24D — Host scaffold hardening addendum" section pinning the six concerns into the contract. No edits to prior Phase 24B / 24C sections. |
+
+The Phase 24D packet consumes the Phase 24C summary handoff
+([`phase-24c-dixie-recall-host-scaffold.md`](./phase-24c-dixie-recall-host-scaffold.md)),
+the Phase 24B summary handoff
+([`phase-24b-dixie-recall-host-plan.md`](./phase-24b-dixie-recall-host-plan.md)),
+the Phase 24B decision-lock
+([`../decisions/ADR-024E-dixie-host-mvp-wire-shape.md`](../decisions/ADR-024E-dixie-host-mvp-wire-shape.md)),
+the two Phase 24B specs
+([`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md),
+[`../specs/dixie-recall-host-validation-vectors.md`](../specs/dixie-recall-host-validation-vectors.md)),
+the four Phase 24A ADRs (ADR-024A through ADR-024D), and the
+Phase 24C host scaffold under
+[`../../src/straylight/host/`](../../src/straylight/host/) and the
+six Phase 24C host tests (preserved unchanged except for the one
+tightened assertion in
+[`../../tests/phase-24c-host-vectors-7-to-8.test.ts`](../../tests/phase-24c-host-vectors-7-to-8.test.ts)
+documented above). It produces this summary handoff, the five
+source-edits enumerated above, the one new test file under
+[`../../tests/`](../../tests/), the one tightened existing test,
+the append-only Phase 24D addendum to
+[`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md),
+and this README index entry. It produces no new fixture, no new
+script, no `package.json` / `package-lock.json` change, no edit
+to any existing wedge module under
+[`../../src/straylight/`](../../src/straylight/) outside the
+host scaffold directory, no new sibling-repo handoff packet, and
+no GitHub-side action. All Phase 9 / 10 / 12 / 14 / 15 / 19A /
+20 / 21B / 22A / 23A / 24A / 24B / 24C in-repo rows above are
+unchanged by Phase 24D.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+npx vitest run tests/phase-24c-host-surface-shape.test.ts \
+                tests/phase-24c-host-vectors-1-to-3.test.ts \
+                tests/phase-24c-host-vectors-4-to-6.test.ts \
+                tests/phase-24c-host-vectors-7-to-8.test.ts \
+                tests/phase-24c-host-fail-closed.test.ts \
+                tests/phase-24c-host-intake-log.test.ts \
+                tests/phase-24d-host-hardening.test.ts
+npx vitest run tests/phase-5-hardening.test.ts \
+                tests/phase-20b-recall-wedge-local-scaffold.test.ts \
+                tests/storage-conformance.test.ts \
+                tests/dixie-governed-recall-handoff.test.ts
+```
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.

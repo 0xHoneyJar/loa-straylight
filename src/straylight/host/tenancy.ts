@@ -43,8 +43,15 @@ export function checkSameTenant(
   targetId: string,
   resolver: TenantResolver,
 ): TenantCheckResult {
+  // Empty callerTenant is unresolvable — no slug to match against. Fail
+  // closed before invoking the resolver so a buggy caller can't smuggle a
+  // blank tenant past the check on a resolver that happens to return "".
+  if (callerTenant === '') return { ok: false, reason: 'tenant_unresolved' };
   const resolved = resolver(targetId);
   if (resolved === undefined) return { ok: false, reason: 'tenant_unresolved' };
+  // Empty resolver result is treated identically to `undefined` — an empty
+  // string is not a valid tenant slug and must not match an empty caller.
+  if (resolved === '') return { ok: false, reason: 'tenant_unresolved' };
   if (resolved !== callerTenant) return { ok: false, reason: 'cross_tenant' };
   return { ok: true };
 }

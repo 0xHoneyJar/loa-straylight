@@ -103,11 +103,11 @@ describe('phase-24c vector 7 — cross-tenant recall refused', () => {
     if (r2.outcome !== 'not_found') return;
     // alice-tenant resolver returns 'alice-tenant' for callerFromAlice.actor_id,
     // matching tenant_id — so caller check passes — but the receipt is not
-    // found at storage. The fail-closed expectation is `unknown_receipt_id`
-    // (no cross-tenant inference from a missing receipt).
-    expect(['unknown_receipt_id', 'cross_tenant_refused', 'tenant_resolution_failed']).toContain(
-      r2.reason,
-    );
+    // found at storage. The fail-closed expectation is exactly
+    // `unknown_receipt_id` (no cross-tenant inference from a missing
+    // receipt; the host MUST NOT infer tenant identity from a missing
+    // record).
+    expect(r2.reason).toBe('unknown_receipt_id');
 
     // Surface 4 — cross-tenant provenance walk refuses.
     const someAssertion = store.listAssertions()[0]!;
