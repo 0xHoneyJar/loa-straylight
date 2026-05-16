@@ -1036,3 +1036,181 @@ validation; no #116 adoption; no sibling-repo wiring).
   (Phase 24B refresh appended)
 - [`./phase-24a-hounfour-116-intake-and-host-decision.md`](./phase-24a-hounfour-116-intake-and-host-decision.md)
 - [`./hounfour-116-merge-intake.md`](./hounfour-116-merge-intake.md)
+
+## Phase 24E refresh — local host scaffold ready for Dixie reading
+
+> Status: Phase 24E (append-only). This section is the **Phase 24E
+> refresh** of this Phase 12 issue handoff. It records that the
+> six in-slice surfaces Phase 24B locked, Phase 24C scaffolded
+> locally, and Phase 24D hardened are now exported handlers under
+> [`../../src/straylight/host/`](../../src/straylight/host/) and
+> are exercised by the Phase 24C + Phase 24D host suite (63 host
+> tests passed). It supplements — does **not** rewrite — the
+> Phase 12 §"Acceptance criteria" list above. Existing Phase 12
+> and Phase 24B prose is unchanged.
+>
+> Companion docs (Phase 24E):
+> [`./phase-24e-dixie-host-handoff-packet.md`](./phase-24e-dixie-host-handoff-packet.md)
+> (Phase 24E summary handoff),
+> [`./dixie-governed-recall-boundary.md`](./dixie-governed-recall-boundary.md)
+> (Phase 24E refresh appended),
+> [`./dixie-recall-mapping.md`](./dixie-recall-mapping.md)
+> (Phase 24E refresh appended),
+> [`./phase-24d-host-scaffold-hardening.md`](./phase-24d-host-scaffold-hardening.md),
+> [`./phase-24c-dixie-recall-host-scaffold.md`](./phase-24c-dixie-recall-host-scaffold.md).
+
+### Local host scaffold state (post-PR-30 snapshot)
+
+The six Phase 24B in-slice surfaces are now expressed as local
+TypeScript handlers under
+[`../../src/straylight/host/`](../../src/straylight/host/),
+exported through the local barrel
+[`../../src/straylight/host/index.ts`](../../src/straylight/host/index.ts).
+Per Phase 24C / 24D non-scope and ADR-024E, the host barrel is
+intentionally **NOT** re-exported through
+[`../../src/straylight/index.ts`](../../src/straylight/index.ts);
+a future Dixie host / BFF must import the host barrel directly.
+
+The six handler exports correspond to the six in-slice surfaces:
+
+- Surface 1 (recall intake & response) → `handleRecallIntake`
+- Surface 2 (receipt retrieval & display) → `handleReceiptRetrieval`
+- Surface 3 (excluded-assertion reason display) →
+  `handleExclusionDisplay`
+- Surface 4 (provenance inspection) → `handleProvenanceWalk`
+- Surface 5 (audit-chain lookup) → `handleAuditChainLookup`
+- Surface 6 (estate summary) → `handleEstateSummary`
+
+The per-surface module paths, dependency-interface names, typed
+refusals, and render expectations are tabulated in the Phase 24E
+refresh of [`./dixie-recall-mapping.md`](./dixie-recall-mapping.md).
+
+The Phase 24C + Phase 24D host suite (
+[`../../tests/phase-24c-host-surface-shape.test.ts`](../../tests/phase-24c-host-surface-shape.test.ts),
+[`../../tests/phase-24c-host-vectors-1-to-3.test.ts`](../../tests/phase-24c-host-vectors-1-to-3.test.ts),
+[`../../tests/phase-24c-host-vectors-4-to-6.test.ts`](../../tests/phase-24c-host-vectors-4-to-6.test.ts),
+[`../../tests/phase-24c-host-vectors-7-to-8.test.ts`](../../tests/phase-24c-host-vectors-7-to-8.test.ts),
+[`../../tests/phase-24c-host-fail-closed.test.ts`](../../tests/phase-24c-host-fail-closed.test.ts),
+[`../../tests/phase-24c-host-intake-log.test.ts`](../../tests/phase-24c-host-intake-log.test.ts),
+[`../../tests/phase-24d-host-hardening.test.ts`](../../tests/phase-24d-host-hardening.test.ts)
+)
+exercises Phase 24B vectors 1–8 at the host inspection layer and
+pins the Phase 24D hardening concerns. **63 host tests passed**
+in the Phase 24D-merged state.
+
+### What Phase 24E changes for the Dixie reader
+
+Phase 24E is **docs-only**. It does not edit the host scaffold,
+does not add a host surface, does not edit any test, does not
+add a fixture, does not change `package.json` /
+`package-lock.json`, does not edit any sibling repo, and does
+not file or open any GitHub-side action. What Phase 24E does for
+this issue handoff:
+
+1. Tells the future `loa-dixie` issue-reader that **the host
+   exists locally** as exported handlers — Dixie's job is to
+   inspect / relay / render against those handlers, not to
+   redefine them.
+2. Restates the **three Phase 24C intentional deviations** the
+   Dixie render layer must honor (no synthesised receipt on
+   Surface 1 deny / `needs_review`; aggregate-by-reason on
+   Surface 3; `_widened_privacy_scope` 4-key trace map on
+   Surface 6).
+3. Restates the **six Phase 24D hardening implications** the
+   Dixie integration layer must honor (empty-tenant
+   fail-closed; tenant-scoped parent under `public_discord`
+   refusal; optional Surface 6 intake-deny log; `needs_review`
+   is not a denial; unknown wedge reason → safe-default
+   `excluded` with verbatim `raw_reason`; tightened Surface 2
+   receipt-not-found assertion).
+4. Adds a **supplemental Dixie-side acceptance-criteria list**
+   (below) that extends — does **not** rewrite — the Phase 12
+   §"Acceptance criteria" list.
+
+### Supplemental Dixie-side acceptance criteria (Phase 24E)
+
+These criteria sit on top of the Phase 12 §"Acceptance criteria"
+list. The Phase 12 criteria remain canonical; Phase 24E adds the
+following so a reviewer can refuse a non-conforming Dixie
+integration on cite.
+
+1. **Dixie consumes host-handler outputs; Dixie does not produce
+   `RecallPack` or `RecallReceipt`.** Every Dixie render path
+   takes the corresponding Phase 24C handler's return value as
+   input. No Dixie code instantiates `RecallPack` or
+   `RecallReceipt`.
+2. **Dixie does not compute `dispositionFor`.** The wedge's
+   `dispositionFor` / `privacyDispositionForFrame` output flows
+   through the pack and Surface 3's classification. Dixie
+   renders; Dixie does not re-derive.
+3. **Dixie does not reinterpret `privacy_scope`.** Surface 6's
+   2-key projection is host-applied; Dixie's render uses the
+   host's projection unchanged. The 4-key
+   `_widened_privacy_scope` map is trace data only.
+4. **Dixie does not run `verifyChain`.** Surface 5's
+   `handleAuditChainLookup` invokes the wedge's `verifyChain`
+   through `AuditLookupDeps`; Dixie relays the outcome. Dixie
+   does not re-verify and does not hide a break.
+5. **Dixie injects tenant resolution explicitly; Dixie does not
+   infer production tenant scope silently.** A Dixie integration
+   that ships a "default tenant" fallback resolver is
+   non-conforming. Empty / `undefined` resolver result → host
+   emits `tenant_resolution_failed` → Dixie surfaces the refusal
+   verbatim.
+6. **Dixie surfaces typed refusals verbatim.** Every typed
+   refusal the host emits (`cross_tenant_recall_refused`,
+   `privacy_scope_refusal`, `tenant_resolution_failed`,
+   `frame_unsupported`, `storage_unavailable`,
+   `unknown_receipt_id`, `unknown_assertion`, `unknown_estate`,
+   `outcome: 'broken'` with `break_index`) is surfaced by Dixie
+   verbatim.
+7. **Dixie does not widen vector scope beyond Phase 24B.**
+   Vectors 1–8 in slice; vector 9 cross-reference only; vectors
+   10–11 remain ADR-022E gates. A Dixie-side feature that
+   exercises vector 9 / 10 / 11 at the host inspection layer is
+   rejected on cite.
+8. **Dixie does not adopt Hounfour `#116` output directly.** No
+   `0xhoneyjar:straylight:*` adoption into Dixie's audit-event
+   surface on the strength of `#116` alone; no `recall-wedge`
+   category adoption; no five-step corpus import; no Hounfour
+   `main` consumption. Adoption follows ADR-024C's Event A +
+   Event B + Event C plus a separate Dixie-side ADR.
+
+### Phase 24E refresh non-scope
+
+- **No edit to the Phase 12 prose above.** Existing §"Acceptance
+  criteria" / §"Background" / §"Proposed provenance and
+  inspection surfaces" / §"Proposed receipt / audit display
+  surfaces" / §"Proposed fail-closed behavior" / §"Proposed
+  tests" / §"Validation commands" / §"Risks and open questions"
+  / §"Cross-references" sections are unchanged.
+- **No edit to the Phase 24B refresh section above.**
+- **No source / test / fixture / script / package change.**
+- **No new endpoint / runtime / Hounfour adoption.** Phase 24E
+  is local docs.
+- **No sibling-repo edit, no GitHub-side action.** The Phase 19A
+  pending feedback gate on
+  [`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70)
+  remains pending; Phase 24E does not advance it.
+- **No commit, no push, no PR by Phase 24E itself.**
+
+### Phase 24E refresh cross-references
+
+- [`./phase-24e-dixie-host-handoff-packet.md`](./phase-24e-dixie-host-handoff-packet.md)
+  — Phase 24E summary handoff (this section's owning doc).
+- [`./phase-24d-host-scaffold-hardening.md`](./phase-24d-host-scaffold-hardening.md)
+  — Phase 24D summary handoff (the hardening pinned above).
+- [`./phase-24c-dixie-recall-host-scaffold.md`](./phase-24c-dixie-recall-host-scaffold.md)
+  — Phase 24C summary handoff (the scaffold pinned above).
+- [`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md)
+  — per-surface MVP host contract (Phase 24D addendum included).
+- [`../specs/dixie-recall-host-validation-vectors.md`](../specs/dixie-recall-host-validation-vectors.md)
+  — vector matrix at the host inspection layer.
+- [`../decisions/ADR-024E-dixie-host-mvp-wire-shape.md`](../decisions/ADR-024E-dixie-host-mvp-wire-shape.md)
+  — Phase 24B decision-lock Phase 24E operates under.
+- [`./dixie-governed-recall-boundary.md`](./dixie-governed-recall-boundary.md)
+  (Phase 24E refresh appended).
+- [`./dixie-recall-mapping.md`](./dixie-recall-mapping.md)
+  (Phase 24E refresh appended).
+- [`../../src/straylight/host/index.ts`](../../src/straylight/host/index.ts)
+  — canonical host barrel (post-PR-30 snapshot).
