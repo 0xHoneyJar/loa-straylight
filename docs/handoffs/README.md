@@ -1274,6 +1274,106 @@ npx vitest run tests/phase-5-hardening.test.ts \
                 tests/dixie-governed-recall-handoff.test.ts
 ```
 
+## Phase 24F — Dixie host issue / PR handoff draft (docs-only)
+
+Phase 24F is a **narrow, paste-ready Dixie-side GitHub-issue /
+first-PR handoff draft** staged on the
+`phase-24f-dixie-host-issue-draft` branch inside `loa-straylight`
+after Phase 24E's docs-only handoff packet merged. Phase 24F
+specifies the *first* future `loa-dixie` PR that consumes the
+Phase 24C/24D TypeScript host scaffold under
+[`../../src/straylight/host/`](../../src/straylight/host/) — and
+**only that first PR**. The first-PR scope is **scaffold-
+consumption-only**: the future Dixie PR imports the six host
+handler contracts, wires explicit injected dependencies
+(`TenantResolver` required; `IntakeDenyLog` optional), surfaces
+typed refusals verbatim, and preserves the Phase 24C/24D host
+semantics — **without** authoring any operator-facing rendering,
+**without** declaring any HTTP / NATS / RPC / BFF route shape as
+binding, and **without** widening vector scope beyond Phase 24B's
+vectors 1–8. Phase 24F is **narrower** than Phase 24E and cites
+Phase 24E as the authoritative source for per-surface behavior.
+Phase 24F is **not endpoint-wired**, **not runtime-wired**, **not
+a sibling-repo PR**, **not a sibling-repo issue filing**, **not a
+Hounfour package bump**, **not a wedge public-API change**, **not
+a schema authoring event**, **not a host runtime change**, **not
+a new ADR**, **not a new spec**, and **not a demo / evidence
+artifact**. It produces no Straylight recall objects, no host
+code, no test, no fixture, no script, no package change, and no
+GitHub-side action.
+
+Phase 24F does **not** flip a wedge import; does **not** change
+`package.json` / `package-lock.json`; does **not** consume
+Hounfour `main` or any unpublished commit; does **not** import
+the Hounfour `#116` five-step conformance corpus; does **not**
+adopt the `0xhoneyjar:straylight:*` audit-event prefix family
+into the Straylight public surface; does **not** adopt the
+`recall-wedge` Hounfour conformance category into the Straylight
+test suite; does **not** wire `loa-dixie` / `loa-finn` /
+`loa-freeside`; does **not** add an HTTP / NATS / RPC / BFF /
+Discord / Telegram surface; does **not** declare any Dixie
+endpoint route as binding; does **not** publish a public
+commitment root; does **not** advance any ADR-022E gate; does
+**not** request or run Flatline / Bridgebuilder / red-team
+review; and does **not** touch `.loa/` / `.loa.config.yaml` /
+`.claude/` / `.beads/` / `.run/` / `.github/` /
+`grimoires/loa/a2a/`. It does **not** commit and does **not**
+open a PR. The Phase 19A pending feedback gate on
+[`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70)
+remains pending and is **not** advanced by Phase 24F.
+
+| Document / artifact | Purpose |
+|---|---|
+| [`phase-24f-dixie-host-issue-draft.md`](./phase-24f-dixie-host-issue-draft.md) | Phase 24F handoff packet: status banner (handoff prep only; not filed; no source / test / package / sibling repo edits), executive summary (paste-ready Dixie-side issue / first-PR draft; narrower than Phase 24E; Phase 24E remains the broader per-surface reading), background / lineage (PR #29 = Phase 24C scaffold; PR #30 = Phase 24D hardening; PR #31 = Phase 24E reading; Phase 24F = first-PR draft; Hounfour `#116` upstream substrate only; Phase 19A pending and not advanced), **paste-ready issue body** (fenced with `<!-- BEGIN paste-ready issue body -->` / `<!-- END paste-ready issue body -->` markers; contains Title, Summary, Background, First PR scope, six per-surface contracts S1–S6 with consume / relay / render-later / must-not-produce-or-reinterpret / typed-refusals-verbatim / transport-out-of-scope, required injected dependencies `TenantResolver` (required, no production default) + `IntakeDenyLog` (optional, recommended) + wedge `AuditLog` / `EstateStore` / `StorageAdapter` (read by host, not redefined by Dixie), 15-item Acceptance criteria list, Validation expectations, Explicit non-goals for the first PR, References), six-surface contract requirements mirror (table-form restatement keyed to the first-PR scope), per-surface handler mapping table (S1→`handleRecallIntake`, S2→`handleReceiptRetrieval`, S3→`handleExclusionDisplay`, S4→`handleProvenanceWalk`, S5→`handleAuditChainLookup`, S6→`handleEstateSummary` — all imported from the local barrel `src/straylight/host/index.ts`, **not** re-exported through the wedge public API), 15-item acceptance criteria restatement (cite-able by a Phase 24F reviewer without entering the paste block), transport-neutrality section (no HTTP / NATS / RPC / BFF / GraphQL / Discord / Telegram surface declared binding; transport ownership sits with the Dixie repo under a future, separate, Dixie-side ADR), explicit non-goals (no `loa-dixie` edit; no endpoint; no route; no Hounfour adoption; no package change; no source change; no tests; no fixtures; no scripts; no public commitment root; no vector 9 / 10 / 11; no rendering implementation; no Flatline / Bridgebuilder request), open follow-ups (filing posture out of Phase 24F; follow-up PR plan not pre-authorised; vector-9 cross-reference test out of slice; `HostFrame` widening out of slice; no Phase 24F demo-evidence packet authored; Hounfour `#70` pending and not advanced), validation evidence (`npm run typecheck` clean; `npm test` unchanged from Phase 24E baseline; empty diff for `src/` / `tests/` / `fixtures/` / `scripts/` / `package.json` / `package-lock.json`), cross-references. |
+
+The Phase 24F packet consumes the Phase 24E summary handoff
+([`phase-24e-dixie-host-handoff-packet.md`](./phase-24e-dixie-host-handoff-packet.md))
+as the authoritative source for per-surface Dixie behavior, the
+Phase 24D summary handoff
+([`phase-24d-host-scaffold-hardening.md`](./phase-24d-host-scaffold-hardening.md)),
+the Phase 24C summary handoff
+([`phase-24c-dixie-recall-host-scaffold.md`](./phase-24c-dixie-recall-host-scaffold.md)),
+the Phase 24B summary handoff
+([`phase-24b-dixie-recall-host-plan.md`](./phase-24b-dixie-recall-host-plan.md)),
+the Phase 24B decision-lock
+([`../decisions/ADR-024E-dixie-host-mvp-wire-shape.md`](../decisions/ADR-024E-dixie-host-mvp-wire-shape.md)),
+the two Phase 24B specs
+([`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md),
+[`../specs/dixie-recall-host-validation-vectors.md`](../specs/dixie-recall-host-validation-vectors.md)),
+the four Phase 24A ADRs (ADR-024A through ADR-024D), the
+Phase 12 Dixie packet
+([`dixie-governed-recall-issue.md`](./dixie-governed-recall-issue.md),
+[`dixie-governed-recall-boundary.md`](./dixie-governed-recall-boundary.md),
+[`dixie-recall-mapping.md`](./dixie-recall-mapping.md), each
+already refreshed in append-only form by Phase 24B and
+Phase 24E), and the post-PR-30 host scaffold under
+[`../../src/straylight/host/`](../../src/straylight/host/) (read-
+only — Phase 24F touches no source). It produces this single
+summary handoff and this README index entry. It produces no new
+fixture, no new script, no `package.json` / `package-lock.json`
+change, no edit to any existing wedge or host source / test
+file, no append to any prior handoff packet (the Phase 12 docs
+already carry Phase 24B + Phase 24E refreshes; Phase 24F does
+**not** add a third refresh), no new sibling-repo handoff
+packet, and no GitHub-side action. All Phase 9 / 10 / 12 / 14 /
+15 / 19A / 20 / 21B / 22A / 23A / 24A / 24B / 24C / 24D / 24E
+in-repo rows above are unchanged by Phase 24F.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+git status --short
+git diff --stat
+git diff -- src/ tests/ fixtures/ scripts/ package.json package-lock.json
+```
+
+Expected: `npm run typecheck` clean; `npm test` identical to the
+Phase 24E post-merge baseline; empty `git diff` for `src/`,
+`tests/`, `fixtures/`, `scripts/`, `package.json`, and
+`package-lock.json`.
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
