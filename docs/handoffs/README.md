@@ -1184,6 +1184,96 @@ npx vitest run tests/phase-5-hardening.test.ts \
                 tests/dixie-governed-recall-handoff.test.ts
 ```
 
+## Phase 24E — Dixie host handoff packet (docs-only)
+
+Phase 24E is a **docs-only Dixie host handoff packet** staged on
+the `phase-24e-dixie-host-handoff-packet` branch inside
+`loa-straylight` after Phase 24D's hardening packet merged. Phase
+24E consolidates the merged Phase 24C local TypeScript host
+scaffold under
+[`../../src/straylight/host/`](../../src/straylight/host/) and
+the Phase 24D hardening into a Dixie-side reading: what a future
+`loa-dixie` host / BFF must **inspect**, **relay**, and **render**
+against each of the six in-slice surfaces — and the explicit set
+of things Dixie must **not** invent. Phase 24E is **not
+endpoint-wired**, **not runtime-wired**, **not a sibling-repo
+PR**, **not a Hounfour package bump**, **not a wedge public-API
+change**, **not a schema authoring event**, **not a host runtime
+change**, and **not a new ADR**. It produces no Straylight recall
+objects, no host code, no test, no fixture, no script, no
+package change, and no GitHub-side action.
+
+Phase 24E does **not** flip a wedge import; does **not** change
+`package.json` / `package-lock.json`; does **not** consume
+Hounfour `main` or any unpublished commit; does **not** import
+the Hounfour `#116` five-step conformance corpus; does **not**
+adopt the `0xhoneyjar:straylight:*` audit-event prefix family
+into the Straylight public surface; does **not** adopt the
+`recall-wedge` Hounfour conformance category into the Straylight
+test suite; does **not** wire `loa-dixie` / `loa-finn` /
+`loa-freeside`; does **not** add an HTTP / NATS / Discord /
+Telegram surface; does **not** publish a public commitment
+root; does **not** advance any ADR-022E gate; and does **not**
+touch `.loa/` / `.loa.config.yaml` / `.claude/` / `.beads/` /
+`.run/` / `.github/` / `grimoires/loa/a2a/`. It does **not**
+commit and does **not** open a PR. The Phase 19A pending feedback
+gate on
+[`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70)
+remains pending and is **not** advanced by Phase 24E.
+
+| Document / artifact | Purpose |
+|---|---|
+| [`phase-24e-dixie-host-handoff-packet.md`](./phase-24e-dixie-host-handoff-packet.md) | Phase 24E summary handoff: executive summary (Dixie-side reading of the Phase 24C/24D local host scaffold; no Straylight recall-object production; no sibling-repo edit; no Hounfour adoption); inherited state recap (Phase 24B Dixie-first placement; Phase 24C six local host surfaces under `src/straylight/host/`; Phase 24D hardening; host barrel intentionally not re-exported through `src/straylight/index.ts`); six per-surface Dixie readings (S1 recall intake/response; S2 receipt retrieval/display; S3 excluded-assertion reason display; S4 provenance inspection; S5 audit-chain lookup; S6 estate summary display — each with **inspect / relay / render / must-not-invent / typed refusals + receipt-category vocabulary**); per-surface handler mapping table (S1→`handleRecallIntake`, S2→`handleReceiptRetrieval`, S3→`handleExclusionDisplay`, S4→`handleProvenanceWalk`, S5→`handleAuditChainLookup`, S6→`handleEstateSummary`); injected dependency requirements (required `TenantResolver` with no production default; optional `IntakeDenyLog` on S6 per Phase 24D concern 3; `AuditLog` / `EstateStore` / `StorageAdapter` from the wedge public surface — read by host, not redefined by Dixie); restated Phase 24C deviations (no synthesised receipt on S1 deny/needs_review; aggregate-by-reason on S3; `_widened_privacy_scope` 4-key trace map on S6); restated Phase 24D hardening implications (empty tenant fail-closed; tenant-scoped parent under `public_discord` refusal; optional S6 intake-deny log; `needs_review` ≠ denial; unknown wedge reason → safe-default `excluded` with verbatim `raw_reason`; tightened S2 receipt-not-found assertion); vector mapping (vectors 1–8 in slice; vector 9 cross-reference only; vectors 10–11 remain gates); validation evidence (`npm run typecheck` clean; `npm test` 33 files / 728 tests passed; Phase 24C + Phase 24D host suite 63 tests passed; regression subset 107 tests passed); Dixie-side supplemental acceptance criteria (eight items extending — not rewriting — the Phase 12 acceptance criteria); open follow-ups (Phase 24F demo-evidence packet anticipated; Dixie review-queue semantics for `needs_review` future work; `HostFrame` widening future work; Hounfour #70 / Phase 19A pending and not advanced); explicit non-scope; cross-references. |
+| [`dixie-governed-recall-issue.md`](./dixie-governed-recall-issue.md) (Phase 24E refresh appended) | Phase 12 Dixie issue handoff with a Phase 24E append-only section. Records that the six in-slice surfaces now exist as exported handlers under `src/straylight/host/` and are exercised by the Phase 24C + Phase 24D host suite (63 tests passed). Adds a supplemental Dixie-side acceptance-criteria list (eight items) without rewriting the Phase 12 §"Acceptance criteria" list. Existing Phase 12 and Phase 24B prose unchanged. |
+| [`dixie-governed-recall-boundary.md`](./dixie-governed-recall-boundary.md) (Phase 24E refresh appended) | Phase 12 boundary doc with a Phase 24E append-only section. Tightens the Phase 12 "Dixie consumes; it does not produce new estate truth" statement to the Phase 24C/24D scaffold reality: Dixie inspects/relays/renders/refuses/audits over six concrete handler entry points; Dixie does not produce `RecallPack` / `RecallReceipt`, does not compute `dispositionFor`, does not reinterpret `privacy_scope`, does not run `verifyChain`, does not publish a commitment root, does not rename `AuditEvent`. Existing Phase 12 and Phase 24B prose unchanged. |
+| [`dixie-recall-mapping.md`](./dixie-recall-mapping.md) (Phase 24E refresh appended) | Phase 12 mapping doc with a Phase 24E append-only section. Adds a six-row per-surface handler-binding table mapping S1–S6 to (a) handler export name, (b) module path under `src/straylight/host/`, (c) dependency-interface name (`IntakeDeps` / `ReceiptDeps` / `ProvenanceDeps` / `AuditLookupDeps` / `EstateSummaryDeps`), (d) typed refusal reasons surfaced, (e) render expectation. Cites `src/straylight/host/index.ts` as the canonical host barrel (post-PR-30 snapshot). Existing Phase 12 mapping rows and Phase 24B refresh unchanged. |
+
+The Phase 24E packet consumes the Phase 24D summary handoff
+([`phase-24d-host-scaffold-hardening.md`](./phase-24d-host-scaffold-hardening.md)),
+the Phase 24C summary handoff
+([`phase-24c-dixie-recall-host-scaffold.md`](./phase-24c-dixie-recall-host-scaffold.md)),
+the Phase 24B summary handoff
+([`phase-24b-dixie-recall-host-plan.md`](./phase-24b-dixie-recall-host-plan.md)),
+the Phase 24B decision-lock
+([`../decisions/ADR-024E-dixie-host-mvp-wire-shape.md`](../decisions/ADR-024E-dixie-host-mvp-wire-shape.md)),
+the two Phase 24B specs
+([`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md),
+[`../specs/dixie-recall-host-validation-vectors.md`](../specs/dixie-recall-host-validation-vectors.md)),
+the four Phase 24A ADRs (ADR-024A through ADR-024D), the
+Phase 12 Dixie packet (refreshed in append-only form by
+Phase 24E), and the post-PR-30 host scaffold under
+[`../../src/straylight/host/`](../../src/straylight/host/) (read-
+only — Phase 24E touches no source). It produces this summary
+handoff, the three append-only Phase 24E refresh sections in
+[`dixie-governed-recall-issue.md`](./dixie-governed-recall-issue.md)
+/
+[`dixie-governed-recall-boundary.md`](./dixie-governed-recall-boundary.md)
+/ [`dixie-recall-mapping.md`](./dixie-recall-mapping.md), and
+this README index entry. It produces no new fixture, no new
+script, no `package.json` / `package-lock.json` change, no edit
+to any existing wedge or host source / test file, no new
+sibling-repo handoff packet, and no GitHub-side action. All
+Phase 9 / 10 / 12 / 14 / 15 / 19A / 20 / 21B / 22A / 23A / 24A /
+24B / 24C / 24D in-repo rows above are unchanged by Phase 24E.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+npx vitest run tests/phase-24c-host-surface-shape.test.ts \
+                tests/phase-24c-host-vectors-1-to-3.test.ts \
+                tests/phase-24c-host-vectors-4-to-6.test.ts \
+                tests/phase-24c-host-vectors-7-to-8.test.ts \
+                tests/phase-24c-host-fail-closed.test.ts \
+                tests/phase-24c-host-intake-log.test.ts \
+                tests/phase-24d-host-hardening.test.ts
+npx vitest run tests/phase-5-hardening.test.ts \
+                tests/phase-20b-recall-wedge-local-scaffold.test.ts \
+                tests/storage-conformance.test.ts \
+                tests/dixie-governed-recall-handoff.test.ts
+```
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.

@@ -488,3 +488,170 @@ Concretely, for Phase 24B and for the future
   — Phase 24A summary handoff (the packet Phase 24B builds on).
 - [`./hounfour-116-merge-intake.md`](./hounfour-116-merge-intake.md)
   — Phase 24A per-component intake.
+
+## Phase 24E refresh — Dixie's read-only consumption of the local host scaffold
+
+> Status: Phase 24E (append-only). This section is the **Phase 24E
+> refresh** of this Phase 12 boundary doc. It tightens the
+> Phase 12 "Dixie consumes; it does not produce new estate truth"
+> statement to the Phase 24C/24D scaffold reality: every Dixie
+> surface is a render over a Phase 24C handler's return value;
+> Dixie's only sources of truth are the host handler shapes and
+> the wedge public API surfaced through them. Existing Phase 12
+> and Phase 24B prose is unchanged.
+>
+> Companion docs (Phase 24E):
+> [`./phase-24e-dixie-host-handoff-packet.md`](./phase-24e-dixie-host-handoff-packet.md)
+> (Phase 24E summary handoff),
+> [`./dixie-governed-recall-issue.md`](./dixie-governed-recall-issue.md)
+> (Phase 24E refresh appended),
+> [`./dixie-recall-mapping.md`](./dixie-recall-mapping.md)
+> (Phase 24E refresh appended),
+> [`./phase-24d-host-scaffold-hardening.md`](./phase-24d-host-scaffold-hardening.md),
+> [`./phase-24c-dixie-recall-host-scaffold.md`](./phase-24c-dixie-recall-host-scaffold.md).
+
+### Dixie's role in the post-PR-30 scaffold
+
+The Phase 12 boundary statement "Dixie consumes; it does not
+produce new estate truth" predates the Phase 24C / 24D scaffold.
+The scaffold tightens what "consumes" means: Dixie has six
+concrete handler entry points
+([`../../src/straylight/host/index.ts`](../../src/straylight/host/index.ts))
+that take Dixie's caller envelope + a `TenantResolver` (and
+optional `IntakeDenyLog` on S6) as input and return a typed
+discriminated outcome. Dixie's BFF surface is a thin render
+layer over those outcomes. Phase 24E pins the following
+strengthened boundary statements:
+
+- **Dixie does not produce a `RecallPack`.** S1's
+  `handleRecallIntake` returns the wedge's pack on the `served`
+  path; on `denied` and `needs_review` it returns no pack and
+  Dixie MUST NOT synthesise one (per Phase 24C deviation #1).
+- **Dixie does not produce a `RecallReceipt`.** S1 and S2 return
+  the wedge's persisted receipt verbatim; on denial / refusal
+  paths there is no receipt and Dixie MUST NOT manufacture one.
+- **Dixie does not compute `dispositionFor`.** S3's
+  classification is host-applied over the wedge's
+  `excluded_summary[]` / `redacted[]` / `marked[]`. Per
+  Phase 24D concern 5, an unrecognised wedge reason maps to
+  safe-default `excluded` and preserves `raw_reason`. Dixie
+  renders the host's classification; Dixie does not re-derive.
+- **Dixie does not reinterpret `privacy_scope`.** The wedge's
+  four-value `PrivacyScope` enum is authoritative. S6's host-
+  applied 2-key projection (with frame discipline) is what
+  Dixie renders; the 4-key `_widened_privacy_scope` is trace
+  data only.
+- **Dixie does not run `verifyChain`.** S5's
+  `handleAuditChainLookup` invokes the wedge's `verifyChain`
+  through `AuditLookupDeps`. Dixie relays `verified` /
+  `broken` (with `break_index` + `break_reason`) / `refused`;
+  Dixie does not re-verify and does not hide a break.
+- **Dixie does not publish a commitment root.** ADR-020E
+  unchanged. The wedge's `computeCommitmentRoot` is internal to
+  the wedge; no host surface exposes it.
+- **Dixie does not rename `AuditEvent`.** S5 surfaces the wedge's
+  `AuditEvent` shape; ADR-022E gate #5 is preserved. Dixie does
+  not project `AuditEvent` into Hounfour-side adjacent names
+  (`audit-trail-entry` / `domain-event`).
+
+### Lane disposition (Phase 24E)
+
+The Phase 24B lane-disposition table above is unchanged. The
+governed-recall / BFF / inspection lane now has a concrete
+local scaffold under
+[`../../src/straylight/host/`](../../src/straylight/host/) that
+Dixie's eventual sibling-repo PR will consume; the table's
+"targeted for Phase 24B" row is the row this scaffold satisfies
+locally. Phase 24E does not change the four-lane structure.
+
+### Straylight ↔ Dixie boundary (Phase 24E reading)
+
+The Phase 24B boundary statement above is unchanged. Phase 24E
+adds the following five-part read of how Dixie operates over the
+scaffold:
+
+- **Inspect.** Dixie passes Dixie's caller envelope + the
+  required `TenantResolver` (and on S6, optionally an
+  `IntakeDenyLog`) into the matching host handler. The handler
+  returns a typed discriminated outcome.
+- **Relay.** Dixie relays every wedge-emitted artefact (pack,
+  receipt, audit events, provenance records, counts) and every
+  typed refusal reason verbatim. Dixie does not rewrite, does
+  not soften, and does not omit.
+- **Render.** Dixie renders for operators, developers, and
+  auditors using the receipt-category vocabulary the wedge
+  pinned in ADR-020D §6 (`included` / `excluded` / `redacted` /
+  `challenged` / `revoked` / `blocked-by-policy`) and the typed
+  refusal vocabulary the host's scaffold pinned (Phase 24C
+  `DeniedReason` + per-surface `outcome: 'refused'` reasons).
+- **Refuse.** When the host refuses, Dixie refuses. Phase 24D
+  concern 1 (empty-tenant fail-closed), concern 2 (tenant-
+  scoped parent under `public_discord` refusal on S4), concern
+  3 (optional S6 intake-deny log), and concern 6 (tightened S2
+  unknown-receipt-id assertion) all flow through to Dixie
+  unchanged.
+- **Audit.** Dixie surfaces the wedge's `audit_event_id` on
+  denial (S1) and on cross-tenant refusal (S1, S2, S4, and S6
+  with `intakeLog`) and surfaces the wedge's `AuditEvent[]` on
+  per-estate lookup (S5). The host-side intake-deny log entries
+  are per-tenant (cross-tenant chain links forbidden); Dixie
+  preserves that scoping in its operator console / API surface.
+
+### Dixie ↔ Finn boundary (Phase 24E reading)
+
+The Phase 24B boundary statement above is unchanged: Finn is
+**out of slice**. The Phase 24C / 24D scaffold has no Finn
+import, no Finn dependency, and no Finn shape in any handler
+deps interface. Phase 24E preserves the Phase 24B disposition
+verbatim. Finn re-enters only when a *later* slice places a
+runtime-tool-call host on Finn under shape (a) of ADR-022B
+criterion #2; that placement requires a separate ADR (most
+plausibly an ADR-024F or later) and is **not** authorised by
+Phase 24E.
+
+### Hounfour and Freeside (Phase 24E disposition)
+
+The Phase 24B disposition above is unchanged: Hounfour remains
+schema / protocol / conformance substrate only; Freeside remains
+the later community / app surface consumer. Phase 24E does **not**
+adopt Hounfour `#116` outputs, does **not** advance the Phase 19A
+pending feedback gate on `0xHoneyJar/loa-hounfour#70`, and does
+**not** refresh the Freeside packet
+([`./freeside-community-surface-boundary.md`](./freeside-community-surface-boundary.md)).
+
+### Phase 24E refresh non-scope
+
+- **No edit to the Phase 12 prose above.** Existing §"The four
+  lanes" / §"What Dixie should eventually own" / §"What Dixie
+  must not own" / §"Boundary violations" / §"Why this boundary
+  matters" / §"Reference: the wedge's stable public surface"
+  sections are unchanged.
+- **No edit to the Phase 24B refresh section above.**
+- **No source / test / fixture / script / package change.**
+- **No new endpoint / runtime / Hounfour adoption.** Phase 24E
+  is local docs.
+- **No sibling-repo edit, no GitHub-side action.**
+- **No commit, no push, no PR by Phase 24E itself.**
+
+### Phase 24E refresh cross-references
+
+- [`./phase-24e-dixie-host-handoff-packet.md`](./phase-24e-dixie-host-handoff-packet.md)
+  — Phase 24E summary handoff (this section's owning doc).
+- [`./phase-24d-host-scaffold-hardening.md`](./phase-24d-host-scaffold-hardening.md)
+  — Phase 24D summary handoff.
+- [`./phase-24c-dixie-recall-host-scaffold.md`](./phase-24c-dixie-recall-host-scaffold.md)
+  — Phase 24C summary handoff.
+- [`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md)
+  — per-surface MVP host contract.
+- [`../specs/dixie-recall-host-validation-vectors.md`](../specs/dixie-recall-host-validation-vectors.md)
+  — vector matrix at the host inspection layer.
+- [`../decisions/ADR-024E-dixie-host-mvp-wire-shape.md`](../decisions/ADR-024E-dixie-host-mvp-wire-shape.md)
+  — Phase 24B decision-lock.
+- [`./dixie-governed-recall-issue.md`](./dixie-governed-recall-issue.md)
+  (Phase 24E refresh appended).
+- [`./dixie-recall-mapping.md`](./dixie-recall-mapping.md)
+  (Phase 24E refresh appended).
+- [`../../src/straylight/host/index.ts`](../../src/straylight/host/index.ts)
+  — canonical host barrel (post-PR-30 snapshot).
+- [`../../src/straylight/index.ts`](../../src/straylight/index.ts)
+  — wedge public API (unchanged by Phase 24C / 24D / 24E).

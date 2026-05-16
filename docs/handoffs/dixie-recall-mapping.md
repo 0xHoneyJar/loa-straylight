@@ -227,3 +227,114 @@ Phase 24B per-vector validation matrix
   (Phase 24B refresh appended)
 - [`./phase-24a-hounfour-116-intake-and-host-decision.md`](./phase-24a-hounfour-116-intake-and-host-decision.md)
 - [`./hounfour-116-merge-intake.md`](./hounfour-116-merge-intake.md)
+
+## Phase 24E refresh — per-surface host-handler binding
+
+> Status: Phase 24E (append-only). This section is the **Phase 24E
+> refresh** of this Phase 12 mapping doc. It binds each Phase 24B
+> in-slice surface (S1–S6) to its Phase 24C handler export, the
+> handler's module path, the handler's dependency-interface name,
+> the receipt-category and typed-refusal vocabulary the rendered
+> output carries, and the post-PR-30 render expectation Dixie's
+> eventual sibling-repo PR must satisfy. The mapping is a
+> **post-PR-30 snapshot**; the canonical host barrel is
+> [`../../src/straylight/host/index.ts`](../../src/straylight/host/index.ts).
+> Existing Phase 12 mapping rows and the Phase 24B refresh
+> section above are unchanged.
+>
+> Companion docs (Phase 24E):
+> [`./phase-24e-dixie-host-handoff-packet.md`](./phase-24e-dixie-host-handoff-packet.md)
+> (Phase 24E summary handoff),
+> [`./dixie-governed-recall-boundary.md`](./dixie-governed-recall-boundary.md)
+> (Phase 24E refresh appended),
+> [`./dixie-governed-recall-issue.md`](./dixie-governed-recall-issue.md)
+> (Phase 24E refresh appended),
+> [`./phase-24d-host-scaffold-hardening.md`](./phase-24d-host-scaffold-hardening.md),
+> [`./phase-24c-dixie-recall-host-scaffold.md`](./phase-24c-dixie-recall-host-scaffold.md).
+
+### Per-surface handler binding (post-PR-30 snapshot)
+
+The table below binds each Phase 24B in-slice surface to its
+Phase 24C / 24D handler. Dixie's render layer takes the
+handler's return value as input; Dixie does not redefine the
+handler shape, does not synthesise a return value, and does not
+bypass the handler.
+
+| # | Surface | Handler export | Module path | Dependency interface | Typed refusal reasons surfaced | Render expectation |
+|---|---|---|---|---|---|---|
+| S1 | Recall intake / response | `handleRecallIntake` | [`../../src/straylight/host/intake.ts`](../../src/straylight/host/intake.ts) | `IntakeDeps` | `cross_tenant_recall_refused`, `policy_unavailable`, `signer_not_competent`, `storage_unavailable`, `blocked_by_policy`, `privacy_scope_refusal`, `frame_unsupported`, `tenant_resolution_failed`, `class_validation_failed` | Render `served` pack + receipt verbatim; render `denied` with `audit_event_id` + classified `DeniedReason` + verbatim `raw_reasons[]` (no synthesised receipt per Phase 24C deviation #1); render `needs_review` with `review_queue_id` + wedge's `audit_event_id` (queue mgmt = future work). |
+| S2 | Receipt retrieval / display | `handleReceiptRetrieval` | [`../../src/straylight/host/receipt.ts`](../../src/straylight/host/receipt.ts) | `ReceiptDeps` | `unknown_receipt_id` (Phase 24D-tightened — exact under clean tenant resolve), `cross_tenant_refused`, `tenant_resolution_failed` | Render the wedge's persisted `RecallReceipt` verbatim under the requested `detail_level`. Do not infer tenant identity from a missing record. |
+| S3 | Excluded-assertion reason display | `handleExclusionDisplay` | [`../../src/straylight/host/exclusion.ts`](../../src/straylight/host/exclusion.ts) | (pure render — no dep struct) | None at S3; upstream pack encodes wedge's fail-closed posture | Render aggregate-by-reason `excluded_aggregates[]` / `redacted_aggregates[]` (per Phase 24C deviation #2) + per-assertion `marked[]`. Honor Phase 24D concern 5 safe-default: unknown wedge reason → `category: 'excluded'` with verbatim `raw_reason`. |
+| S4 | Provenance inspection | `handleProvenanceWalk` | [`../../src/straylight/host/provenance.ts`](../../src/straylight/host/provenance.ts) | `ProvenanceDeps` | `privacy_scope_refusal` (incl. Phase 24D concern 2: `tenant`-scoped parent under `public_discord`), `cross_tenant_refused`, `unknown_assertion`, `tenant_resolution_failed`, `frame_unsupported` | Render `walked` provenance records in chronological order under the parent's `privacy_scope`; render `refused` with the typed reason. Same `tenant`-scoped parent under `actor_private` caller frame walks normally. |
+| S5 | Audit-chain lookup | `handleAuditChainLookup` | [`../../src/straylight/host/audit-lookup.ts`](../../src/straylight/host/audit-lookup.ts) | `AuditLookupDeps` | `cross_tenant_refused`, `unknown_estate`, `tenant_resolution_failed` | Render `verified` events in order; render `broken` events up to the break with prominent `break_index` + `break_reason`; never hide a break; never re-run `verifyChain`. |
+| S6 | Estate summary display | `handleEstateSummary` | [`../../src/straylight/host/estate-summary.ts`](../../src/straylight/host/estate-summary.ts) | `EstateSummaryDeps` (Phase 24D: optional `intakeLog?: IntakeDenyLog`) | `cross_tenant_refused`, `unknown_estate`, `privacy_scope_refusal`, `tenant_resolution_failed` | Render `summarized` counts using 2-key `by_privacy_scope` (host-applied frame discipline — zero `actor_private` under `public_discord`); keep 4-key `_widened_privacy_scope` (per Phase 24C deviation #3) as trace data only. When `intakeLog` is injected, cross-tenant target refusals append a caller-tenant intake-deny entry. |
+
+### Canonical host barrel
+
+All six handlers are exported from
+[`../../src/straylight/host/index.ts`](../../src/straylight/host/index.ts).
+The barrel is intentionally **NOT** re-exported through
+[`../../src/straylight/index.ts`](../../src/straylight/index.ts);
+Dixie consumers import the host barrel directly. The wedge does
+not import the host scaffold (one-way dependency). Helper
+exports also surfaced through the barrel:
+
+- `checkSameTenant` + types `TenantCheckResult`, `TenantResolver`
+  ([`../../src/straylight/host/tenancy.ts`](../../src/straylight/host/tenancy.ts))
+  — required injection for cross-tenant gating on S1 / S2 / S4 /
+  S5 / S6; **no production default**.
+- `createInMemoryIntakeDenyLog` + types `IntakeDenyEntry`,
+  `IntakeDenyLog`
+  ([`../../src/straylight/host/intake-log.ts`](../../src/straylight/host/intake-log.ts))
+  — required on S1 / S2 / S4; optional on S6 (Phase 24D concern 3).
+
+### Phase 24E receipt-category and `DeniedReason` vocabularies
+
+Dixie renders using the closed enums the host scaffold exports
+from [`../../src/straylight/host/types.ts`](../../src/straylight/host/types.ts):
+
+- **`ExclusionReason`** (S1 / S3 / S6 indirectly): `included` /
+  `excluded` / `redacted` / `challenged` / `revoked` /
+  `blocked-by-policy`. Six categories pinned by ADR-020D §6;
+  unchanged by Phase 24C / 24D / 24E.
+- **`DeniedReason`** (S1): `class_validation_failed` /
+  `policy_unavailable` / `signer_not_competent` /
+  `cross_tenant_recall_refused` / `storage_unavailable` /
+  `blocked_by_policy` / `privacy_scope_refusal` /
+  `frame_unsupported` / `tenant_resolution_failed`. Pinned by
+  Phase 24C; the host never invents a value outside this set.
+
+### Phase 24E refresh non-scope
+
+- **No edit to the Phase 12 mapping rows above.**
+- **No edit to the Phase 24B refresh section above.**
+- **No additional Phase 12 surfaces added or removed.**
+- **No source / test / fixture / script / package change.**
+- **No new endpoint / runtime / Hounfour adoption.**
+- **No sibling-repo edit, no GitHub-side action.**
+- **No commit, no push, no PR by Phase 24E itself.**
+
+### Phase 24E refresh cross-references
+
+- [`./phase-24e-dixie-host-handoff-packet.md`](./phase-24e-dixie-host-handoff-packet.md)
+  — Phase 24E summary handoff (this section's owning doc).
+- [`./phase-24d-host-scaffold-hardening.md`](./phase-24d-host-scaffold-hardening.md)
+  — Phase 24D summary handoff (hardening concerns referenced
+  above).
+- [`./phase-24c-dixie-recall-host-scaffold.md`](./phase-24c-dixie-recall-host-scaffold.md)
+  — Phase 24C summary handoff (handler exports defined there).
+- [`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md)
+  — per-surface MVP host contract.
+- [`../specs/dixie-recall-host-validation-vectors.md`](../specs/dixie-recall-host-validation-vectors.md)
+  — vector matrix at the host inspection layer.
+- [`../decisions/ADR-024E-dixie-host-mvp-wire-shape.md`](../decisions/ADR-024E-dixie-host-mvp-wire-shape.md)
+  — Phase 24B decision-lock Phase 24E operates under.
+- [`./dixie-governed-recall-boundary.md`](./dixie-governed-recall-boundary.md)
+  (Phase 24E refresh appended).
+- [`./dixie-governed-recall-issue.md`](./dixie-governed-recall-issue.md)
+  (Phase 24E refresh appended).
+- [`../../src/straylight/host/index.ts`](../../src/straylight/host/index.ts)
+  — canonical host barrel (post-PR-30 snapshot).
+- [`../../src/straylight/host/types.ts`](../../src/straylight/host/types.ts)
+  — per-surface request/response shapes + `HostFrame` /
+  `HostCaller` / `DeniedReason` / `ExclusionReason` enums.
