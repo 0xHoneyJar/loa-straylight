@@ -34,6 +34,16 @@ will break across phases without notice.
 `src/straylight/index.ts` re-exports the symbols below, organized into the
 sections numbered there:
 
+> **Phase 24H cross-reference.** The wedge stable surface (sections 1–11
+> below) is **not** the only named public entrypoint of the package after
+> Phase 24H. A second, distinct, type-only public subpath
+> (`@loa/straylight/host`) is documented in
+> [§"Stable public API — `./host` subpath (Phase 24H, type-only)"](#stable-public-api--host-subpath-phase-24h-type-only)
+> below. The wedge↔host dependency is strictly one-way: the host
+> scaffold may import wedge primitives; the wedge public API does not
+> import the host scaffold. Sections 1–11 are byte-identical to their
+> pre-Phase-24H state.
+
 ### 1. Types (`types.ts`)
 
 All primitive type aliases and interfaces:
@@ -314,6 +324,268 @@ input. The actual schema move is reserved future work in
 `loa-hounfour`; see
 [`docs/schema-candidates/README.md`](../schema-candidates/README.md)
 for what Phase 6 is and is not.
+
+## Stable public API — `./host` subpath (Phase 24H, type-only)
+
+Phase 24H widens the package's documented public surface by adding a
+second, distinct named subpath. The package's `exports` map now has
+exactly two keys, each with exactly one `"types"` condition:
+
+```json
+{
+  ".": {
+    "types": "./dist-types/src/straylight/index.d.ts"
+  },
+  "./host": {
+    "types": "./dist-types/src/straylight/host/index.d.ts"
+  }
+}
+```
+
+The `./host` subpath documents the local host barrel at
+`src/straylight/host/index.ts` as part of the **stable, named public
+surface** of the package — type-only, declaration-only, with no runtime
+import path in Phase 24H. The companion decision-lock is
+[`../decisions/ADR-024G-host-package-subpath-implementation.md`](../decisions/ADR-024G-host-package-subpath-implementation.md);
+the companion handoff is
+[`../handoffs/phase-24h-host-package-subpath-implementation.md`](../handoffs/phase-24h-host-package-subpath-implementation.md).
+
+### Six handler exports
+
+The `./host` subpath re-exports six recall-host handlers (per the
+Phase 24B / 24C / 24D host scaffold contract):
+
+```
+handleRecallIntake         (Surface 1: intake / recall request)
+handleReceiptRetrieval     (Surface 2: receipt retrieval)
+handleExclusionDisplay     (Surface 3: excluded / redacted / marked
+                            display)
+handleProvenanceWalk       (Surface 4: provenance inspection)
+handleAuditChainLookup     (Surface 5: audit-chain lookup)
+handleEstateSummary        (Surface 6: estate summary / by-privacy-scope)
+```
+
+Each handler is a pure function over the wedge's stable public API. The
+host never produces `RecallPack` / `RecallReceipt` / `dispositionFor` /
+`verifyChain` / commitment-root values; every decision flows back to
+wedge primitives surfaced through `src/straylight/index.ts`.
+
+### Helper / type exports
+
+The `./host` subpath also re-exports:
+
+```
+checkSameTenant                (tenancy guard helper)
+createInMemoryIntakeDenyLog    (in-memory intake-deny log constructor)
+```
+
+and the following type re-exports (declaration-only; no runtime
+behavior):
+
+```
+TenantCheckResult, TenantResolver
+IntakeDenyEntry, IntakeDenyLog
+IntakeDeps
+ReceiptDeps
+ProvenanceDeps
+AuditLookupDeps
+EstateSummaryDeps
+```
+
+plus the host-local types re-exported from `src/straylight/host/types.ts`
+via `export *`.
+
+### Injected-dependency contract
+
+Each handler accepts a **per-call dependency object** typed by its
+`*Deps` interface. The handler:
+
+- never imports `EstateStore` / `JsonlStorage` / `AuditLog` directly;
+- never reaches outside its `Deps` argument for state;
+- never produces output that the wedge has not already produced (no
+  invention, no synthesis).
+
+A future host runtime (e.g. `loa-dixie`) constructs the `Deps` objects
+from its own `StorageAdapter` / `EstateStore` / `AuditLog` instances
+and passes them per call. The `Deps` contract is the consumption
+seam.
+
+### Type-only package surface
+
+`./host` is exposed under `"types"` only:
+
+- A consumer with a tag-pinned git-source install can write
+  `import type { ... } from '@loa/straylight/host'` and resolve the
+  emitted `.d.ts` through the `exports` map.
+- A consumer attempting `import { ... }` (value import),
+  `await import('@loa/straylight/host')` (dynamic ESM runtime
+  import), or `require('@loa/straylight/host')` (CJS) does **not**
+  resolve and emits `ERR_PACKAGE_PATH_NOT_EXPORTED`. Phase 24H
+  does not advertise a runtime surface for `./host`. The Phase
+  24H type-only consumption test pins this failure mode without
+  requiring `npm install` or network access.
+- Declarations are emitted to `dist-types/src/straylight/host/index.d.ts`
+  by `npm run build` (which invokes `tsc -p tsconfig.build.json`) **and
+  committed** to the repository as the authoritative Phase 24H
+  type-only package artifact. A tag-/release-pinned sibling repo
+  resolves `@loa/straylight/host` against the committed `.d.ts`
+  files without depending on `prepare` running at install time.
+  `prepare` is kept as a development convenience that regenerates
+  declarations from source on `npm install`; the committed artifact
+  is authoritative. Future PRs MUST treat changes under
+  `dist-types/` as generated-artifact diffs caused by source /
+  type-surface changes; a `dist-types/` diff with no matching
+  source diff is non-conforming.
+
+A future phase (referred to as "Phase 24I or later" in ADR-024G) may
+widen the `./host` subpath to a runtime surface (JS emission, `dist/`,
+`"default"` / `"import"` condition). That widening is a strictly larger
+public-surface change and must be reviewed under its own ADR.
+
+### No runtime import path (Phase 24H)
+
+The package has **no `"main"` field** after Phase 24H. The
+`exports` map carries **no `"default"`, `"import"`, `"require"`,
+`"node"`, `"node-addons"`, `"browser"`, `"deno"`, `"bun"`,
+`"worker"`, `"react-native"`, `"electron"`, `"production"`,
+`"development"`, `"module"`, or `"main"` condition**. There is
+**no `dist/` directory** (only `dist-types/`).
+
+A consumer that attempts a runtime / value import of either
+`@loa/straylight` or `@loa/straylight/host` — for example,
+`import { handleRecallIntake } from '@loa/straylight/host'`,
+`await import('@loa/straylight/host')`, or
+`require('@loa/straylight/host')` — **will fail to resolve, and
+that failure is the intended, documented Phase 24H posture**, not
+a defect. Consumers MUST use `import type`. Runtime support is a
+future, separate widening (hypothetical Phase 24I or later) and
+is not authorized by Phase 24H.
+
+This is the load-bearing distinction between Phase 24H and any
+future runtime-widening phase. The Phase 24H package-exports test
+asserts that no runtime / value-import condition appears under
+any `exports` entry — adding one is a Phase 24H violation. The
+Phase 24H type-only consumption test exercises only
+`import type` and never executes a runtime import.
+
+### Supported consumer assumptions (Phase 24H)
+
+The Phase 24H consumption contract is **narrow on purpose**. A
+consumer outside this envelope will see resolution failures; those
+failures are the intended posture, not defects.
+
+- **TypeScript >= 5.4 is REQUIRED.** Pinned via `devDependencies`.
+  The Phase 24H type-only consumption test asserts the range.
+  Older TypeScript versions are unsupported.
+- **Supported `moduleResolution` modes are exactly `"Bundler"`
+  and `"NodeNext"`.** These two modes are exercised end-to-end
+  by the consumption test. Older / default / non-export-aware
+  resolver modes — including `"node"`, `"classic"`, `"node10"`,
+  and `"node16"` — are **unsupported** for the `./host` subpath.
+  The legacy node resolver does not honor the package's `exports`
+  map and will fail to resolve `@loa/straylight/host`. The Phase
+  24H type-only consumption test pins this failure under
+  `moduleResolution: "node"` so a future widening that
+  accidentally adds legacy-resolver support has to update both
+  the test and this section.
+- **`import type` only is REQUIRED; runtime/value imports are
+  UNSUPPORTED and expected to fail.** A consumer attempting any
+  of `import { ... } from '@loa/straylight/host'` (value import),
+  `await import('@loa/straylight/host')` (dynamic ESM runtime
+  import), or `require('@loa/straylight/host')` (CJS) — or the
+  same patterns against the root subpath `@loa/straylight` —
+  will fail to resolve with `ERR_PACKAGE_PATH_NOT_EXPORTED`.
+  See [§"No runtime import path (Phase 24H)"](#no-runtime-import-path-phase-24h)
+  below. The Phase 24H type-only consumption test pins this
+  failure mode for both subpaths under both dynamic ESM
+  `import()` and CJS `require`.
+- **Tag- / release-pinned git source** (or, in a future phase, a
+  published release range). Workspace links, `main`-HEAD git
+  dependencies, and commit-SHA pins against unpublished trees
+  are **unsupported**. Because `dist-types/` is now committed,
+  a tag-pinned consumer resolves declarations directly from the
+  tagged tree without depending on `prepare` running at install
+  time.
+
+A future phase that needs to widen any of these four assumptions
+must do so under its own ADR — the assumptions are part of the
+Phase 24H contract.
+
+### No source fallback under `exports`
+
+The `exports` map points exclusively at the `.d.ts` files emitted to
+`dist-types/`. There is **no `"default"` condition pointing at
+`src/straylight/host/index.ts`** as a development fallback. Earlier
+drafts considered such a fallback; ADR-024G rejects it for three
+reasons:
+
+1. it would widen the runtime surface;
+2. it would leak TypeScript source into the package's advertised
+   consumption path; and
+3. it would couple consumers to the in-repo working-tree layout
+   rather than the declaration output.
+
+In-repo tests that need to exercise the type-only consumption path
+build declarations first and consume them through a temp-fixture
+symlink, never via a source-only fallback.
+
+### One-way wedge↔host dependency invariant (automated)
+
+The host scaffold under `src/straylight/host/` **may** import from the
+wedge stable public API at `src/straylight/index.ts`. The wedge stable
+public API at `src/straylight/index.ts` **must not** import from
+`src/straylight/host/`. This invariant is **automated as of Phase
+24H**, not deferred:
+
+- enforced by the existing automated test at
+  `tests/phase-24c-host-surface-shape.test.ts`, describe block
+  `phase-24c host — wedge does not depend on host`. Two test cases
+  assert:
+  1. `src/straylight/index.ts does not import from ./host/`, and
+  2. every existing wedge module source file under `src/straylight/`
+     does not import from `./host/`.
+- recorded in the Phase 24H package-exports test
+  (`tests/phase-24h-package-exports.test.ts`) under describe block
+  `Phase 24H — one-way wedge↔host dependency invariant is automated
+  NOW (SKP-006)`, which validates the delegation pointer so any
+  future test-file move is forced to update both the test and the
+  prose here.
+- documented as a load-bearing rule in ADR-024G §"Decision" rule §9.
+
+A stronger import-graph tool (e.g. dependency-cruiser, madge) may be
+added in a future phase. That stronger tool is **not** required for
+Phase 24H; the invariant is automated now.
+
+A future implementation phase that violates the invariant — for
+example, by re-exporting the host barrel through the wedge stable
+surface, or by introducing a wedge module that imports a host module
+— is a non-conforming public-surface widening and must be refused at
+review.
+
+### Internal modules under `src/straylight/host/` — DO NOT IMPORT
+
+Anything not listed in the six handlers, two helpers, or the type
+re-exports above is **internal** and may change without notice. In
+particular, importing from a file under `src/straylight/host/<module>.ts`
+directly (e.g. `import { handleRecallIntake } from
+'@loa/straylight/host/intake'`) is unsupported and will not resolve
+through the `exports` map; only the barrel at
+`@loa/straylight/host` is named public surface.
+
+### Tag- / release-pinned consumption only
+
+Phase 24H does **not** publish the package; `"private": true` is
+preserved. Phase 24H does **not** create a release tag. A future
+sibling-repo dependency on `@loa/straylight/host` MUST consume via:
+
+- a tag-pinned git-source install (if Straylight remains
+  `"private": true`), or
+- a published release range (if Straylight adopts GitHub Packages
+  under a separately reviewed posture decision).
+
+A sibling-repo dependency via a commit-SHA pin against an unpublished
+tree, a `main`-HEAD git dependency, or a workspace-path link to a
+developer's local clone is **not** authorized.
 
 ## Versioning
 
