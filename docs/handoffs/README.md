@@ -1488,6 +1488,154 @@ Phase 24F post-merge baseline; empty `git diff` for `src/`,
 `package-lock.json`, `tsconfig.json`, `vitest.config.ts`, and
 `.npmrc`.
 
+## Phase 24H — Host package subpath implementation (type-only, declaration-only)
+
+Phase 24H is the **first Straylight-side implementation phase**
+that widens the package's public surface for cross-repo
+consumption. It is staged on the
+`phase-24h-host-package-subpath` branch inside `loa-straylight`
+after Phase 24G's docs-only readiness plan merged. Phase 24H
+executes the **declaration-only subset** of the ADR-024F
+§"Recommended future implementation posture" §3 path: a type-only
+`@loa/straylight/host` package subpath, a declaration-only
+`tsconfig.build.json`, an `exports` map with no runtime
+conditions, and two new tests pinning the shape. The companion
+decision-lock is
+[`../decisions/ADR-024G-host-package-subpath-implementation.md`](../decisions/ADR-024G-host-package-subpath-implementation.md).
+
+Phase 24H **does** widen the public package surface. It does
+**not** widen the runtime surface: no `"default"` / `"import"` /
+`"require"` / `"node"` / `"browser"` condition under `exports`,
+no TypeScript source fallback, no `dist/` (only `dist-types/`),
+no JS emission, no `engines.node` change. A consumer attempting
+`await import('@loa/straylight/host')` (or
+`require('@loa/straylight/host')`) at runtime does not resolve.
+Phase 24H does **not** edit
+[`../../tsconfig.json`](../../tsconfig.json) /
+[`../../package-lock.json`](../../package-lock.json) /
+[`../../.npmrc`](../../.npmrc); does **not** edit any file under
+[`../../src/`](../../src/) (no edit to the wedge public surface;
+no edit to the host barrel; no re-export of the host barrel
+through the wedge public API); does **not** edit any file under
+[`../../scripts/`](../../scripts/); does **not** edit any file
+under [`../../fixtures/`](../../fixtures/); does **not** edit
+any existing test under [`../../tests/`](../../tests/) (only
+two new Phase 24H test files are added); does **not**
+un-`"private"` the package; does **not** publish to any
+registry; does **not** create a release tag; does **not** bump,
+downgrade, or reconcile the Hounfour dependency range; does
+**not** consume Hounfour `main` or any unpublished commit; does
+**not** import the Hounfour `#116` five-step conformance corpus;
+does **not** adopt the `0xhoneyjar:straylight:*` audit-event
+prefix family into the Straylight public surface; does **not**
+adopt the `recall-wedge` Hounfour conformance category into the
+Straylight test suite; does **not** publish a public commitment
+root; does **not** advance any ADR-022E gate; does **not** widen
+vector scope beyond Phase 24B's vectors 1–8; does **not** edit
+any prior ADR or any prior handoff (other than this README
+index entry); does **not** edit any sibling repo (no `loa-dixie`
+change; no `loa-finn` change; no `loa-freeside` change; no
+`loa-hounfour` change); does **not** file or edit any GitHub
+issue / comment / PR; and does **not** touch `.loa/` /
+`.loa.config.yaml` / `.claude/` / `.beads/` / `.run/` /
+`.github/` / `grimoires/loa/a2a/`. A 3-model Flatline pass is
+expected **before merge** because Phase 24H widens the public
+package surface; it is **not** part of the same commit. The
+Phase 19A pending feedback gate on
+[`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70)
+remains pending and is **not** advanced by Phase 24H.
+
+| Document / artifact | Purpose |
+|---|---|
+| [`phase-24h-host-package-subpath-implementation.md`](./phase-24h-host-package-subpath-implementation.md) | Phase 24H summary handoff: status banner (implementation handoff; type-only; declaration-only; no runtime widening; no publish; no tag; no sibling-repo edit; companion ADR-024G), executive summary (the minimum-viable widening; eight of eleven ADR-024F blockers resolved; three explicitly deferred), blocker resolution table (per-blocker status with resolution / deferral notes), files changed (created: `tsconfig.build.json`, ADR-024G, this handoff, the two new tests `phase-24h-package-exports.test.ts` and `phase-24h-type-only-consumption.test.ts`; modified: `package.json`, `.gitignore`, `vitest.config.ts`, `package-boundary.md`, handoffs `README.md`; unchanged-and-verified: `tsconfig.json`, `package-lock.json`, `.npmrc`, `src/`, `scripts/`, `fixtures/`, all existing tests, all prior ADRs, all prior handoffs, sibling repos, `.loa` / `.loa.config.yaml` / `.claude/` / `.beads/` / `.run/` / `.github/` / `grimoires/loa/a2a/`), validation evidence (`npm run typecheck` clean; `npm run build` emits `dist-types/src/straylight/index.d.ts` + `dist-types/src/straylight/host/index.d.ts` because `rootDir: "."` pins the layout; `npm test` passes; `npm pack --dry-run` includes `dist-types/`; empty diff for `src/`, `scripts/`, `fixtures/`, `package-lock.json`, `.npmrc`, `tsconfig.json`; `dist-types/` not staged because gitignored), package surface shape (`exports` map: two subpaths `"."` and `"./host"`, exactly one `"types"` condition each, no runtime conditions, no source fallback, no `main` field), explicit non-scope (no JS / runtime emission; no source fallback; no publish; no tag; no commit-SHA / `main` / git-HEAD posture; no Dixie flip; no Hounfour bump or adoption; no `#116` corpus import; no `0xhoneyjar:straylight:*` adoption; no `recall-wedge` category adoption; no vector 9 / 10 / 11 widening; no endpoint; no commitment root; no source edits; no `tsconfig.json` / `package-lock.json` / `.npmrc` / scripts / fixtures edits; no existing-test edits; no prior-ADR / prior-handoff edits; no Flatline / Bridgebuilder / red-team in the same commit), Dixie posture (PR #96 remains transitional; future flip blocked on Blocker 1 publish posture + Blocker 9 release tag + Blocker 11 Hounfour skew), open questions / follow-ups (publish posture deferred; release-tag event deferred; Hounfour skew deferred; runtime widening deferred to a hypothetical Phase 24I or later; one-way wedge↔host dependency guard implementation shape deferred; future `package-boundary.md` updates deferred; Hounfour `#70` pending), cross-references. |
+| [`../decisions/ADR-024G-host-package-subpath-implementation.md`](../decisions/ADR-024G-host-package-subpath-implementation.md) | Phase 24H opening ADR: Status (Accepted-for-Phase-24H; scoped Straylight-side implementation; no sibling-repo edit; no publish; no tag; 3-model Flatline expected before merge), Context (eleven independently-load-bearing blockers from ADR-024F enumerated; Phase 24H executes the minimum-viable subset; type-only `exports` map; declaration-only emit to `dist-types/`; `tsconfig.json` preserved; `package-lock.json` preserved; source byte-identical; one-way wedge↔host dependency preserved), **Decision** (ten rules: add type-only `@loa/straylight/host` package subpath; no runtime import condition; no TypeScript source fallback under `exports`; declaration-only build to `dist-types/`; `"private": true` stays; no actual sibling-repo dependency flip; Hounfour skew remains unresolved; package-boundary documentation widens additively; one-way wedge↔host dependency invariant preserved; tag-/release-pinned consumption only), Blocker resolution table (eleven blockers; eight resolved: 2 + 3 + 4 + 5 + 6 + 7 + 8 + 10; three deferred: 1 + 9 + 11), Non-goals (nineteen Phase 24H-specific refusals; inheritance of all ADR-024A through ADR-024F non-goals), Future Phase 24I+ entry conditions (ADR-024G merged; Phase 24H handoff merged; 3-model Flatline pass on Phase 24H; scope explicitly approved; no sibling-repo wiring in the same PR), Consequences (`@loa/straylight/host` consumable for type-only imports; runtime consumption blocked; Dixie PR #96 local mirrors remain transitional; no sibling-repo work unblocked yet; `tsconfig.json` preserved as IDE / `tsc --noEmit` config; `dist-types/` reproducible; additive to ADR-024F), Source files inspected. |
+
+The Phase 24H packet consumes the Phase 24G summary handoff
+([`phase-24g-host-package-consumption-readiness-plan.md`](./phase-24g-host-package-consumption-readiness-plan.md)),
+the Phase 24G decision-lock
+([`../decisions/ADR-024F-host-package-consumption-readiness.md`](../decisions/ADR-024F-host-package-consumption-readiness.md)),
+the Phase 24F summary handoff
+([`phase-24f-dixie-host-issue-draft.md`](./phase-24f-dixie-host-issue-draft.md)),
+the Phase 24E summary handoff
+([`phase-24e-dixie-host-handoff-packet.md`](./phase-24e-dixie-host-handoff-packet.md)),
+the Phase 24D summary handoff
+([`phase-24d-host-scaffold-hardening.md`](./phase-24d-host-scaffold-hardening.md)),
+the Phase 24C summary handoff
+([`phase-24c-dixie-recall-host-scaffold.md`](./phase-24c-dixie-recall-host-scaffold.md)),
+the Phase 24B summary handoff
+([`phase-24b-dixie-recall-host-plan.md`](./phase-24b-dixie-recall-host-plan.md)),
+the Phase 24A summary handoff
+([`phase-24a-hounfour-116-intake-and-host-decision.md`](./phase-24a-hounfour-116-intake-and-host-decision.md)),
+the Phase 24A ADR series (ADR-024A through ADR-024D), the
+Phase 24B decision-lock
+([`../decisions/ADR-024E-dixie-host-mvp-wire-shape.md`](../decisions/ADR-024E-dixie-host-mvp-wire-shape.md)),
+the Phase 24B specs
+([`../specs/dixie-recall-host-mvp-contract.md`](../specs/dixie-recall-host-mvp-contract.md),
+[`../specs/dixie-recall-host-validation-vectors.md`](../specs/dixie-recall-host-validation-vectors.md)),
+the Phase 5 stable-surface freeze
+([`../mvp/package-boundary.md`](../mvp/package-boundary.md), edited
+additively by Phase 24H: existing sections 1–11 preserved; one new
+section documents the `./host` subpath as type-only stable public
+API), and the current
+[`../../package.json`](../../package.json) /
+[`../../tsconfig.json`](../../tsconfig.json) /
+[`../../src/straylight/index.ts`](../../src/straylight/index.ts) /
+[`../../src/straylight/host/index.ts`](../../src/straylight/host/index.ts)
+state. It produces this README index entry, the Phase 24H summary
+handoff, the companion ADR-024G, the new `tsconfig.build.json`
+build config, the two new Phase 24H tests
+(`phase-24h-package-exports.test.ts` and
+`phase-24h-type-only-consumption.test.ts`), the edits to
+[`../../package.json`](../../package.json) (`main` removed; `types`,
+`exports`, `files`, `build`, `prepare` added; `private`, Hounfour
+`^8.6.0`, all other scripts preserved), the edit to
+[`../../.gitignore`](../../.gitignore) (`dist-types/` is **not**
+ignored — intentionally committed as the authoritative Phase 24H
+type-only package artifact; explanatory comment added), the new
+committed [`../../dist-types/`](../../dist-types/) declaration emit
+(authoritative artifact for tag/release consumers; reproducible
+from source via `npm run clean:types && npm run build`; `prepare`
+is a development convenience, not the authoritative path; the
+entire `dist-types/**` subtree is staged as part of the Phase 24H
+PR), the edit to [`../../vitest.config.ts`](../../vitest.config.ts)
+(`dist-types/**` added to excludes), and the additive edit to
+[`../mvp/package-boundary.md`](../mvp/package-boundary.md). It
+produces no new fixture, no new script, no `tsconfig.json` edit,
+no `package-lock.json` edit, no `.npmrc` edit, no edit to any
+existing wedge or host source / test file, no append to any prior
+handoff packet, no new sibling-repo handoff packet, and no
+GitHub-side action. All Phase 9 / 10 / 12 / 14 / 15 / 19A / 20 /
+21B / 22A / 23A / 24A / 24B / 24C / 24D / 24E / 24F / 24G in-repo
+rows above are unchanged by Phase 24H.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm run build
+ls dist-types/src/straylight/index.d.ts dist-types/src/straylight/host/index.d.ts
+npm test
+npm pack --dry-run
+git diff -- src/ scripts/ fixtures/ package-lock.json .npmrc
+git diff -- tsconfig.json
+git diff --stat
+git status --short
+```
+
+Expected: `npm run typecheck` clean; `npm run build` emits
+`dist-types/src/straylight/index.d.ts` and
+`dist-types/src/straylight/host/index.d.ts` (the `rootDir: "."`
+setting in `tsconfig.build.json` is load-bearing; without it the
+emit would land under `dist-types/straylight/...` and break the
+package exports paths); `npm test` passes with the two new
+Phase 24H tests; `npm pack --dry-run` includes `dist-types/`,
+`README.md`, `package.json`; empty `git diff` for `src/`,
+`scripts/`, `fixtures/`, `package-lock.json`, `.npmrc`, and
+`tsconfig.json`; `dist-types/` appears in `git status` as the
+new committed Phase 24H type-only package artifact (no longer
+gitignored) and the entire `dist-types/**` subtree must be staged
+as part of the Phase 24H PR.
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
