@@ -542,6 +542,51 @@ If a sibling-repo PR is merged without teammate review, the merge
 is treated as a violation of this index regardless of the diff's
 content.
 
+### Phase 26A-0 update — operator-authority and Flatline rule
+
+The teammate-review mechanism above has been **narrowed** for the
+duration of the Loa Straylight MVP by Phase 26A-0 / ADR-026A0. The
+canonical record of the update lives at:
+
+- [`./phase-26a0-operator-authority-flatline-rule.md`](./phase-26a0-operator-authority-flatline-rule.md)
+  — Phase 26A-0 summary handoff.
+- [`../decisions/ADR-026A0-operator-authority-flatline-rule.md`](../decisions/ADR-026A0-operator-authority-flatline-rule.md)
+  — companion decision-lock.
+
+Phase 26A-0 records the **updated rule**: the operator may
+directly edit any of `loa`, `loa-hounfour`, `loa-finn`,
+`loa-dixie`, `loa-freeside`, and `loa-straylight` for the
+Straylight MVP, provided **all five** discipline clauses hold —
+(1) existing functions do not change in their public contract
+without explicit prior authorization; (2) changes
+are additive / bounded unless explicitly authorized;
+(3) Flatline / Bridgebuilder runs before pushes or PRs that
+change source / package / runtime / test / dependency / public
+surface in any Loa stack repo; (4) repo responsibility boundaries
+remain intact; (5) ADR-022E gates and Phase 25A / Phase 25B
+refusal rules remain binding.
+
+This update narrows the **review mechanism only**. It does **not**
+relax any ADR-022E gate, does **not** weaken any Hounfour / Finn /
+Dixie / Freeside responsibility boundary, does **not** weaken any
+Phase 25A / Phase 25B refusal rule, does **not** authorize ADR-026A,
+runtime widening, a Dixie endpoint, Hounfour adoption, Finn wiring,
+Freeside wiring, Loa framework edits, public commitment-root
+behavior, storage / persistence change, new tags, new releases,
+package-surface changes, or sibling-repo edits by Phase 26A-0
+alone. Any future ADR citing Phase 26A-0 / ADR-026A0 must still
+provide its own (1) exact trigger evidence, (2) scope, (3) threat-
+model impact, (4) tests, (5) rollback, and (6) Flatline result;
+ADR-026A0 is **not** universal permission to change any repo and
+is **not** a substitute for the pre-push / pre-PR Flatline /
+Bridgebuilder pass. See
+[`../decisions/ADR-022E-phase-22-deferred-features.md`](../decisions/ADR-022E-phase-22-deferred-features.md)
+for the gate inventory and
+[`../decisions/ADR-025A-recall-wedge-mvp-implementation-sequencing.md`](../decisions/ADR-025A-recall-wedge-mvp-implementation-sequencing.md)
+/
+[`../decisions/ADR-025B-hounfour-70-status-intake.md`](../decisions/ADR-025B-hounfour-70-status-intake.md)
+for the refusal rules that remain binding.
+
 ## What this index is *not*
 
 - **Not** a license to begin sibling-repo work without reading the
@@ -627,6 +672,14 @@ content.
   rationale.
 - [`docs/handoffs/cross-repo-no-go-sequence.md`](./cross-repo-no-go-sequence.md)
   — the no-go rules that every sibling-repo PR must respect.
+- [`docs/handoffs/phase-26a0-operator-authority-flatline-rule.md`](./phase-26a0-operator-authority-flatline-rule.md)
+  — Phase 26A-0 operator-authority and Flatline-rule summary
+  handoff (review-mechanism narrowing for the Straylight MVP;
+  five-clause discipline; Flatline requirement; future-ADR
+  contract; allowed-vs-forbidden citation rules).
+- [`docs/decisions/ADR-026A0-operator-authority-flatline-rule.md`](../decisions/ADR-026A0-operator-authority-flatline-rule.md)
+  — Phase 26A-0 companion decision-lock (codification, not
+  authorization; resolves Flatline SKP-001 only).
 - [`docs/architecture/loa-straylight-product-system-architecture-spec.md`](../architecture/loa-straylight-product-system-architecture-spec.md)
   §6.2.2 (Hounfour), §6.2.3 (Finn), §6.2.4 (Dixie), §6.2.5
   (Freeside).
