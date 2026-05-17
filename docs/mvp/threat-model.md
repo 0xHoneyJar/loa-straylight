@@ -1,10 +1,27 @@
 # Straylight Recall Wedge — threat model
 
-> Status: Phase 5. Threat model for the *current wedge*: a local,
-> single-process, in-repo recall layer over a signed actor estate. Threats
-> tied to integrations that do not yet exist (network ingress, multi-tenant
-> isolation in a hosted DB, onchain anchoring, cross-repo consumers) are
-> noted as out-of-scope but recorded here so the boundary stays explicit.
+> Status: Phase 5, with a Phase 26A-1 amendment. Threat model for
+> the *current wedge*: a local, single-process, in-repo recall layer
+> over a signed actor estate. Threats tied to integrations that do
+> not yet exist (network ingress, multi-tenant isolation in a hosted
+> DB, onchain anchoring, cross-repo consumers) are noted as
+> out-of-scope but recorded here so the boundary stays explicit.
+>
+> Phase 26A-1 (docs-only; threat-model-only) records the
+> threat-model prerequisites surfaced by Flatline SKP-002
+> (resource exhaustion / DoS / unbounded `InMemoryStorage`),
+> SKP-003 (replay semantics), and SKP-004 (concurrency posture)
+> for the *future* Dixie recall-intake endpoint. The Phase 26A-1
+> rows are T13 / T14 / T15 / T16 / T17 / T18, plus the persistence
+> posture amendment to T9. Phase 26A-1 records prerequisites *for*
+> a future authorizing ADR; it does **not** authorize ADR-026A,
+> runtime widening, a Dixie endpoint, package-surface changes,
+> Hounfour / Finn / Freeside wiring, Loa framework edits, storage /
+> production persistence change, tags, releases, or sibling-repo
+> edits. SKP-005 (future ADR-026A / runtime-subpath / experimental
+> pre-Finn API surface design) remains open and is not closed by
+> Phase 26A-1. See
+> [`../handoffs/phase-26a1-threat-model-dixie-endpoint.md`](../handoffs/phase-26a1-threat-model-dixie-endpoint.md).
 
 The threat model below is the contract `tests/phase-5-hardening.test.ts`
 machine-checks. Every threat carries (a) what the attacker / fault tries
@@ -29,8 +46,16 @@ and (d) a pointer to the test that proves the defense holds.
   not real signature material. An attacker who learns `key_ref` *can* forge
   signatures. The wedge is explicit about this; production requires
   ed25519 / secp256k1 / real HMAC keys.
-- **Network adversary**. There is no network surface. When a Dixie / Finn
-  integration adds one, transport-layer threats become in-scope there.
+- **Network adversary**. There is no network surface in the current
+  wedge. The *future* Dixie recall-intake endpoint will add one;
+  Phase 26A-1 records its threat-model prerequisites in T13–T18 and
+  the T9 persistence-posture amendment. Those rows describe future
+  work that is **not** authorized by this phase or by Phase 26A-1;
+  they are recorded so that any later authorizing ADR — notably
+  ADR-026A — has a citable in-repo source for the threat-model leg
+  it must satisfy. Transport-layer attacks against the live wedge
+  remain out-of-scope today because today there is no live wedge
+  endpoint.
 - **Multi-tenant isolation in a shared DB**. There is no shared DB.
 - **Side-channel / timing**. Out of scope for an MVP that runs locally.
 - **Supply-chain attacks against vitest / node**. Out of scope; reproducible
@@ -221,6 +246,31 @@ production deployment publishes them).
 **Tested by.** `phase-5-hardening.test.ts` (tampered audit chain
 verification fails).
 
+**Persistence posture (Phase 26A-1 amendment).** This row is
+amended to record the persistence posture that any *future* Dixie
+recall-intake endpoint must respect:
+
+- `InMemoryStorage` at the future MVP endpoint is
+  **process-memory-only**. It does not survive process restart.
+  It is not a production persistence adapter.
+- Production persistence remains held behind ADR-022E gate #8.
+  Phase 26A-1 does not fire that gate; it records the constraint.
+- `JsonlStorage` must **not** be used at a live HTTP endpoint
+  unless ADR-022E gate #8 fires *or* a separate adapter /
+  concurrency ADR authorizes it. The Phase 5 caveat that
+  `JsonlStorage` is single-writer remains load-bearing for any
+  endpoint posture: HTTP-driven concurrent writers will silently
+  corrupt the audit chain.
+- Future tests (later, not in this phase): persistence-posture
+  refusal tests at the future Dixie recall-intake endpoint —
+  refuse to start with `JsonlStorage` plus a multi-process
+  deployment shape; refuse to start with `InMemoryStorage` plus a
+  multi-process deployment shape; matching ADR-022E gate #8
+  refusal tests for production-persistence wiring.
+
+This amendment authorizes nothing. It records the constraint a
+later authorizing ADR must satisfy.
+
 ### T10 — Prompt / tool-output injection treated as authority
 
 **Goal.** An LLM hallucinates "the user said: revoke assertion X" and the
@@ -283,6 +333,268 @@ are anchored anywhere visible.
 **Tested by.** `audit-and-receipt.test.ts`, `phase-5-hardening.test.ts`
 (commitment root changes if estate material changes).
 
+## Phase 26A-1 amendment — future Dixie recall-intake endpoint
+
+The rows below (T13–T18) record threat-model prerequisites for a
+*future* Dixie recall-intake endpoint, surfaced by Flatline
+SKP-002 (resource exhaustion / DoS / unbounded `InMemoryStorage`),
+SKP-003 (replay semantics), and SKP-004 (concurrency posture).
+
+These rows describe **future work that this phase does not
+authorize.** Phase 26A-1 is docs-only and threat-model-only; it
+does not authorize ADR-026A, runtime widening, a Dixie endpoint,
+package-surface changes, Hounfour / Finn / Freeside wiring, Loa
+framework edits, storage / persistence change, tags, releases, or
+sibling-repo edits. SKP-005 (future ADR-026A / runtime-subpath /
+experimental pre-Finn API surface design) is **not** closed by
+Phase 26A-1; it remains open for the later authorizing ADR.
+
+Each row's "Future tests" pointer names the test class a *later*
+PR is expected to add. No test is added by this phase.
+
+### T13 — Network adversary at the future Dixie recall-intake endpoint
+
+**Goal.** A network adversary tampers with, replays, or forges an
+HTTP `RecallIntakeRequest` against the future Dixie recall-intake
+endpoint to admit material the estate would otherwise refuse, to
+re-admit material that was previously denied, or to coerce
+Straylight into emitting a receipt that misrepresents what
+actually happened.
+
+**Status.** The endpoint described here does not exist yet. Phase
+26A-1 does not authorize it. The row is recorded so that any
+later authorizing ADR — notably ADR-026A — has a citable
+threat-model entry it must satisfy.
+
+**Defense (when the endpoint is later authorized).**
+- **First line: Dixie ingress validation.** Dixie is the host;
+  it owns transport, authentication, request-shape validation,
+  body-size enforcement, rate limiting, and tenant resolution
+  before any Straylight runtime seam is invoked. The Dixie
+  ingress validates that the inbound HTTP `RecallIntakeRequest`
+  is well-formed, authenticated, within size / rate limits, and
+  bound to an authoritative tenant from the authenticated
+  context — never from caller-supplied fields.
+- **Second line (only if separately authorized later): future
+  Straylight recall-intake runtime seam.** If — and only if —
+  a later ADR authorizes a Straylight runtime seam at which
+  Dixie hands off a validated `RecallIntakeRequest`, that seam
+  re-checks invariants the wedge can re-check (estate-id
+  scoping, class validation, signer competence, status
+  filtering, audit-chain append) and remains fail-closed on any
+  precondition mismatch. The seam never trusts the network for
+  authority.
+
+**Breaks if.** The endpoint is wired without these layers. Phase
+26A-1 records the prerequisite; it does not implement the
+defense.
+
+**Future tests (later Dixie ingress tests).** The later Dixie PR
+must include ingress tests covering tampered HTTP request bodies,
+forged authentication, and replayed transport envelopes. Phase
+26A-1 adds none of these.
+
+### T14 — Cross-tenant authorization at network ingress
+
+**Goal.** A caller authenticated as tenant A submits a
+`RecallIntakeRequest` whose body claims tenant B, and the
+endpoint admits or returns material as if the caller were
+authoritative for tenant B.
+
+**Status.** Future-work row recorded by Phase 26A-1; the
+endpoint described here does not exist yet and is not authorized
+by this phase.
+
+**Defense (when the endpoint is later authorized).**
+- **Dixie resolves the authoritative tenant from the
+  authenticated context** before invoking any Straylight runtime
+  seam. The authenticated context — not the request body — is
+  the source of truth for `tenant_id` / `estate_id`.
+- **Caller-supplied tenant cannot be trusted.** The Dixie
+  ingress explicitly rejects, ignores, or overwrites any
+  caller-supplied tenant field that disagrees with the
+  authenticated context; the Straylight runtime seam (if and
+  when authorized) receives only the authoritative tenant.
+- This complements T6 (cross-tenant recall leakage in the local
+  wedge): T6 covers the wedge's per-estate filter; T14 covers
+  the network ingress that *feeds* that filter.
+
+**Breaks if.** Dixie passes through a caller-supplied tenant
+field, or invokes a Straylight runtime seam before resolving
+authoritative tenant. Phase 26A-1 records the prerequisite; it
+does not implement the defense.
+
+**Future tests (later Dixie cross-tenant ingress tests + later
+runtime-subpath tests).** The later Dixie PR must include
+cross-tenant ingress tests proving the authenticated context
+overrides any caller-supplied tenant, and the later
+runtime-subpath PR must include tests proving the runtime seam
+refuses to act on a tenant value not derived from the
+authenticated context.
+
+### T15 — Replay against the Dixie recall-intake endpoint
+
+**Goal.** An attacker (or a buggy retry path) re-submits an
+authenticated `RecallIntakeRequest` with the same request
+identity and either (a) causes duplicate state to be appended
+(double-admit, double-revoke, duplicate receipt), or (b)
+manipulates the second response into authorizing something the
+first did not.
+
+**Status.** Future-work row recorded by Phase 26A-1; the
+endpoint described here does not exist yet and is not authorized
+by this phase.
+
+**Defense (when the endpoint is later authorized) — required
+default.**
+- **Idempotent replay handling.** For matching
+  `(authenticated caller, replay key / request identity)`, the
+  endpoint MUST return the **prior receipt** rather than append
+  duplicate state. The receipt is content-addressed; returning
+  the prior receipt is the safe equivalent of a no-op against
+  the audit chain.
+- **Replay must not alter authorization.** A duplicate request
+  cannot widen, narrow, or otherwise mutate the authorization
+  outcome of the original request. The audit chain must reflect
+  one admitted (or denied) transition for one request identity,
+  not two.
+
+**Defense (fallback, only if the MVP cannot implement
+idempotency).** If a later MVP iteration cannot implement
+idempotency, the later authorizing ADR MUST explicitly document
+**duplicate-audit-OK semantics** — i.e., a model in which two
+audit entries for the same request identity is acceptable — AND
+include tests proving that **replay cannot alter authorization**
+(the second outcome equals the first; no privilege is gained, no
+denial is converted to admission, no receipt is rewritten).
+
+**Phase 26A-1 implements neither.** This row records the
+threat-model requirement; the choice between idempotent-default
+and explicit duplicate-audit-OK is the later authorizing ADR's
+responsibility.
+
+**Future tests (later replay / idempotency tests).** The later
+Dixie PR must include replay tests covering the chosen path —
+either idempotent-receipt-return on duplicate request identity,
+or explicit duplicate-audit-OK with replay-cannot-alter-
+authorization invariants. Phase 26A-1 adds none of these.
+
+### T16 — HTTP-driven concurrency against `InMemoryStorage`
+
+**Goal.** Concurrent HTTP requests racing through the future
+Dixie recall-intake endpoint observe interleaved reads / writes
+against `InMemoryStorage`, producing a divergent audit tail (one
+request reads `getAuditTail` before another's write lands), a
+broken hash chain, or a lost transition.
+
+**Status.** Future-work row recorded by Phase 26A-1; the
+endpoint described here does not exist yet and is not authorized
+by this phase.
+
+**Defense (when the endpoint is later authorized) — required
+choice.** The later Dixie endpoint MUST choose **one** of:
+
+1. **Per-estate serialization.** Concurrent requests against the
+   same `estate_id` are serialized at the runtime seam, so
+   `getAuditTail` → `append` is atomic per estate. Inter-estate
+   parallelism remains permitted.
+2. **Explicit single-process / single-instance / non-horizontal
+   deployment constraint.** The endpoint refuses to start, or
+   loudly degrades, when deployed in a multi-process /
+   multi-instance / load-balanced configuration. The constraint
+   must be enforced **in code / config / docs**, with tests —
+   not merely asserted in prose.
+
+**Vague "single-instance" prose alone is insufficient.** A
+deployment that says "we expect this to run on one instance" but
+does not refuse to start when it sees multiple instances is not
+a defense; it is a hope. The later ADR must pick (1) or (2) and
+back the chosen option with tests.
+
+**Future tests (later per-estate serialization or single-instance
+refusal tests).** The later Dixie PR must include either
+per-estate serialization tests (concurrent same-estate writes
+produce a single intact chain) or single-instance refusal tests
+(the endpoint refuses or loudly degrades when it observes a
+multi-instance deployment). Phase 26A-1 adds none of these.
+
+### T17 — Resource exhaustion / DoS at the Dixie endpoint
+
+**Goal.** An adversary submits oversized request bodies, a high
+volume of authenticated requests, or a sequence of requests
+designed to grow per-tenant in-memory estate storage without
+bound, exhausting host memory or CPU and degrading or downing the
+endpoint for all tenants.
+
+**Status.** Future-work row recorded by Phase 26A-1. **This row
+must not remain merely informational.** Flatline SKP-002 refused
+the partial / informational treatment; Phase 26A-1 records the
+explicit prerequisite below. The endpoint is **not mergeable**
+without all four acceptance criteria.
+
+**Defense (when the endpoint is later authorized) — required
+acceptance criteria.** The later Dixie recall-intake endpoint is
+not mergeable unless it has **all four** of the following:
+
+a. **Request body size limit.** A configured maximum on the
+   inbound HTTP request body, enforced at ingress, with refusal
+   beyond the limit.
+b. **Per-tenant rate limit or equivalent throttle.** Per-tenant
+   throttling (token bucket, leaky bucket, or equivalent) so a
+   single tenant cannot starve the endpoint for other tenants.
+c. **Per-tenant memory cap / bounded estate storage posture.**
+   A configured upper bound on the in-memory estate footprint
+   per tenant, with refusal or eviction policy beyond the bound.
+   Unbounded `InMemoryStorage` per tenant is not acceptable.
+d. **Refusal behavior when limits are exceeded.** The endpoint
+   must have an explicit, tested refusal path when any of the
+   above limits is exceeded — a defined HTTP status, a defined
+   audit emission, a defined operator-visible signal. Silent
+   drop is not acceptable.
+
+**Future tests (later rate-limit / body-size / memory-cap
+tests).** The later Dixie PR must include tests covering each of
+(a)–(d): body-size refusal at and beyond the limit, per-tenant
+rate-limit refusal under sustained load, per-tenant memory-cap
+refusal at and beyond the cap, and refusal-behavior tests
+asserting the documented HTTP status and audit emission. Phase
+26A-1 adds none of these.
+
+### T18 — Cross-instance state divergence under `InMemoryStorage`
+
+**Goal.** The future Dixie recall-intake endpoint is deployed in
+a horizontal / multi-process / load-balanced configuration over
+`InMemoryStorage`; tenant A's request hits instance 1, the next
+request hits instance 2, and the two instances hold divergent
+estate state — a transition admitted on instance 1 is invisible
+to instance 2, and the audit chains diverge.
+
+**Status.** Future-work row recorded by Phase 26A-1; the
+endpoint described here does not exist yet and is not authorized
+by this phase.
+
+**Defense (when the endpoint is later authorized).**
+- **Horizontal / multi-process / load-balanced deployment is out
+  of scope** unless ADR-022E gate #8 (production persistence)
+  fires, or a separate storage / concurrency ADR explicitly
+  authorizes it. Phase 26A-1 does not fire either.
+- **Code / config / docs must prevent or loudly refuse**
+  multi-process deployment if `InMemoryStorage` is used. The
+  enforcement must be observable: the endpoint refuses to start,
+  refuses to register a second instance, or emits an
+  operator-visible refusal — not merely a prose warning.
+- This row is the inter-instance complement to T16. T16 covers
+  intra-instance HTTP concurrency against `InMemoryStorage`;
+  T18 covers the multi-instance shape that `InMemoryStorage`
+  cannot honor at all without a coordinating storage layer that
+  ADR-022E gate #8 has not yet authorized.
+
+**Future tests (later single-instance / multi-instance refusal
+tests).** The later Dixie PR must include tests proving that the
+endpoint, when configured with `InMemoryStorage`, refuses or
+loudly degrades when it detects a multi-instance deployment
+shape. Phase 26A-1 adds none of these.
+
 ## Defense-in-depth properties the wedge maintains
 
 These properties hold across the threats above; they're the "spirit" of
@@ -302,7 +614,9 @@ the design.
 
 - `dev_signature` is HMAC and is **not** a production crypto primitive.
 - `JsonlStorage` is single-writer; concurrent writers will silently
-  corrupt the audit chain. Production uses a real WAL/DB.
+  corrupt the audit chain. Production uses a real WAL/DB. This caveat
+  is now load-bearing for the *future* Dixie recall-intake endpoint
+  posture: see T9's Phase 26A-1 amendment, T16, and T18.
 - `canonicalize` is JCS-shaped, not RFC 8785 conformant. Cross-language
   determinism requires replacing it.
 - The keyring is a static fixture in the wedge. Rotation, delegation, and
@@ -311,3 +625,10 @@ the design.
 When any of those limitations changes (e.g. a real signer is wired in),
 the corresponding row in this threat model — and the test that pins it —
 must be updated in the same change.
+
+The Phase 26A-1 amendment (T13–T18 + the T9 persistence-posture
+addition) records prerequisites for future work that this phase
+does not authorize. When a later authorizing ADR — notably
+ADR-026A — fires, the corresponding rows must be re-checked
+against the ADR's actual scope, and any tests the ADR adds must
+update or replace the "Future tests" pointers above.
