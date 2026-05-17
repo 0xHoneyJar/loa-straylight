@@ -2529,6 +2529,178 @@ v0.0.1` prints `tag`; `git tag --list 'v0.0.2' 'v0.0.3'` prints
 nothing (accidental tags deleted locally and remotely before
 Phase 25B).
 
+## Phase 26A-0 — Operator-authority and Flatline rule (docs-only)
+
+Phase 26A-0 is a **docs-only operator-authority and Flatline-rule
+decision-lock** staged on the
+`phase-26a0-operator-authority-flatline-rule` branch inside
+`loa-straylight` after Phase 25B (PR #40) merged. The companion
+decision-lock is
+[`../decisions/ADR-026A0-operator-authority-flatline-rule.md`](../decisions/ADR-026A0-operator-authority-flatline-rule.md).
+
+Phase 26A-0 resolves **Flatline SKP-001 only**. SKP-001 was
+surfaced by a real 3-model Flatline pass on Phase 26A Option C2
+(verdict: **REVISE**), which refused to let ADR-026A or its
+dependent threat-model PR / runtime export work / Dixie endpoint
+work proceed while citing **chat memory** as their
+operator-authority trigger evidence. Phase 26A-0 establishes a
+stable, in-repo, citable source for the updated operator-
+authority rule so future ADRs can cite the in-repo record instead
+of chat memory.
+
+Phase 26A-0 records the **old Phase 15 rule**: sibling-repo
+implementation PRs required teammate review before merge.
+
+Phase 26A-0 records the **updated rule**: for the duration of the
+Loa Straylight MVP, the operator may directly edit any of `loa`,
+`loa-hounfour`, `loa-finn`, `loa-dixie`, `loa-freeside`, and
+`loa-straylight`, provided **all five** discipline clauses hold —
+(1) existing functions do not change unexpectedly; (2) changes
+are additive / bounded unless explicitly authorized;
+(3) Flatline / Bridgebuilder runs before pushes or PRs that
+change source / package / runtime / test / dependency / public
+surface in any Loa stack repo; (4) repo responsibility boundaries
+remain intact; (5) ADR-022E gates and Phase 25A / Phase 25B
+refusal rules remain binding.
+
+Phase 26A-0 narrows the **review mechanism** only. It does **not**
+change technical implementation order by itself — Phase 25A's
+implementation-sequencing decision-lock and the ADR-022E gate
+inventory remain in their current pass/hold state. It does **not**
+authorize ADR-026A, runtime widening, a Dixie endpoint, Hounfour
+adoption, Finn wiring, Freeside wiring, Loa framework edits,
+public commitment-root behavior, storage / persistence change,
+new tags, new releases, package-surface changes, or sibling-repo
+edits by this phase alone. It does **not** create or relax any
+ADR-022E gate, does **not** weaken any Hounfour / Finn / Dixie /
+Freeside responsibility boundary, and does **not** weaken any
+Phase 25A or Phase 25B refusal rule.
+
+Phase 26A-0 pins a **future-ADR contract**: any future ADR that
+cites Phase 26A-0 / ADR-026A0 as its operator-authority trigger
+evidence must still provide (1) exact trigger evidence beyond
+operator authority, (2) scope, (3) threat-model impact, (4) tests,
+(5) rollback, and (6) a Flatline result on the ADR's PR. An ADR
+that omits any of these may be refused even if it correctly cites
+ADR-026A0 for the operator-authority leg.
+
+Phase 26A-0 pins **allowed citations** (cite ADR-026A0 / Phase
+26A-0 as stable operator-authority trigger evidence for a
+specific later ADR; cite alongside ADR-025A / ADR-025B for
+sequencing; cite as the canonical record of the Phase 15 →
+updated-rule narrowing of the review mechanism) and **forbidden
+citations** (cite as universal permission to change any repo or
+bypass any gate; cite as bypass for any ADR-022E gate or any
+Phase 25A / 25B refusal rule; cite as a substitute for the
+pre-push / pre-PR Flatline / Bridgebuilder pass; cite as a
+substitute for the future-ADR contract; cite as pre-approval of
+any successor ADR including ADR-026A specifically).
+
+A pre-merge Flatline / Bridgebuilder pass is performed against
+the Phase 26A-0 handoff and ADR-026A0 before merge, because Phase
+26A-0 is the docs-only-creates-authorization class described in
+the Flatline-requirement section. Phase 26A-0 does **not** edit
+any file under [`../../src/`](../../src/) /
+[`../../tests/`](../../tests/) /
+[`../../scripts/`](../../scripts/) /
+[`../../fixtures/`](../../fixtures/) /
+[`../../dist-types/`](../../dist-types/), does **not** edit
+[`../../package.json`](../../package.json) /
+[`../../package-lock.json`](../../package-lock.json) /
+[`../../tsconfig.json`](../../tsconfig.json) /
+[`../../tsconfig.build.json`](../../tsconfig.build.json) /
+[`../../vitest.config.ts`](../../vitest.config.ts) /
+[`../../.npmrc`](../../.npmrc) /
+[`../../.gitignore`](../../.gitignore) /
+[`../../.loa.config.yaml`](../../.loa.config.yaml), does **not**
+edit [`../mvp/package-boundary.md`](../mvp/package-boundary.md) /
+[`../mvp/threat-model.md`](../mvp/threat-model.md) /
+[`../mvp/straylight-recall-wedge.md`](../mvp/straylight-recall-wedge.md) /
+[`../mvp/phase-4-demo.md`](../mvp/phase-4-demo.md), does
+**not** edit any prior ADR, does **not** edit any prior handoff
+**other than the two append-only updates explicitly listed
+below** (this README index entry, plus the narrow cross-reference
+in [`./cross-repo-handoff-index.md`](./cross-repo-handoff-index.md)),
+and does **not** touch
+[`../../.loa`](../../.loa) /
+[`../../.claude/`](../../.claude/) /
+[`../../.beads/`](../../.beads/) /
+[`../../.run/`](../../.run/) /
+[`../../.github/`](../../.github/) /
+[`../../grimoires/loa/a2a/`](../../grimoires/loa/a2a/) /
+`node_modules/`. Phase 26A-0 does **not** create or push a tag,
+does **not** publish, does **not** create a GitHub Release, does
+**not** file any GitHub issue / comment / PR, does **not** bump
+or change Hounfour, and does **not** edit any sibling repo.
+
+| Document / artifact | Purpose |
+|---|---|
+| [`phase-26a0-operator-authority-flatline-rule.md`](./phase-26a0-operator-authority-flatline-rule.md) | Phase 26A-0 summary handoff: status banner; SKP-001 unblock context; old Phase 15 rule recorded verbatim from the in-repo record; updated rule with the five discipline clauses; review-mechanism narrowing only (no technical-order change); refusal-rule block (no ADR-026A authorization, no runtime widening, no Dixie endpoint, no Hounfour adoption, no Finn wiring, no Freeside wiring, no Loa framework edits, no public commitment roots, no storage changes, no tags, no releases, no package-surface changes, no sibling-repo edits by this phase alone, no ADR-022E gate relaxation, no Phase 25A / 25B refusal-rule relaxation, no responsibility-boundary relaxation); Flatline requirement (six surface classes for the six Loa stack repos; docs-only creates-authorization rule); future-ADR contract (six conjunctive items); allowed-vs-forbidden citation rules; explicit non-scope (18 items); validation expectations (docs-only); cross-references. |
+| [`../decisions/ADR-026A0-operator-authority-flatline-rule.md`](../decisions/ADR-026A0-operator-authority-flatline-rule.md) | Phase 26A-0 decision-lock: Status (Accepted-for-Phase-26A-0; codification not authorization); Context (SKP-001 unblock; old Phase 15 rule; why a docs-only authority record is the right shape); **Decision** (§1 file set; §2 updated operator-authority rule; §3 Flatline requirement; §4 mechanism narrowing only; §5 future-ADR contract; §6 allowed-vs-forbidden citation rules; §7 refusal rules; §8 scope limit); Explicit non-scope (18 items); Consequences; Source files inspected. |
+
+The Phase 26A-0 packet consumes the Phase 25B summary handoff,
+ADR-025B, ADR-025A, ADR-024A through ADR-024K / ADR-022A through
+ADR-022E (read-only),
+[`./cross-repo-handoff-index.md`](./cross-repo-handoff-index.md)
+(read-only at decision time; appended below for the cross-
+reference),
+[`./cross-repo-implementation-order.md`](./cross-repo-implementation-order.md)
+(read-only),
+[`./cross-repo-no-go-sequence.md`](./cross-repo-no-go-sequence.md)
+(read-only), the Phase 5 stable-surface freeze
+([`../mvp/package-boundary.md`](../mvp/package-boundary.md),
+read-only), and the threat model
+([`../mvp/threat-model.md`](../mvp/threat-model.md), read-only).
+It produces this single summary handoff, the companion
+ADR-026A0, this README index entry, and the narrow
+cross-reference append in
+[`./cross-repo-handoff-index.md`](./cross-repo-handoff-index.md).
+It produces no new fixture, no new script, no new test, no
+`package.json` / `package-lock.json` / `tsconfig.json` /
+`tsconfig.build.json` / `vitest.config.ts` / `.npmrc` /
+`.gitignore` / `.github/workflows/` change, no edit to any
+existing wedge or host source / test file, no edit to any
+committed declaration under `dist-types/`, no append to any
+prior handoff packet other than the two updates listed in the
+status banner, no new sibling-repo handoff packet, no GitHub-side
+action, no new tag, no tag push, and no GitHub Release. All
+Phase 9 / 10 / 12 / 14 / 15 / 19A / 20 / 21B / 22A / 23A / 24A
+through 24L / 25A / 25B in-repo rows above are unchanged by
+Phase 26A-0.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+npm run build
+ls dist-types/src/straylight/index.d.ts dist-types/src/straylight/host/index.d.ts
+npm pack --dry-run
+git diff -- src/ tests/ fixtures/ scripts/ package.json package-lock.json tsconfig.json tsconfig.build.json vitest.config.ts .npmrc .gitignore dist-types/ docs/mvp/package-boundary.md docs/mvp/threat-model.md
+git diff --stat
+git status --short
+git tag --list v0.0.1
+git rev-parse v0.0.1^{commit}
+git cat-file -t v0.0.1
+git tag --list 'v0.0.2' 'v0.0.3'
+```
+
+Expected: `npm run typecheck` clean; `npm test` passes
+identically to the post-Phase-25B baseline; `npm run build`
+clean (rebuilt `dist-types/` byte-identical to the committed
+artifact); both declaration entrypoints exist; `npm pack
+--dry-run` shape unchanged from Phase 24H/I/J/K/L / 25A / 25B;
+forbidden-path diff is **empty**; `git diff --stat` shows only
+the four Phase 26A-0 docs (this README append, the new handoff,
+ADR-026A0, and the
+[`./cross-repo-handoff-index.md`](./cross-repo-handoff-index.md)
+cross-reference append); `git status --short` shows only the
+four Phase 26A-0 docs plus any pre-existing local dirt; `git tag
+--list v0.0.1` prints `v0.0.1`; `git rev-parse v0.0.1^{commit}`
+prints the post-Phase-25B recording baseline commit; `git
+cat-file -t v0.0.1` prints `tag`; `git tag --list 'v0.0.2'
+'v0.0.3'` prints nothing.
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
