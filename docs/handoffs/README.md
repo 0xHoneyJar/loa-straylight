@@ -2701,6 +2701,91 @@ prints the post-Phase-25B recording baseline commit; `git
 cat-file -t v0.0.1` prints `tag`; `git tag --list 'v0.0.2'
 'v0.0.3'` prints nothing.
 
+## Phase 26A-1 — Threat-model amendment for the future Dixie recall-intake endpoint (docs-only)
+
+Phase 26A-1 is a **docs-only, threat-model-only** amendment that
+records the threat-model prerequisites surfaced by Flatline
+SKP-002 (resource exhaustion / DoS / unbounded `InMemoryStorage`),
+SKP-003 (replay semantics), and SKP-004 (concurrency posture)
+for the *future* Dixie recall-intake endpoint. Phase 26A-1 has
+**no companion ADR** because this phase authorizes nothing;
+Phase 26A-0 / ADR-026A0 remains the operator-authority leg, and
+ADR-026A (when later authored) is the implementation-authorizing
+ADR. Phase 26A-1 sits between them as the threat-model leg.
+
+Phase 26A-1 follows Phase 26A-0 (PR #41), which resolved
+SKP-001. Phase 26A-1 does **not** close SKP-005 (future
+ADR-026A / runtime-subpath / experimental pre-Finn API surface
+design); SKP-005 remains open for the later authorizing ADR.
+
+The threat-model amendment adds rows **T13** (network adversary
+at the future Dixie recall-intake endpoint), **T14** (cross-tenant
+authorization at network ingress), **T15** (replay against the
+Dixie recall-intake endpoint), **T16** (HTTP-driven concurrency
+against `InMemoryStorage`), **T17** (resource exhaustion / DoS at
+the Dixie endpoint), and **T18** (cross-instance state divergence
+under `InMemoryStorage`), and amends **T9** with the persistence
+posture: `InMemoryStorage` is process-memory-only and not a
+production persistence adapter; `JsonlStorage` must not be used
+at a live HTTP endpoint unless ADR-022E gate #8 fires or a
+separate adapter / concurrency ADR authorizes it. Each new or
+amended row carries a **Future tests** pointer; no test is added
+by this phase.
+
+Phase 26A-1 does **not** authorize ADR-026A, runtime widening, a
+Dixie endpoint, package-surface changes, Hounfour adoption, Finn
+wiring, Freeside wiring, Loa framework edits, storage /
+production persistence change, tags, releases, or sibling-repo
+edits. It does **not** create or relax any ADR-022E gate, does
+**not** weaken any Hounfour / Finn / Dixie / Freeside
+responsibility boundary, and does **not** weaken any Phase 25A,
+Phase 25B, or Phase 26A-0 refusal rule.
+
+| Document / artifact | Purpose |
+|---|---|
+| [`phase-26a1-threat-model-dixie-endpoint.md`](./phase-26a1-threat-model-dixie-endpoint.md) | Phase 26A-1 summary handoff: status banner; SKP-002 / SKP-003 / SKP-004 unblock context with explicit non-closure of SKP-005; T13–T18 + T9-amendment summary; sixteen-item refusal-rule block (no ADR-026A authorization, no runtime widening, no Dixie endpoint, no package-surface change, no Hounfour / Finn / Freeside wiring, no Loa framework edits, no storage / persistence change, no tags, no releases, no sibling-repo edits, no SKP-005 closure, no ADR-022E / Phase 25A / 25B / 26A-0 relaxation, no successor-ADR pre-approval); future-ADR contract reminder anchored to Phase 26A-0; validation expectations (docs-only); cross-references. |
+| [`../mvp/threat-model.md`](../mvp/threat-model.md) | Threat-model document, amended in-place: status banner now flags Phase 26A-1; the out-of-scope "Network adversary" bullet now points at T13–T18; T9 has a "Persistence posture (Phase 26A-1 amendment)" addition; T13–T18 added under a "Phase 26A-1 amendment — future Dixie recall-intake endpoint" section before the "Defense-in-depth properties" closing; the closing "Limitations" section cross-references the amendment. |
+
+No ADR was created for Phase 26A-1 because this phase
+authorizes nothing. ADR-026A0 (Phase 26A-0) remains the
+operator-authority record; ADR-026A (when later authored) is
+the implementation-authorizing ADR that must cite both
+Phase 26A-0 (authority leg) and Phase 26A-1 (threat-model leg).
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+npm run build
+ls dist-types/src/straylight/index.d.ts dist-types/src/straylight/host/index.d.ts
+npm pack --dry-run
+git diff -- src/ tests/ fixtures/ scripts/ package.json package-lock.json tsconfig.json tsconfig.build.json vitest.config.ts .npmrc .gitignore dist-types/ docs/mvp/package-boundary.md
+git diff --stat
+git status --short
+git tag --list v0.0.1
+git rev-parse v0.0.1^{commit}
+git cat-file -t v0.0.1
+git tag --list 'v0.0.2' 'v0.0.3'
+```
+
+Expected: `npm run typecheck` clean; `npm test` passes
+identically to the post-Phase-26A-0 baseline; `npm run build`
+clean (rebuilt `dist-types/` byte-identical to the committed
+artifact); both declaration entrypoints exist; `npm pack
+--dry-run` shape unchanged from Phase 24H/I/J/K/L / 25A / 25B /
+26A-0; forbidden-path `git diff` is **empty** (note that
+`docs/mvp/threat-model.md` is **not** on the forbidden-path
+list for this phase: it is the primary target); `git diff
+--stat` shows only the three Phase 26A-1 docs (this README
+append, the new handoff, and `docs/mvp/threat-model.md`); `git
+status --short` shows only the three Phase 26A-1 docs plus any
+pre-existing local dirt; `git tag --list v0.0.1` prints
+`v0.0.1`; `git rev-parse v0.0.1^{commit}` prints the
+post-Phase-25B recording baseline commit; `git cat-file -t
+v0.0.1` prints `tag`; `git tag --list 'v0.0.2' 'v0.0.3'` prints
+nothing.
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
