@@ -2242,6 +2242,141 @@ v0.0.1^{commit}` prints
 `de65d93568e70c53ba952279f41a23d2f7d5123e`; `git cat-file -t
 v0.0.1` prints `tag`.
 
+## Phase 25A — Recall Wedge MVP implementation-sequencing decision-lock (docs-only)
+
+Phase 25A is a **docs-only implementation-sequencing
+decision-lock** staged on the
+`phase-25a-recall-wedge-mvp-implementation-readiness` branch
+inside `loa-straylight` after Phase 24L (PR #38) merged and
+closed the Straylight-side intake for Dixie type-only
+consumption. The companion decision-lock is
+[`../decisions/ADR-025A-recall-wedge-mvp-implementation-sequencing.md`](../decisions/ADR-025A-recall-wedge-mvp-implementation-sequencing.md).
+
+Phase 25A pins the order in which existing
+[`../decisions/ADR-022E-phase-22-deferred-features.md`](../decisions/ADR-022E-phase-22-deferred-features.md)
+gates #1–#20 should be considered when each gate's trigger
+independently fires, and pins the per-gate preconditions a
+future authorizing ADR must satisfy. **Phase 25A is sequencing,
+not authorization.** Each successor ADR remains independently
+required, independently triggered, and independently refusable.
+
+Phase 25A records the post-Phase-24L state: `main` HEAD =
+post-PR-#38; the annotated `v0.0.1` tag remains pinned to
+`de65d93568e70c53ba952279f41a23d2f7d5123e` and reachable at
+`origin`; package `@loa/straylight` at `0.0.1` with
+`private: true`; type-only `./` and `./host` exports; no runtime
+conditions; Hounfour at `^8.6.0`; all three ADR-024H gates
+satisfied; Dixie PR #99 stands as the first conforming
+type-only downstream consumer; Phase 19A pending feedback on
+[`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70)
+remains pending; ADR-022E gate inventory unchanged.
+
+Phase 25A does **not** create or relax any ADR-022E gate, does
+**not** add code / tests / fixtures / schemas / exports /
+dependencies / package metadata / `dist-types/`, does **not**
+edit any sibling repo, does **not** create or push a tag, does
+**not** publish, does **not** create a GitHub Release, does
+**not** advance any ADR-022E gate, does **not** advance the
+Phase 19A pending feedback gate, does **not** authorize any
+runtime widening, endpoint / route / middleware / proxy /
+rendering / public surface, vector 9 / 10 / 11 widening,
+Hounfour `#116` adoption, `0xhoneyjar:straylight:*` adoption,
+`recall-wedge` adoption, public commitment-root behavior,
+Hounfour change, or Straylight dependency-posture change, and
+does **not** request any Flatline / Bridgebuilder / red-team
+review. Phase 25A does **not** edit any file under
+[`../../src/`](../../src/) /
+[`../../tests/`](../../tests/) /
+[`../../scripts/`](../../scripts/) /
+[`../../fixtures/`](../../fixtures/) /
+[`../../dist-types/`](../../dist-types/), does **not** edit
+[`../../package.json`](../../package.json) /
+[`../../package-lock.json`](../../package-lock.json) /
+[`../../tsconfig.json`](../../tsconfig.json) /
+[`../../tsconfig.build.json`](../../tsconfig.build.json) /
+[`../../vitest.config.ts`](../../vitest.config.ts) /
+[`../../.npmrc`](../../.npmrc) /
+[`../../.gitignore`](../../.gitignore), does **not** edit
+[`../mvp/package-boundary.md`](../mvp/package-boundary.md) /
+[`../mvp/threat-model.md`](../mvp/threat-model.md) /
+[`../mvp/straylight-recall-wedge.md`](../mvp/straylight-recall-wedge.md) /
+[`../mvp/phase-4-demo.md`](../mvp/phase-4-demo.md), does
+**not** edit any prior ADR, does **not** edit any prior
+handoff (other than this README index entry), and does **not**
+touch
+[`../../.loa`](../../.loa) /
+[`../../.loa.config.yaml`](../../.loa.config.yaml) /
+[`../../.claude/`](../../.claude/) /
+[`../../.beads/`](../../.beads/) /
+[`../../.run/`](../../.run/) /
+[`../../.github/`](../../.github/) /
+[`../../grimoires/loa/a2a/`](../../grimoires/loa/a2a/) /
+`node_modules/`. No Flatline pass is required because
+Phase 25A makes no package-surface, source, test, fixture,
+schema, or dependency change.
+
+| Document / artifact | Purpose |
+|---|---|
+| [`phase-25a-recall-wedge-mvp-implementation-readiness.md`](./phase-25a-recall-wedge-mvp-implementation-readiness.md) | Phase 25A summary handoff: status banner; Phase 24H–24L recap; current-state table (post-PR-#38; `v0.0.1` annotated; all three ADR-024H gates satisfied; Hounfour `^8.6.0`; ADR-022E gate inventory unchanged); ADR-022E gate-sequencing table (one row per gate #1–#20: topic / current status / trigger required / likely successor ADR family); future-authorizing-ADR required-content checklist (trigger evidence, source artifact citation, exact scope, exact files allowed, threat-model impact, validation plan, rollback / refusal rules, Flatline requirement); allowed-vs-forbidden citation rules ("how future work may cite Phase 25A"); 13 refusal rules reviewers may cite verbatim; explicit non-scope (14 items); validation expectations (docs-only); open follow-ups; cross-references. |
+| [`../decisions/ADR-025A-recall-wedge-mvp-implementation-sequencing.md`](../decisions/ADR-025A-recall-wedge-mvp-implementation-sequencing.md) | Phase 25A decision-lock: Status (Accepted-for-Phase-25A; sequencing not authorization); Context (post-Phase-24L baseline; what Phase 25A is for); **Decision** (§1 substrate restated unchanged; §2 ADR-022E gate sequencing table; §3 future-authorizing-ADR required-content checklist; §4 allowed-vs-forbidden citation rules; §5 refusal rules); Explicit non-scope (20 items); Consequences; Source files inspected. |
+
+The Phase 25A packet consumes the Phase 24L summary handoff,
+ADR-024K, the ADR-024A through ADR-024J / ADR-022A through
+ADR-022E series, the Phase 5 stable-surface freeze
+([`../mvp/package-boundary.md`](../mvp/package-boundary.md),
+read-only), the threat model
+([`../mvp/threat-model.md`](../mvp/threat-model.md), read-only),
+the wedge entry doc
+([`../mvp/straylight-recall-wedge.md`](../mvp/straylight-recall-wedge.md),
+read-only), the schema-contract draft and conformance-vector
+matrix under [`../specs/`](../specs/) (read-only), the current
+[`../../package.json`](../../package.json) /
+[`../../src/straylight/index.ts`](../../src/straylight/index.ts) /
+[`../../src/straylight/host/index.ts`](../../src/straylight/host/index.ts) /
+[`../../dist-types/`](../../dist-types/) state (read-only), and
+the existing annotated `v0.0.1` tag (read-only). It produces
+this single summary handoff, the companion ADR-025A, and this
+README index entry. It produces no new fixture, no new script,
+no new test, no `package.json` / `package-lock.json` /
+`tsconfig.json` / `tsconfig.build.json` / `vitest.config.ts` /
+`.npmrc` / `.gitignore` / `.github/workflows/` change, no edit
+to any existing wedge or host source / test file, no edit to
+any committed declaration under `dist-types/`, no append to any
+prior handoff packet, no new sibling-repo handoff packet, no
+GitHub-side action, no new tag, no tag push, and no GitHub
+Release. All Phase 9 / 10 / 12 / 14 / 15 / 19A / 20 / 21B /
+22A / 23A / 24A through 24L in-repo rows above are unchanged by
+Phase 25A.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+npm run build
+ls dist-types/src/straylight/index.d.ts dist-types/src/straylight/host/index.d.ts
+npm pack --dry-run
+git diff -- src/ tests/ fixtures/ scripts/ package.json package-lock.json tsconfig.json tsconfig.build.json vitest.config.ts .npmrc .gitignore dist-types/ docs/mvp/package-boundary.md
+git diff --stat
+git status --short
+git tag --list v0.0.1
+git rev-parse v0.0.1^{commit}
+git cat-file -t v0.0.1
+```
+
+Expected: `npm run typecheck` clean; `npm test` passes
+identically to the post-Phase-24L baseline; `npm run build`
+clean (rebuilt `dist-types/` byte-identical to the committed
+artifact); both declaration entrypoints exist; `npm pack
+--dry-run` shape unchanged from Phase 24H/I/J/K/L; forbidden-
+path diff is **empty**; `git diff --stat` shows only the three
+Phase 25A docs (this README append, the new handoff, and
+ADR-025A); `git status --short` shows only the three Phase 25A
+docs plus any pre-existing local dirt; `git tag --list v0.0.1`
+prints `v0.0.1`; `git rev-parse v0.0.1^{commit}` prints
+`de65d93568e70c53ba952279f41a23d2f7d5123e`; `git cat-file -t
+v0.0.1` prints `tag`.
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
