@@ -2377,6 +2377,158 @@ prints `v0.0.1`; `git rev-parse v0.0.1^{commit}` prints
 `de65d93568e70c53ba952279f41a23d2f7d5123e`; `git cat-file -t
 v0.0.1` prints `tag`.
 
+## Phase 25B — Hounfour #70 status intake and adoption-trigger check (docs-only)
+
+Phase 25B is a **docs-only Hounfour #70 status intake and
+adoption-trigger check** staged on the
+`phase-25b-hounfour-70-status-intake` branch inside
+`loa-straylight` after Phase 25A (PR #39) merged. The companion
+decision-lock is
+[`../decisions/ADR-025B-hounfour-70-status-intake.md`](../decisions/ADR-025B-hounfour-70-status-intake.md).
+
+Phase 25B records the post-Phase-25A in-repo state of the
+[`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70)
+coordination thread, summarizes which substrate facts Hounfour
+v8.5.x and v8.6.0 appear to have shipped from the Straylight
+repo's record, and applies the per-gate trigger check from
+[`../decisions/ADR-022E-phase-22-deferred-features.md`](../decisions/ADR-022E-phase-22-deferred-features.md)
+gates #1–#20 against that state. **Phase 25B is status intake,
+not authorization.**
+
+All "filed" / "not filed" / "pending" statements in Phase 25B
+describe the **Straylight repo's in-repo record only**. Phase 25B
+performed no live-GitHub inspection of issue #70; statements
+sourced from the Straylight repo are phrased as **"no in-repo
+evidence found"** rather than as live-GitHub claims.
+
+Phase 25B records the post-Phase-25A baseline: Phase 24L (PR #38)
+and Phase 25A (PR #39) are complete; `main` HEAD = post-PR-#39;
+the annotated `v0.0.1` tag remains the **sole** release-
+consumption tag, pointing at
+`de65d93568e70c53ba952279f41a23d2f7d5123e`; the accidental
+`v0.0.2` and `v0.0.3` tags were **deleted locally and remotely
+before Phase 25B** and are not part of any release-consumption
+posture; package `@loa/straylight` at `0.0.1` with
+`private: true`; type-only `./` and `./host` exports; no runtime
+conditions; Hounfour at `^8.6.0`; all three ADR-024H gates
+satisfied; Phase 19A pending feedback on issue #70 remains
+pending from in-repo record; Phase 22A v8.6.x status-comment
+draft has no in-repo evidence of filing; ADR-022E gate inventory
+unchanged.
+
+Phase 25B's gate-trigger check concludes: **no ADR-022E gate has
+crossed its full trigger conjunction**; gate #4 (`Challenge`
+adoption) has **partial substrate availability only** —
+`challenge.schema.json` is shipped at v8.6.0, but the
+authorization leg (separate ADR + alias / re-export path +
+boundary preservation test) has not fired; **no Hounfour
+adoption is justified by Phase 25B**; **no authorizing ADR is
+justified by Phase 25B**.
+
+Phase 25B does **not** create or relax any ADR-022E gate, does
+**not** authorize any Hounfour adoption (`Challenge`,
+`EstateTransition`, `safeCanonicalize`, `#116`,
+`0xhoneyjar:straylight:*`, `recall-wedge`), does **not** add
+code / tests / fixtures / schemas / exports / dependencies /
+package metadata / `dist-types/`, does **not** edit any sibling
+repo, does **not** create or push a tag, does **not** publish,
+does **not** create a GitHub Release, does **not** advance the
+Phase 19A pending-feedback gate, does **not** file the Phase 19A
+or Phase 22A drafted comments, does **not** authorize any
+runtime widening, endpoint / route / middleware / proxy /
+rendering / public surface, public commitment-root behavior,
+Hounfour change, or Straylight dependency-posture change, and
+does **not** request any Flatline / Bridgebuilder / red-team
+review. Phase 25B does **not** edit any file under
+[`../../src/`](../../src/) /
+[`../../tests/`](../../tests/) /
+[`../../scripts/`](../../scripts/) /
+[`../../fixtures/`](../../fixtures/) /
+[`../../dist-types/`](../../dist-types/), does **not** edit
+[`../../package.json`](../../package.json) /
+[`../../package-lock.json`](../../package-lock.json) /
+[`../../tsconfig.json`](../../tsconfig.json) /
+[`../../tsconfig.build.json`](../../tsconfig.build.json) /
+[`../../vitest.config.ts`](../../vitest.config.ts) /
+[`../../.npmrc`](../../.npmrc) /
+[`../../.gitignore`](../../.gitignore), does **not** edit
+[`../mvp/package-boundary.md`](../mvp/package-boundary.md) /
+[`../mvp/threat-model.md`](../mvp/threat-model.md) /
+[`../mvp/straylight-recall-wedge.md`](../mvp/straylight-recall-wedge.md) /
+[`../mvp/phase-4-demo.md`](../mvp/phase-4-demo.md), does
+**not** edit any prior ADR, does **not** edit any prior handoff
+(other than this README index entry), and does **not** touch
+[`../../.loa`](../../.loa) /
+[`../../.loa.config.yaml`](../../.loa.config.yaml) /
+[`../../.claude/`](../../.claude/) /
+[`../../.beads/`](../../.beads/) /
+[`../../.run/`](../../.run/) /
+[`../../.github/`](../../.github/) /
+[`../../grimoires/loa/a2a/`](../../grimoires/loa/a2a/) /
+`node_modules/`. No Flatline pass is required because Phase 25B
+makes no package-surface, source, test, fixture, schema, or
+dependency change.
+
+| Document / artifact | Purpose |
+|---|---|
+| [`phase-25b-hounfour-70-status-intake.md`](./phase-25b-hounfour-70-status-intake.md) | Phase 25B summary handoff: status banner; in-repo wording disclaimer; post-Phase-25A baseline (Phase 24L + Phase 25A complete; `v0.0.1` sole release-consumption tag at `de65d935…`; accidental `v0.0.2` / `v0.0.3` deleted locally and remotely before Phase 25B; ADR-022E gate inventory unchanged); Hounfour #70 / Phase 19A / Phase 22A status as represented in Straylight; what Hounfour v8.5.x / v8.6.0 appear to satisfy; what remains unsatisfied or unclear (`EstateTransition`, `safeCanonicalize` subpath, `AuditEvent`, Phase 19A feedback pending, Phase 22A filing unknown); ADR-022E gate trigger table (one row per gate #1–#20: topic / current trigger state / substrate status / authorization status / conclusion); explicit conclusion (no gate crossed; gate #4 partial substrate only; no authorization); allowed-vs-forbidden citation rules; 16 refusal rules; explicit non-scope (16 items); validation expectations (docs-only); open follow-ups; cross-references. |
+| [`../decisions/ADR-025B-hounfour-70-status-intake.md`](../decisions/ADR-025B-hounfour-70-status-intake.md) | Phase 25B decision-lock: Status (Accepted-for-Phase-25B; status intake not authorization); Context (post-Phase-25A baseline; what Phase 25B is for; in-repo wording disclaimer); **Decision** (§1 substrate restated unchanged; §2 Hounfour #70 / Phase 19A / Phase 22A status; §3 what v8.5.x / v8.6.0 appear to satisfy; §4 what remains unsatisfied or unclear; §5 ADR-022E gate trigger check; §6 explicit conclusion; §7 allowed-vs-forbidden citation rules; §8 refusal rules); Explicit non-scope (22 items); Consequences; Source files inspected. |
+
+The Phase 25B packet consumes the Phase 25A summary handoff,
+ADR-025A, ADR-024A through ADR-024K / ADR-022A through
+ADR-022E, the Phase 16 / 17B / 18 / 19A / 21B / 22A Hounfour
+intake artifacts (read-only), the Phase 5 stable-surface freeze
+([`../mvp/package-boundary.md`](../mvp/package-boundary.md),
+read-only), the threat model
+([`../mvp/threat-model.md`](../mvp/threat-model.md), read-only),
+the current
+[`../../package.json`](../../package.json) state (read-only),
+and the existing annotated `v0.0.1` tag (read-only). It produces
+this single summary handoff, the companion ADR-025B, and this
+README index entry. It produces no new fixture, no new script,
+no new test, no `package.json` / `package-lock.json` /
+`tsconfig.json` / `tsconfig.build.json` / `vitest.config.ts` /
+`.npmrc` / `.gitignore` / `.github/workflows/` change, no edit
+to any existing wedge or host source / test file, no edit to
+any committed declaration under `dist-types/`, no append to any
+prior handoff packet, no new sibling-repo handoff packet, no
+GitHub-side action, no new tag, no tag push, and no GitHub
+Release. All Phase 9 / 10 / 12 / 14 / 15 / 19A / 20 / 21B /
+22A / 23A / 24A through 24L / 25A in-repo rows above are
+unchanged by Phase 25B.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+npm run build
+ls dist-types/src/straylight/index.d.ts dist-types/src/straylight/host/index.d.ts
+npm pack --dry-run
+git diff -- src/ tests/ fixtures/ scripts/ package.json package-lock.json tsconfig.json tsconfig.build.json vitest.config.ts .npmrc .gitignore dist-types/ docs/mvp/package-boundary.md docs/mvp/threat-model.md
+git diff --stat
+git status --short
+git tag --list v0.0.1
+git rev-parse v0.0.1^{commit}
+git cat-file -t v0.0.1
+git tag --list 'v0.0.2' 'v0.0.3'
+```
+
+Expected: `npm run typecheck` clean; `npm test` passes
+identically to the post-Phase-25A baseline; `npm run build`
+clean (rebuilt `dist-types/` byte-identical to the committed
+artifact); both declaration entrypoints exist; `npm pack
+--dry-run` shape unchanged from Phase 24H/I/J/K/L/25A;
+forbidden-path diff is **empty**; `git diff --stat` shows only
+the three Phase 25B docs (this README append, the new handoff,
+and ADR-025B); `git status --short` shows only the three
+Phase 25B docs plus any pre-existing local dirt; `git tag --list
+v0.0.1` prints `v0.0.1`; `git rev-parse v0.0.1^{commit}` prints
+`de65d93568e70c53ba952279f41a23d2f7d5123e`; `git cat-file -t
+v0.0.1` prints `tag`; `git tag --list 'v0.0.2' 'v0.0.3'` prints
+nothing (accidental tags deleted locally and remotely before
+Phase 25B).
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
