@@ -2049,6 +2049,199 @@ Phase 24K-opening docs (this README append, the new handoff,
 and the new ADR-024J); `git status --short` shows only the
 three Phase 24K-opening docs plus any pre-existing local dirt.
 
+## Phase 24L — Dixie host type-only consumption intake (docs-only)
+
+Phase 24L is a **docs-only Dixie host type-only consumption
+intake** staged on the `phase-24l-dixie-host-type-consumption-intake`
+branch inside `loa-straylight` after Phase 24K-opening (PR #37)
+merged, an operator action subsequently cut and pushed the
+annotated `v0.0.1` tag against the post-Phase-24K-opening `main`
+commit `de65d93568e70c53ba952279f41a23d2f7d5123e`, Dixie PR #97
+merged Hounfour `8.3.1 → 8.6.0` Gate-3 alignment, and Dixie
+PR #99 merged the type-only `@loa/straylight` dependency flip.
+Phase 24L is the in-repo intake record on the Straylight side
+and **absorbs** the operator-action record (no separate
+Phase 24K-closing handoff was authored at tag-cut time). The
+companion decision-lock is
+[`../decisions/ADR-024K-dixie-host-type-consumption-intake.md`](../decisions/ADR-024K-dixie-host-type-consumption-intake.md).
+
+Phase 24L records that **all three ADR-024H gates are satisfied**:
+Gate 1 by Phase 24J (Posture 1a; ADR-024I §"Decision" §1);
+Gate 2 by the operator action that cut + pushed the annotated
+`v0.0.1` tag against `de65d93568e70c53ba952279f41a23d2f7d5123e`
+honoring all nine ADR-024J §"Decision" rules (label `v0.0.1`;
+annotated; correct target; in-tree clean-rebuild + `git diff
+-- dist-types/` verification approach; no GitHub Release; no
+publish; no `version` change; no metadata change; no force-push
+/ retag); Gate 3 by Posture 3a (Dixie PR #97 bumped
+`@0xhoneyjar/loa-hounfour` from `v8.3.1` to `v8.6.0`, matching
+Straylight's `^8.6.0` pin). Phase 24L records Dixie PR #99 as
+the **first conforming downstream consumer** of the post-
+Phase-24H type-only Straylight surface: `app/package.json`
+declares `@loa/straylight` as
+`github:0xHoneyJar/loa-straylight#v0.0.1` (Posture 1a's
+consumption template); `app/package-lock.json` resolves
+Straylight to `de65d93568e70c53ba952279f41a23d2f7d5123e` (the
+same commit `v0.0.1` points at); `@0xhoneyjar/loa-hounfour@8.6.0`
+is **deduped** across Dixie's app and the consumed Straylight
+tree (no Posture 3c isolation needed); Dixie's previous local
+`host/types.ts` mirror was **deleted**; Dixie now imports types
+from `@loa/straylight/host` using `import type` / `export type`
+only (honoring the Phase 24H supported-consumer envelope:
+TypeScript >= 5.4; `moduleResolution: "Bundler"` or `"NodeNext"`;
+`import type` only); Dixie's local runtime helpers remain local;
+no runtime Straylight import was added; required CI passed
+Dixie-side after a workflow auth patch; a Dixie-side
+`package-contract` tripwire test (Dixie-owned) remains in place
+to catch drift in the consumed surface; advisory staging smoke
+may still fail Dixie-side on environment / GHCR / package-access
+infrastructure grounds (a **Dixie-side infra concern, explicitly
+not a Straylight gate**).
+
+Phase 24L does **not** create a new tag, **not** push a tag,
+**not** publish, **not** create a GitHub Release, **not**
+author or modify any test, **not** edit any source / test /
+config / dist-types / package metadata, **not** edit any sibling
+repo, **not** advance any ADR-022E gate, **not** advance the
+Phase 19A pending feedback gate, **not** authorize any further
+Dixie consumption, **not** authorize any runtime widening, and
+**not** request any Flatline / Bridgebuilder / red-team review.
+Phase 24L does **not** edit any file under
+[`../../src/`](../../src/) /
+[`../../tests/`](../../tests/) /
+[`../../scripts/`](../../scripts/) /
+[`../../fixtures/`](../../fixtures/) /
+[`../../dist-types/`](../../dist-types/), edit
+[`../../package.json`](../../package.json) /
+[`../../package-lock.json`](../../package-lock.json) /
+[`../../tsconfig.json`](../../tsconfig.json) /
+[`../../tsconfig.build.json`](../../tsconfig.build.json) /
+[`../../vitest.config.ts`](../../vitest.config.ts) /
+[`../../.npmrc`](../../.npmrc) /
+[`../../.gitignore`](../../.gitignore), edit
+[`../mvp/package-boundary.md`](../mvp/package-boundary.md), edit
+any prior ADR, edit any prior handoff (other than this README
+index entry), edit any sibling repo (`loa-dixie`, `loa-finn`,
+`loa-freeside`, `loa-hounfour`), file or edit any GitHub issue /
+comment / PR, bump / downgrade / reconcile the Hounfour
+dependency range, consume Hounfour `main` or any unpublished
+commit, import the Hounfour `#116` five-step conformance
+corpus, adopt the `0xhoneyjar:straylight:*` audit-event prefix
+family into the Straylight public surface, adopt the
+`recall-wedge` Hounfour conformance category into the
+Straylight test suite, publish a public commitment root,
+advance any ADR-022E gate, run `npm install` / `npm update` /
+`npm ci` / `npm publish` / `npm version` / `npm pack` (as a
+publish step) / `git tag` / `git push --tags` / `gh release
+create` / any package-manager mutation command, request or run
+Flatline / Bridgebuilder / red-team review, or touch
+[`../../.loa`](../../.loa) /
+[`../../.loa.config.yaml`](../../.loa.config.yaml) /
+[`../../.claude/`](../../.claude/) /
+[`../../.beads/`](../../.beads/) /
+[`../../.run/`](../../.run/) /
+[`../../.github/`](../../.github/) /
+[`../../grimoires/loa/a2a/`](../../grimoires/loa/a2a/). No
+Flatline pass is required because Phase 24L makes no package-
+surface or source change; the events being recorded are external
+to this PR (the `v0.0.1` tag was cut by a separate operator
+action against an already-merged `main` commit; Dixie PR #97 /
+PR #99 were authored and reviewed Dixie-side).
+The Phase 19A pending feedback gate on
+[`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70)
+remains pending and is **not** advanced by Phase 24L.
+
+| Document / artifact | Purpose |
+|---|---|
+| [`phase-24l-dixie-host-type-consumption-intake.md`](./phase-24l-dixie-host-type-consumption-intake.md) | Phase 24L summary handoff: status banner (docs-only; companion ADR-024K; absorbs Phase 24K-closing operator-action record; no new tag; no push; no Release; no publish; no source/test/config/dist-types/sibling-repo edits; no Flatline required), executive summary (records Gate 1 / 2 / 3 as satisfied; records the operator action that cut + pushed annotated `v0.0.1` against `de65d93568e70c53ba952279f41a23d2f7d5123e` honoring all nine ADR-024J §"Decision" rules; records Dixie PR #97 as Hounfour-8.6.0 Gate-3 alignment via Posture 3a; records Dixie PR #99 as the first conforming type-only flip; records the Dixie tripwire test as Dixie-owned; mentions advisory staging smoke once as a Dixie-side infra concern, not a Straylight gate; refuses runtime widening / endpoint / route / middleware / proxy / rendering / vector 9 / 10 / 11 widening / Hounfour `#116` adoption / `0xhoneyjar:straylight:*` adoption / `recall-wedge` adoption / public commitment-root behavior / Hounfour change / Straylight dependency-posture change / new tag-or-release / sibling-repo edit / additional Dixie consumption / Phase 19A advance), Phase 24H/24I/24J/24K-opening recap, current state (branch; `main` HEAD = `de65d93568e70c53ba952279f41a23d2f7d5123e`; `v0.0.1` annotated tag points at that commit; remote tag present; zero Releases; package `@loa/straylight` at `0.0.1` with `private: true`; absent `publish` scripts; absent `@loa` registry mapping; absent publish workflow; both declaration entrypoints present; empty forbidden-path diff; Hounfour `^8.6.0` Straylight-side, `8.6.0` Dixie-side, deduped at `8.6.0`; Dixie `app/package.json` Straylight specifier `github:0xHoneyJar/loa-straylight#v0.0.1`; Dixie `app/package-lock.json` Straylight resolution `de65d93568e70c53ba952279f41a23d2f7d5123e`; Dixie local `host/types.ts` mirror deleted; Dixie type imports `import type` / `export type` only; no runtime Straylight imports added; Dixie runtime helpers remain local; required CI passed after workflow auth patch; `package-contract` tripwire test in place Dixie-owned; advisory staging smoke may still fail Dixie-side infra; Posture 1a satisfied; Posture 1b refused; hybrid refused), gate satisfaction record table (Gate 1 / 2 / 3 each satisfying event + source artifact), operator-action record (absorbed Phase 24K-closing): pre-tag validation per ADR-024J §"Verification method" (`git fetch origin --tags` + `git switch main` + `git pull --ff-only` + forbidden-path `git diff` + `npm run typecheck` + `npm run build` + `npm test` + `npm pack --dry-run --json` + `ls` of both `.d.ts` entrypoints + `npm run clean:types` + `npm run build` + `git diff -- dist-types/`); acceptance, as observed (every command exit 0, forbidden-path diff empty, both entrypoints present, final `dist-types/` diff empty, pack JSON `files` array contains only `README.md` / `package.json` / `dist-types/**/*.d.ts` and no forbidden prefix or forbidden file); tag command (`git tag -a v0.0.1 -m "Phase 24K — Straylight v0.0.1 ..."` + `git push origin v0.0.1`; tag message reflects gate state at cut time and is not retroactively edited per ADR-024J §"Decision" §9 + ADR-024I §6); post-tag verification (`git tag --list` / `git rev-parse` / `git rev-parse v0.0.1^{commit}` / `git cat-file -t` / `git show --stat --no-patch` / `git ls-remote --tags`; acceptance, as observed: tag listed, annotated SHA, commit SHA = `de65d93568e70c53ba952279f41a23d2f7d5123e`, type=`tag`, tagger Eileen C `<ecyleileen@gmail.com>` / date Sun May 17 10:08:07 2026 +0200 / ADR-024J-prescribed message body, remote ref present with matching SHA), Dixie consumption record (conformance facts: citation chain ADR-024H §5 + ADR-024I §"Dixie flip rule after Phase 24J" + ADR-024J §"Consequences"; dependency template `github:0xHoneyJar/loa-straylight#v0.0.1`; lockfile pinned at `de65d93568e70c53ba952279f41a23d2f7d5123e`; Hounfour deduped at `8.6.0`; local `host/types.ts` mirror deleted; type-only `import type` / `export type` consumption; local runtime helpers preserved; required CI passed after workflow auth patch; tripwire test in place Dixie-owned; advisory staging smoke flagged Dixie-side once; conformance non-facts: no value imports, no runtime imports, no endpoint / route / middleware / proxy / rendering, no vector 9 / 10 / 11 widening, no Hounfour `#116` / `0xhoneyjar:straylight:*` / `recall-wedge` adoption, no public commitment-root, no Straylight dependency-posture change, no Hounfour change), cross-repo fact provenance (each fact + source + observed-at), refusal rules (13 explicit refusals reviewers may cite verbatim), explicit non-scope (29 Phase-24L-specific refusals; inheritance of all ADR-024A through ADR-024J non-goals), validation expectations (docs-only: `npm run typecheck` + `npm test` + `npm run build` + `npm pack --dry-run` + empty forbidden-path diff; no new tests; no package mutation; no tag; no push; no Release; no publish; tag-existence re-verification), open follow-ups (future Straylight-side downstream-adoption phases; future runtime-widening ADR; future tag bumps; Posture 1b reopening only under successor ADR; Hounfour-skew successor ADR only if Dixie diverges; Phase 19A `#70` pending; Dixie staging-smoke remediation Dixie-side; Dixie tripwire-test co-evolution Dixie-owned), cross-references. |
+| [`../decisions/ADR-024K-dixie-host-type-consumption-intake.md`](../decisions/ADR-024K-dixie-host-type-consumption-intake.md) | Phase 24L ADR: Status (Accepted-for-Phase-24L; docs-only Dixie host type-only consumption intake; records Gate 1 / 2 / 3 as satisfied; absorbs Phase 24K-closing operator-action record; no new tag; no push; no publish; no GitHub Release; no `package.json` / `package-lock.json` / `tsconfig.json` / `tsconfig.build.json` / `vitest.config.ts` / `.npmrc` / `.gitignore` / source / test / fixtures / scripts / dist-types / `package-boundary.md` / prior-ADR / prior-handoff / sibling-repo / `.github/` / `.loa` / `.claude/` / `.beads/` / `.run/` / `grimoires/loa/a2a/` / `node_modules/` touch; no Hounfour bump / change; no `#116` corpus import; no `0xhoneyjar:straylight:*` adoption; no `recall-wedge` adoption; no commitment-root publication; no ADR-022E gate advance; no Flatline / Bridgebuilder / red-team review), Context (Phase 24H landed type-only `@loa/straylight/host`; Phase 24I defined gate-of-gates; Phase 24J selected Posture 1a and prepared Gate 2; Phase 24K-opening pinned Gate 2 execution parameters; events Phase 24L records: operator action cut + pushed annotated `v0.0.1` against `de65d93568e70c53ba952279f41a23d2f7d5123e`, Dixie PR #97 bumped `@0xhoneyjar/loa-hounfour` from `v8.3.1` to `v8.6.0` satisfying Gate 3 via Posture 3a, Dixie PR #99 flipped the type-only dependency conformingly; current package state recap unchanged byte-identical to post-Phase-24K-opening; gate status entering Phase 24L: Gate 1 satisfied / Gate 2 satisfied / Gate 3 satisfied), **Decision** (five rules: §1 Record Gate 1 as satisfied — Posture 1a; ADR-024I §"Decision" §1 preserved; `private: true` preserved; no `publish` scripts; no `@loa:registry=`; no GitHub Packages publish workflow; no `npm publish` / GitHub Packages publish performed; §2 Record Gate 2 as satisfied — annotated `v0.0.1` cut + pushed against `de65d93568e70c53ba952279f41a23d2f7d5123e` honoring all nine ADR-024J §"Decision" rules verbatim; §3 Record Gate 3 as satisfied via Posture 3a — Dixie PR #97 bumped Hounfour to `v8.6.0`; Hounfour deduped at `8.6.0`; no Posture 3c isolation needed; no Straylight-side Hounfour change required; lowest-blast-radius Gate-3 outcome; future divergence reopens under successor ADR; §4 Record Dixie PR #99 as a conforming type-only flip — citation chain ADR-024H §5 + ADR-024I + ADR-024J; dependency template `github:0xHoneyJar/loa-straylight#v0.0.1`; lockfile pinned at `de65d93568e70c53ba952279f41a23d2f7d5123e`; Hounfour deduped at `8.6.0`; local `host/types.ts` mirror deleted; type-only `import type` / `export type` consumption only; no value imports / runtime imports / dynamic `import()` / `require()` against `@loa/straylight*`; honors Phase 24H supported-consumer envelope; local runtime helpers preserved; CI passed after workflow auth patch; tripwire test in place Dixie-owned; advisory staging smoke noted as Dixie-side infra concern not Straylight gate; conformance non-facts enumerate everything Dixie PR #99 did NOT do; §5 Refusal rules for citing Phase 24L — twelve refusals reviewers may cite verbatim: no runtime widening, no endpoint / route / middleware / proxy / rendering, no vector 9 / vectors 10–11, no Hounfour `#116` adoption, no `0xhoneyjar:straylight:*` adoption, no Hounfour `recall-wedge` adoption, no public commitment-root behavior, no Hounfour change, no Straylight dependency-posture change, no new tag or release, no sibling-repo edit, no Phase 19A pending feedback advance), Operator-action record (absorbed Phase 24K-closing; pre-tag validation + acceptance-as-observed + tag command + post-tag verification + acceptance with concrete commit SHA / tagger / date / message), Cross-repo fact provenance (each cross-repo fact recorded as observed at intake time; provenance table; future-revert-resolving-action note), Gate status (after Phase 24L merges: Gate 1 / 2 / 3 all satisfied), Explicit non-scope (29 Phase-24L-specific refusals; inheritance of all ADR-024A through ADR-024J non-goals), Consequences (all three ADR-024H gates satisfied; type-only Straylight surface exercised by first real downstream consumer; Dixie's local mirror gone; Hounfour deduplication holds; tag immutability observable; no package-surface or source change; Phase 24L is the Straylight-side downstream-adoption anchor; runtime widening remains explicitly deferred; ADR-024K is additive to ADR-024H / I / J), Source files inspected. |
+
+The Phase 24L packet consumes the Phase 24K-opening summary
+handoff
+([`phase-24k-release-tag-execution.md`](./phase-24k-release-tag-execution.md)),
+the Phase 24K-opening decision-lock
+([`../decisions/ADR-024J-release-tag-execution.md`](../decisions/ADR-024J-release-tag-execution.md)),
+the Phase 24J summary handoff
+([`phase-24j-release-posture-selection.md`](./phase-24j-release-posture-selection.md)),
+the Phase 24J decision-lock
+([`../decisions/ADR-024I-release-posture-selection.md`](../decisions/ADR-024I-release-posture-selection.md)),
+the Phase 24I summary handoff
+([`phase-24i-release-and-dixie-flip-gate-plan.md`](./phase-24i-release-and-dixie-flip-gate-plan.md)),
+the Phase 24I decision-lock
+([`../decisions/ADR-024H-release-and-dixie-flip-gate-plan.md`](../decisions/ADR-024H-release-and-dixie-flip-gate-plan.md)),
+the Phase 24H summary handoff
+([`phase-24h-host-package-subpath-implementation.md`](./phase-24h-host-package-subpath-implementation.md)),
+the Phase 24H decision-lock
+([`../decisions/ADR-024G-host-package-subpath-implementation.md`](../decisions/ADR-024G-host-package-subpath-implementation.md)),
+the Phase 24G / 24F / 24E / 24D / 24C / 24B / 24A handoffs and
+their ADR series, the Phase 5 stable-surface freeze
+([`../mvp/package-boundary.md`](../mvp/package-boundary.md), read-
+only — Phase 24L does not edit it), the current
+[`../../package.json`](../../package.json) /
+[`../../package-lock.json`](../../package-lock.json) /
+[`../../.npmrc`](../../.npmrc) /
+[`../../tsconfig.json`](../../tsconfig.json) /
+[`../../tsconfig.build.json`](../../tsconfig.build.json) /
+[`../../vitest.config.ts`](../../vitest.config.ts) /
+[`../../.gitignore`](../../.gitignore) /
+[`../../.github/workflows/post-merge.yml`](../../.github/workflows/post-merge.yml) /
+[`../../src/straylight/index.ts`](../../src/straylight/index.ts) /
+[`../../src/straylight/host/index.ts`](../../src/straylight/host/index.ts) /
+[`../../dist-types/`](../../dist-types/) /
+[`../../tests/phase-24h-package-exports.test.ts`](../../tests/phase-24h-package-exports.test.ts) /
+[`../../tests/phase-24h-type-only-consumption.test.ts`](../../tests/phase-24h-type-only-consumption.test.ts)
+state (read-only — Phase 24L touches no source, no test, no
+config, no committed declaration, no GitHub workflow, no
+`package.json`, no `package-lock.json`, no `.npmrc`, no
+`.gitignore`), and the existing annotated `v0.0.1` tag (read-
+only — pointed at `de65d93568e70c53ba952279f41a23d2f7d5123e`;
+verified at intake via `git cat-file -t v0.0.1` /
+`git rev-parse v0.0.1^{commit}`). It produces this single
+summary handoff, the companion ADR-024K, and this README index
+entry. It produces no new fixture, no new script, no new test,
+no `package.json` / `package-lock.json` / `tsconfig.json` /
+`tsconfig.build.json` / `vitest.config.ts` / `.npmrc` /
+`.gitignore` / `.github/workflows/` change, no edit to any
+existing wedge or host source / test file, no edit to any
+committed declaration under `dist-types/`, no append to any
+prior handoff packet, no new sibling-repo handoff packet, no
+GitHub-side action, no new tag, no tag push, and no GitHub
+Release. All Phase 9 / 10 / 12 / 14 / 15 / 19A / 20 / 21B /
+22A / 23A / 24A / 24B / 24C / 24D / 24E / 24F / 24G / 24H /
+24I / 24J / 24K-opening in-repo rows above are unchanged by
+Phase 24L.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+npm run build
+ls dist-types/src/straylight/index.d.ts dist-types/src/straylight/host/index.d.ts
+npm pack --dry-run
+git diff -- src/ tests/ fixtures/ scripts/ package.json package-lock.json tsconfig.json tsconfig.build.json vitest.config.ts .npmrc .gitignore dist-types/ docs/mvp/package-boundary.md
+git diff --stat
+git status --short
+git tag --list v0.0.1
+git rev-parse v0.0.1^{commit}
+git cat-file -t v0.0.1
+```
+
+Expected: `npm run typecheck` clean; `npm test` passes
+identically to the Phase 24K-opening post-merge baseline;
+`npm run build` clean (the rebuilt `dist-types/` is byte-
+identical to the committed artifact); both declaration
+entrypoints exist; `npm pack --dry-run` shape is unchanged from
+Phase 24H (only `dist-types/**`, `README.md`, `package.json`
+ship); forbidden-path diff is **empty**; `git diff --stat`
+shows only the three Phase 24L docs (this README append, the
+new handoff, and the new ADR-024K); `git status --short` shows
+only the three Phase 24L docs plus any pre-existing local dirt;
+`git tag --list v0.0.1` prints `v0.0.1`; `git rev-parse
+v0.0.1^{commit}` prints
+`de65d93568e70c53ba952279f41a23d2f7d5123e`; `git cat-file -t
+v0.0.1` prints `tag`.
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
