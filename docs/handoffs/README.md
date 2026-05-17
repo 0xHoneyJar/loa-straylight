@@ -2697,7 +2697,7 @@ ADR-026A0, and the
 cross-reference append); `git status --short` shows only the
 four Phase 26A-0 docs plus any pre-existing local dirt; `git tag
 --list v0.0.1` prints `v0.0.1`; `git rev-parse v0.0.1^{commit}`
-prints the post-Phase-25B recording baseline commit; `git
+prints the Phase 24K release-consumption tag target; `git
 cat-file -t v0.0.1` prints `tag`; `git tag --list 'v0.0.2'
 'v0.0.3'` prints nothing.
 
@@ -2782,9 +2782,121 @@ append, the new handoff, and `docs/mvp/threat-model.md`); `git
 status --short` shows only the three Phase 26A-1 docs plus any
 pre-existing local dirt; `git tag --list v0.0.1` prints
 `v0.0.1`; `git rev-parse v0.0.1^{commit}` prints the
-post-Phase-25B recording baseline commit; `git cat-file -t
+Phase 24K release-consumption tag target; `git cat-file -t
 v0.0.1` prints `tag`; `git tag --list 'v0.0.2' 'v0.0.3'` prints
 nothing.
+
+## Phase 26A-2 — Runtime recall-intake subpath authorization (docs-only)
+
+Phase 26A-2 is a **docs-only authorization-record handoff**
+that *targets* / *addresses* Flatline **SKP-005** by drafting
+ADR-026A — the proposed experimental, pre-Finn, Dixie-only
+runtime-subpath surface design. SKP-005 closure is asserted
+**only** after all three of the following hold: (i) ADR-026A is
+drafted (this packet), (ii) a real 3-model Flatline pass on the
+ADR-026A PR returns **PASS** or **REVISE-with-resolution**, and
+(iii) the ADR-026A PR merges. Until all three hold, Phase 26A-2
+*targets* / *addresses* / *records the proposed closure design*
+for SKP-005; it does **not** claim closure.
+
+Phase 26A-2 follows Phase 26A-0 (PR #41, operator-authority
+record) and Phase 26A-1 (PR #42, threat-model prerequisites for
+the future Dixie recall-intake endpoint). Phase 26A-2 does
+**not** close SKP-002, SKP-003, or SKP-004; those remain Phase
+26A-1 prerequisites for the future Dixie PR.
+
+ADR-026A authorizes — but does not implement — exactly **one**
+future runtime subpath at `@loa/straylight/runtime/recall-intake`,
+exposing exactly the handler set Dixie needs at MVP, gated to
+Dixie-only consumption, marked experimental, with a recorded
+migration / retirement path back to Finn when ADR-022E gate #9
+fires. Root `.` and `./host` remain `"types"`-only. The runtime
+barrel value-export allowlist is `handleRecallIntake` (required)
+and optionally `createInMemoryRecallIntakeDeps` (only if the
+later implementation PR justifies it). The export condition
+defaults to `"import"` (ESM-only). The implementation PR MUST
+define and test a concrete non-Dixie refusal mechanism; if it
+cannot provide a credible mechanism, the implementation PR is
+**blocked** and ADR-026A may NOT be cited as sufficient
+authorization.
+
+ADR-026A authorizes the **scope** of the later Straylight
+runtime-implementation PR, but does **not** make that PR
+automatically mergeable. The implementation PR remains
+independently reviewable and refusable unless it satisfies
+ADR-026A's tests, export allowlist, experimental marking,
+non-Dixie refusal mechanism, package-boundary update, rollback
+plan, and Flatline result.
+
+Phase 26A-2 does **not** authorize: a Dixie endpoint;
+package-surface change in this phase; Hounfour adoption; Finn
+wiring; Freeside wiring; Loa framework edits; storage /
+persistence change; tags; releases; package publishing; or
+sibling-repo edits. ADR-022E gates and Phase 25A / 25B / 26A-0 /
+26A-1 refusal rules **remain binding**. The Dixie endpoint
+remains independently gated by Phase 26A-1 T13–T18 + ADR-022E
+gate #10 + sibling-repo discipline. Finn remains the eventual
+runtime-enforcement owner per ADR-022E gate #9; the Straylight
+runtime subpath is a pre-Finn MVP exception, not a permanent
+lane transfer.
+
+| Document / artifact | Purpose |
+|---|---|
+| [`phase-26a2-runtime-recall-intake-subpath-authorization.md`](./phase-26a2-runtime-recall-intake-subpath-authorization.md) | Phase 26A-2 summary handoff: status banner; SKP-005 unblock context with explicit non-closure of SKP-002 / SKP-003 / SKP-004 and the three-part SKP-005 closure condition (drafted + Flatline PASS-or-resolved + merged); summary of the proposed authorizing decision (Option C2); Phase 15 narrowing (MVP-slice, recall-intake-only); twenty-three-item refusal-rule block (no implementation, no `package.json` change, no `package-boundary.md` edit, no `threat-model.md` edit, no additional runtime subpath, no Dixie endpoint, no Hounfour / Finn / Freeside wiring, no Loa framework edits, no storage change, no tags, no releases, no package publish, no sibling-repo edits, no SKP-005 closure by drafting alone, no SKP-002 / SKP-003 / SKP-004 closure, no general Phase 15 reorder, no Dixie elevation, no permanent lane transfer, no ADR-022E / Phase 25A / 25B / 26A-0 / 26A-1 relaxation, no successor-ADR pre-approval); future-ADR contract reminder anchored to all three legs (Phase 26A-0 + Phase 26A-1 + Phase 26A-2); validation expectations (docs-only, four Phase 26A-2 docs in the diff); pre-merge Flatline pass requirement; cross-references. |
+| [`../decisions/ADR-026A-runtime-recall-intake-subpath.md`](../decisions/ADR-026A-runtime-recall-intake-subpath.md) | Phase 26A-2 decision-lock: Status (Accepted-for-Phase-26A-2; authorization not implementation; SKP-005 three-part closure condition); Context (why ADR-026A exists; three-leg trigger evidence with the operator-authority + threat-model + independent-trigger anchors; Phase 15 narrowing for the MVP slice; why a docs-only authorization-record is the right shape); **Decision** (§1 file set; §2 authorization of exactly one runtime subpath; §3 runtime-barrel value-export allowlist; §4 export-condition shape; §5 type-only subpaths preserved; §6 experimental marking in four places; §7 concrete non-Dixie refusal mechanism + block-on-failure rule; §8 Finn migration / retirement path; §9 refusal rules; §10 required test invariants in the implementation PR; §11 threat-model legs the implementation PR must address; §12 tags / releases; §13 Dixie endpoint NOT authorized); Explicit non-scope (twenty-three items); Consequences; Source files inspected. |
+| [`./cross-repo-implementation-order.md`](./cross-repo-implementation-order.md) | Append-only Phase 26A-2 cross-reference recording the MVP-slice narrowing of the recommended Hounfour → Finn → Dixie → Freeside ordering. The narrowing is bounded to the single `handleRecallIntake` handler. No general reorder. |
+
+The Phase 26A-2 packet consumes the Phase 26A-0 and Phase 26A-1
+summary handoffs, ADR-026A0, the Phase 26A-1 threat-model
+amendment (T13–T18 + T9 amendment), and the existing ADR-022A /
+ADR-022E / ADR-024G / ADR-024H / ADR-024I / ADR-024J / ADR-025A /
+ADR-025B record without editing any of them.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+npm run build
+ls dist-types/src/straylight/index.d.ts dist-types/src/straylight/host/index.d.ts
+npm pack --dry-run
+git diff -- src/ tests/ fixtures/ scripts/ package.json package-lock.json tsconfig.json tsconfig.build.json vitest.config.ts .npmrc .gitignore dist-types/ docs/mvp/package-boundary.md docs/mvp/threat-model.md
+git diff --stat
+git status --short
+git tag --list v0.0.1
+git rev-parse v0.0.1^{commit}
+git cat-file -t v0.0.1
+git tag --list 'v0.0.2' 'v0.0.3' 'v0.1.0'
+```
+
+Expected: `npm run typecheck` clean; `npm test` passes
+identically to the post-Phase-26A-1 baseline; `npm run build`
+clean (rebuilt `dist-types/` byte-identical to the committed
+artifact); both declaration entrypoints exist; `npm pack
+--dry-run` shape unchanged from Phase 24H/I/J/K/L / 25A / 25B /
+26A-0 / 26A-1; forbidden-path `git diff` is **empty** (note that
+**both** `docs/mvp/package-boundary.md` and
+`docs/mvp/threat-model.md` are on the forbidden-path list for
+this phase: neither is edited by Phase 26A-2 — the boundary
+edit is deferred to the later implementation PR per ADR-026A
+§"Decision" §6.d, and the threat-model amendment is Phase
+26A-1's record); `git diff --stat` shows only the **four** Phase
+26A-2 docs (this README append, the new handoff, ADR-026A, and
+the `cross-repo-implementation-order.md` Phase 26A-2 append);
+`git status --short` shows the four Phase 26A-2 docs plus any
+pre-existing local dirt; `git tag --list v0.0.1` prints
+`v0.0.1`; `git rev-parse v0.0.1^{commit}` prints
+`de65d93568e70c53ba952279f41a23d2f7d5123e`, the **Phase 24K
+release-consumption tag target**; `git cat-file -t v0.0.1`
+prints `tag`; `git tag --list 'v0.0.2' 'v0.0.3' 'v0.1.0'`
+prints nothing.
+
+A pre-merge real 3-model Flatline pass is performed against this
+packet before merge, per Phase 26A-0 §"Decision" §3 (the
+pre-merge Flatline requirement applies to docs-only changes that
+*create authorization*, which Phase 26A-2 does). SKP-005
+closure is asserted only after that Flatline pass returns PASS
+or REVISE-with-resolution AND the ADR-026A PR merges.
 
 ## Phase 15 — Cross-repo coordination
 
