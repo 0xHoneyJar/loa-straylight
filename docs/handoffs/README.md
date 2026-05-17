@@ -1908,6 +1908,147 @@ Phase 24J docs (this README append, the new handoff, and the
 new ADR-024I); `git status --short` shows only the three
 Phase 24J docs plus any pre-existing local dirt.
 
+## Phase 24K — Release / tag execution plan (docs-only opening)
+
+Phase 24K-opening is a **docs-only release / tag execution
+plan** staged on the `phase-24k-release-tag-execution-plan`
+branch inside `loa-straylight` after Phase 24J's release-posture
+selection merged (PR #36). Phase 24K-opening selects the exact
+tag label (`v0.0.1`, annotated) and the verification approach
+(in-tree clean-rebuild + `git diff -- dist-types/`) that a
+future operator action will use to satisfy ADR-024H §3 /
+ADR-024I §"Tag-readiness checklist" (Gate 2). The companion
+decision-lock is
+[`../decisions/ADR-024J-release-tag-execution.md`](../decisions/ADR-024J-release-tag-execution.md).
+
+Phase 24K-opening does **not** create the tag, does **not**
+push the tag, does **not** satisfy Gate 2, does **not** satisfy
+Gate 3, and does **not** authorize a Dixie dependency flip. The
+actual tag creation + push is a later operator action whose own
+handoff must record the pre-tag checklist outputs against the
+verifying commit, run the tag command, and record the post-tag
+verification outputs. Until that operator action successfully
+creates and pushes the annotated `v0.0.1` tag, Gate 2 remains
+**prepared, not satisfied**. Phase 24K-opening does **not**
+edit any file under
+[`../../src/`](../../src/) /
+[`../../tests/`](../../tests/) /
+[`../../scripts/`](../../scripts/) /
+[`../../fixtures/`](../../fixtures/) /
+[`../../dist-types/`](../../dist-types/), edit
+[`../../package.json`](../../package.json) /
+[`../../package-lock.json`](../../package-lock.json) /
+[`../../tsconfig.json`](../../tsconfig.json) /
+[`../../tsconfig.build.json`](../../tsconfig.build.json) /
+[`../../vitest.config.ts`](../../vitest.config.ts) /
+[`../../.npmrc`](../../.npmrc) /
+[`../../.gitignore`](../../.gitignore), edit
+[`../mvp/package-boundary.md`](../mvp/package-boundary.md), edit
+any prior ADR, edit any prior handoff (other than this README
+index entry), edit any sibling repo (`loa-dixie`, `loa-finn`,
+`loa-freeside`, `loa-hounfour`), file or edit any GitHub issue /
+comment / PR, bump / downgrade / reconcile the Hounfour
+dependency range, consume Hounfour `main` or any unpublished
+commit, import the Hounfour `#116` five-step conformance
+corpus, adopt the `0xhoneyjar:straylight:*` audit-event prefix
+family into the Straylight public surface, adopt the
+`recall-wedge` Hounfour conformance category into the
+Straylight test suite, publish a public commitment root,
+advance any ADR-022E gate, run `npm install` / `npm update` /
+`npm ci` / `npm publish` / `npm version` / `npm pack` (as a
+publish step) / `git tag` / `git push --tags` / `gh release
+create` / any package-manager mutation command, request or run
+Flatline / Bridgebuilder / red-team review, or touch
+[`../../.loa`](../../.loa) /
+[`../../.loa.config.yaml`](../../.loa.config.yaml) /
+[`../../.claude/`](../../.claude/) /
+[`../../.beads/`](../../.beads/) /
+[`../../.run/`](../../.run/) /
+[`../../.github/`](../../.github/) /
+[`../../grimoires/loa/a2a/`](../../grimoires/loa/a2a/). No
+Flatline pass is required because Phase 24K-opening makes no
+package-surface or source change; the tag itself, when later
+cut by a separate operator action, will cite a commit whose
+package surface is byte-identical to the post-Phase-24J `main`.
+The Phase 19A pending feedback gate on
+[`0xHoneyJar/loa-hounfour#70`](https://github.com/0xHoneyJar/loa-hounfour/issues/70)
+remains pending and is **not** advanced by Phase 24K-opening.
+
+| Document / artifact | Purpose |
+|---|---|
+| [`phase-24k-release-tag-execution.md`](./phase-24k-release-tag-execution.md) | Phase 24K-opening summary handoff: status banner (docs-only; companion ADR-024J; selects `v0.0.1` annotated tag plan; no tag created yet; Gate 2 not yet satisfied; Gate 3 unresolved; no package/source/test/config/dist-types/sibling-repo edits; no Flatline required), executive summary (Phase 24K-opening prepares the no-file operator action that will later cut and push an immutable annotated `v0.0.1` tag; selects tag label / annotated posture / tag target / verification approach / no-Release / no-publish / no-metadata-edit; refuses package-mutation commands; defines pre-tag and post-tag validation; does not execute the tag), current state (branch; `main` HEAD post-PR-#36; empty local + remote tags; zero GitHub Releases; package `@loa/straylight` at `0.0.1` with `private: true`; absent `publish` scripts; absent `@loa` registry mapping; absent publish workflow; both declaration entrypoints present; empty forbidden-path diff; Hounfour `^8.6.0`; Posture 1a satisfied; Posture 1b refused; hybrid refused), tag plan table (tag name `v0.0.1`; annotated; target = verified post-Phase-24K-opening `main`; verification approach = in-tree clean-rebuild + `git diff -- dist-types/`; no Release; no publish; no `version` edit; no metadata edit; retag/force-push forbidden), pre-tag checklist (operator action after this PR merges; exact command sequence: `git fetch origin --tags` + `git switch main` + `git pull --ff-only` + forbidden-path `git diff` + `npm run typecheck` + `npm run build` + `npm test` + `npm pack --dry-run --json` + `ls` of both `.d.ts` entrypoints + `npm run clean:types` + `npm run build` + `git diff -- dist-types/`; acceptance criteria: every command exit 0, forbidden-path diff empty, both entrypoints exist on disk, final `dist-types` diff empty, pack JSON files array contains only `README.md` + `package.json` + `dist-types/**/*.d.ts` and no forbidden prefix / forbidden file; if any criterion fails, do not cut the tag), tag command (operator action after PR merges; `git tag -a v0.0.1 -m "Phase 24K — Straylight v0.0.1 ..."` then `git push origin v0.0.1`; clearly marked do-not-run-inside-this-PR), post-tag verification (`git tag --list` + `git rev-parse` + `git rev-parse v0.0.1^{commit}` + `git cat-file -t` + `git show --stat --no-patch` + `git ls-remote --tags`; acceptance criteria: tag listed, annotated SHA, commit SHA matches verifying commit, type=tag, tagger/date/message visible, remote ref present with matching SHA; record each output in operator-action handoff), gate status (before tag cut: Gate 1 satisfied; Gate 2 prepared not satisfied; Gate 3 unresolved — after tag cut: Gate 1 still satisfied; Gate 2 satisfied; Gate 3 still unresolved), Dixie warning (v0.0.1 alone does not authorize Dixie flip; future Dixie flip must cite ADR-024H + ADR-024I + ADR-024J + the cut `v0.0.1` tag + Gate-3 resolving artifact; Hounfour skew independently load-bearing; type-only flip only; no value/runtime imports; no endpoint/rendering/vector-9–11/Hounfour-#116/`0xhoneyjar:straylight:*`/`recall-wedge`/commitment-root/runtime-Straylight-import bundling), explicit non-scope (27 Phase-24K-opening-specific refusals; inheritance of all ADR-024A through ADR-024I non-goals), validation expectations (docs-only: `npm run typecheck` + `npm test` + `npm run build` + `npm pack --dry-run` + empty forbidden-path diff; no new tests; no package mutation; no tag; no push; no Release; no publish), open follow-ups (run pre-tag checklist; create and push `v0.0.1`; run post-tag verification; verify remote tag; then separately resolve Gate 3; only after Gate 3 consider Dixie flip; future tag bumps `v0.0.2+` deferred; Posture 1b reopening deferred; runtime widening deferred; Hounfour `#70` pending), cross-references. |
+| [`../decisions/ADR-024J-release-tag-execution.md`](../decisions/ADR-024J-release-tag-execution.md) | Phase 24K-opening ADR: Status (Accepted-for-Phase-24K-opening; docs-only release / tag execution plan; selects tag label and verification approach; does not create the tag; does not satisfy Gate 2; does not satisfy Gate 3; no tag; no push; no publish; no GitHub Release; no `package.json` / `package-lock.json` / `tsconfig.json` / `tsconfig.build.json` / `vitest.config.ts` / `.npmrc` / `.gitignore` / source / test / fixtures / scripts / dist-types / `package-boundary.md` / prior-ADR / prior-handoff / sibling-repo / `.github/` / `.loa` / `.claude/` / `.beads/` / `.run/` / `grimoires/loa/a2a/` / `node_modules/` touch; no Hounfour bump / change; no `#116` corpus import; no `0xhoneyjar:straylight:*` adoption; no `recall-wedge` adoption; no commitment-root publication; no ADR-022E gate advance; no Flatline / Bridgebuilder / red-team review), Context (Phase 24H landed type-only `@loa/straylight/host`; Phase 24I defined gate-of-gates; Phase 24J selected Posture 1a and prepared Gate 2; current package state recap: `private: true`; type-only exports; committed `dist-types/**`; no runtime export conditions; Hounfour `^8.6.0`; no tags; zero Releases; no `@loa` registry mapping; no publish workflow; empty forbidden-path diff against `main`), **Decision** (nine rules: §1 Select `v0.0.1` — exact lowercase `v` prefix, no suffix, matches `package.json` `version` byte-for-byte; §2 Annotated tag, not lightweight — `git tag -a`, audit-trail substrate, lightweight tags refused; §3 Tag target = verified post-Phase-24K-opening `main` commit — operator must re-run checklist if a non-Phase-24K merge changes the surface; §4 Verification approach for ADR-024I §"Tag-readiness checklist" §3 = in-tree clean-rebuild + `git diff -- dist-types/` (selected over scratch-directory byte-compare fallback for simplicity + repo-aligned with prior Phase 24H/24I/24J validation flow + trivially diagnosable drift); §5 No GitHub Release under Posture 1a — Posture 1a's git-source consumption doesn't need a Release surface, and a Release would reopen Posture 1b's discoverability without a successor ADR; §6 No publish — no `npm publish`, no GitHub Packages, no alternate-registry publish, `"private": true` preserved; §7 No `version` field change — `v0.0.1` already matches; §8 No package metadata change — `package.json` / `package-lock.json` / `.npmrc` / `.gitignore` / `tsconfig*.json` / `vitest.config.ts` / source / tests / scripts / fixtures / `dist-types/` / `package-boundary.md` byte-identical at tag cut; §9 Tag immutability — no force-push, no retag, cut a new tag at a new label if `v0.0.1` is wrong, wrong tag stays in history annotated as superseded), Version-label rationale (`v0.0.1` selected over `v0.1.0` and `v1.0.0`: matches `package.json`; lowest-blast-radius; honors Posture 1a "version semantics" tradeoff axis; preserves bump room; `v0.1.0` rejected because no field has changed and no minor-bump cadence is reviewed; `v1.0.0` rejected because it overclaims stability and prematurely commits to semver-major discipline; pre-release / build-metadata suffixes rejected because they're outside Posture 1a's consumption template), Verification method (full operator-action pre-tag checklist: `git fetch origin --tags` + `git switch main` + `git pull --ff-only` + forbidden-path `git diff` + `npm run typecheck` + `npm run build` + `npm test` + `npm pack --dry-run --json` + `ls` of both `.d.ts` entrypoints + `npm run clean:types` + `npm run build` + `git diff -- dist-types/`; acceptance criteria: every command exit 0, forbidden-path diff empty, both entrypoints present, final dist-types diff empty, pack JSON files array allow/deny shape; if any criterion fails do not cut the tag), Tag command (to be run later by operator; `git tag -a v0.0.1 -m "..."` + `git push origin v0.0.1`; one-action requirement; do-not-run-inside-this-PR), Post-tag verification commands (full operator-action checklist with acceptance criteria), Gate status (before / after tables; Gate 1 satisfied by ADR-024I; Gate 2 prepared by ADR-024J then satisfied by future operator action; Gate 3 unresolved before and after), Explicit non-scope (27 Phase-24K-opening-specific refusals; inheritance of all ADR-024A through ADR-024I non-goals), Consequences (Gate 2 has an unambiguous execution spec; Gate 2 not satisfied yet; the tag is reusable across all three Gate-3 outcomes; tag immutability pinned at decision time; no Release; verification approach pinned; no package-surface or source change; ADR-024J additive to ADR-024I), Source files inspected. |
+
+The Phase 24K-opening packet consumes the Phase 24J summary handoff
+([`phase-24j-release-posture-selection.md`](./phase-24j-release-posture-selection.md)),
+the Phase 24J decision-lock
+([`../decisions/ADR-024I-release-posture-selection.md`](../decisions/ADR-024I-release-posture-selection.md)),
+the Phase 24I summary handoff
+([`phase-24i-release-and-dixie-flip-gate-plan.md`](./phase-24i-release-and-dixie-flip-gate-plan.md)),
+the Phase 24I decision-lock
+([`../decisions/ADR-024H-release-and-dixie-flip-gate-plan.md`](../decisions/ADR-024H-release-and-dixie-flip-gate-plan.md)),
+the Phase 24H summary handoff
+([`phase-24h-host-package-subpath-implementation.md`](./phase-24h-host-package-subpath-implementation.md)),
+the Phase 24H decision-lock
+([`../decisions/ADR-024G-host-package-subpath-implementation.md`](../decisions/ADR-024G-host-package-subpath-implementation.md)),
+the Phase 24G / 24F / 24E / 24D / 24C / 24B / 24A handoffs and
+their ADR series, the Phase 5 stable-surface freeze
+([`../mvp/package-boundary.md`](../mvp/package-boundary.md), read-
+only — Phase 24K-opening does not edit it), the current
+[`../../package.json`](../../package.json) /
+[`../../package-lock.json`](../../package-lock.json) /
+[`../../.npmrc`](../../.npmrc) /
+[`../../tsconfig.json`](../../tsconfig.json) /
+[`../../tsconfig.build.json`](../../tsconfig.build.json) /
+[`../../vitest.config.ts`](../../vitest.config.ts) /
+[`../../.gitignore`](../../.gitignore) /
+[`../../.github/workflows/post-merge.yml`](../../.github/workflows/post-merge.yml) /
+[`../../src/straylight/index.ts`](../../src/straylight/index.ts) /
+[`../../src/straylight/host/index.ts`](../../src/straylight/host/index.ts) /
+[`../../dist-types/`](../../dist-types/) /
+[`../../tests/phase-24h-package-exports.test.ts`](../../tests/phase-24h-package-exports.test.ts) /
+[`../../tests/phase-24h-type-only-consumption.test.ts`](../../tests/phase-24h-type-only-consumption.test.ts)
+state (read-only — Phase 24K-opening touches no source, no
+test, no config, no committed declaration, no GitHub workflow,
+no `package.json`, no `package-lock.json`, no `.npmrc`, no
+`.gitignore`). It produces this single summary handoff, the
+companion ADR-024J, and this README index entry. It produces
+no new fixture, no new script, no new test, no
+`package.json` / `package-lock.json` / `tsconfig.json` /
+`tsconfig.build.json` / `vitest.config.ts` / `.npmrc` /
+`.gitignore` / `.github/workflows/` change, no edit to any
+existing wedge or host source / test file, no edit to any
+committed declaration under `dist-types/`, no append to any
+prior handoff packet, no new sibling-repo handoff packet, no
+GitHub-side action, no tag, no tag push, and no GitHub Release.
+All Phase 9 / 10 / 12 / 14 / 15 / 19A / 20 / 21B / 22A / 23A /
+24A / 24B / 24C / 24D / 24E / 24F / 24G / 24H / 24I / 24J
+in-repo rows above are unchanged by Phase 24K-opening.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+npm run build
+ls dist-types/src/straylight/index.d.ts dist-types/src/straylight/host/index.d.ts
+npm pack --dry-run
+git diff -- src/ tests/ fixtures/ scripts/ package.json package-lock.json tsconfig.json tsconfig.build.json vitest.config.ts .npmrc .gitignore dist-types/ docs/mvp/package-boundary.md
+git diff --stat
+git status --short
+```
+
+Expected: `npm run typecheck` clean; `npm test` passes
+identically to the Phase 24J post-merge baseline; `npm run
+build` clean (the rebuilt `dist-types/` is byte-identical to
+the committed artifact); both declaration entrypoints exist;
+`npm pack --dry-run` shape is unchanged from Phase 24H (only
+`dist-types/**`, `README.md`, `package.json` ship); forbidden-
+path diff is **empty**; `git diff --stat` shows only the three
+Phase 24K-opening docs (this README append, the new handoff,
+and the new ADR-024J); `git status --short` shows only the
+three Phase 24K-opening docs plus any pre-existing local dirt.
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
