@@ -315,6 +315,79 @@ attempted (see
   teammate review on each.** Self-approval is forbidden — see
   [`cross-repo-handoff-index.md`](./cross-repo-handoff-index.md).
 
+## Phase 26A-2 narrowing — MVP-slice Dixie-first recall-intake exception
+
+> Status: append-only cross-reference recorded by Phase 26A-2.
+> Bounded to the single `handleRecallIntake` handler. **No
+> general reorder of the Hounfour → Finn → Dixie → Freeside
+> sequence above.**
+
+[`../decisions/ADR-026A-runtime-recall-intake-subpath.md`](../decisions/ADR-026A-runtime-recall-intake-subpath.md)
+authorizes — but does not implement — exactly **one** future
+Straylight runtime subpath at
+`@loa/straylight/runtime/recall-intake`, exposing exactly the
+handler set Dixie needs at MVP, gated to Dixie-only consumption,
+marked experimental, with a recorded migration / retirement path
+back to Finn when ADR-022E gate #9 fires. The companion handoff
+is
+[`./phase-26a2-runtime-recall-intake-subpath-authorization.md`](./phase-26a2-runtime-recall-intake-subpath-authorization.md).
+
+This authorization narrows the recommended Phase 15
+implementation order **only for this MVP slice**:
+
+- A **future Straylight-only runtime recall-intake subpath**
+  (`@loa/straylight/runtime/recall-intake`) MAY land **before
+  Finn** under ADR-026A. The subpath ships in a later
+  Straylight implementation PR; ADR-026A authorizes the scope,
+  not the merge.
+- Consumption is **Dixie-only** at MVP. The later
+  implementation PR MUST define and test a concrete non-Dixie
+  refusal mechanism per ADR-026A §"Decision" §7; if it cannot
+  provide a credible mechanism, the implementation PR is
+  blocked.
+- **No Dixie endpoint is authorized** by ADR-026A or by this
+  narrowing. The Dixie recall-intake endpoint requires its own
+  later sibling-repo PR satisfying Phase 26A-1 T13–T18 in full
+  and ADR-022E gate #10. See
+  [`./phase-26a1-threat-model-dixie-endpoint.md`](./phase-26a1-threat-model-dixie-endpoint.md)
+  +
+  [`../mvp/threat-model.md`](../mvp/threat-model.md) (T13–T18 +
+  T9 amendment).
+- **No general reorder** of the Hounfour → Finn → Dixie →
+  Freeside sequence above. The MVP-slice narrowing is bounded
+  to the single `handleRecallIntake` handler and does not
+  authorize Dixie ahead of Finn for any other handler.
+- **No Hounfour adoption** by this narrowing. ADR-022E gates
+  #1–#5, #17, #18 remain held.
+- **No Finn wiring** by this narrowing. ADR-022E gate #9
+  remains held.
+- **No Freeside wiring** by this narrowing. ADR-022E gate #11
+  remains held.
+- **No Loa framework edits** by this narrowing. Per Phase
+  26A-0 §"Decision" §7, framework edits are not authorized by
+  Phase 26A-0 alone and not pre-approved by ADR-026A.
+- **Finn remains the eventual runtime-enforcement owner** per
+  ADR-022B and ADR-022E gate #9. The Straylight runtime
+  subpath is a **pre-Finn MVP exception, not a permanent lane
+  transfer**. When gate #9 fires, a future ADR (provisionally
+  ADR-026B or successor) must move runtime enforcement to
+  Finn, deprecate `@loa/straylight/runtime/recall-intake` with
+  a documented deprecation window, retire the subpath, and
+  restore Straylight to its full type-only posture per
+  ADR-026A §"Decision" §8.
+- **Straylight remains the semantic wedge owner.** Dixie does
+  **not** become a semantic / runtime authority under this
+  narrowing.
+
+Reviewers may cite this section verbatim to refuse a citation of
+ADR-026A / Phase 26A-2 as authorization for: a second runtime
+subpath; runtime conditions on root `.` or `./host`; runtime
+exports beyond the ADR-026A §"Decision" §3 allowlist; the Dixie
+endpoint; Hounfour / Finn / Freeside wiring; Loa framework
+edits; sibling-repo edits other than the narrowly-scoped later
+Straylight implementation PR; tag / release creation; or any
+general reorder of Phase 15.
+
 ## Cross-references
 
 - [`cross-repo-handoff-index.md`](./cross-repo-handoff-index.md)
