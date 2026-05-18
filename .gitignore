@@ -160,6 +160,34 @@ vite.config.ts.timestamp-*
 
 node_modules/
 dist/
+# Phase 26B (ADR-026A §"Decision" §4): the `dist/` directory carries the
+# emitted JS for the experimental, pre-Finn, Dixie-only runtime subpath
+# `@loa/straylight/runtime/recall-intake`. Only the runtime closure is
+# committed; everything else under `dist/` is generated junk and stays
+# ignored by the line above. `tests/phase-24h-package-exports.test.ts`
+# pins the exact closure; `scripts/prune-dist-runtime.mjs` enforces it
+# during `npm run build`. The unignored set below is BYTE-EQUAL to that
+# closure — adding a file here without updating the prune script is a
+# Phase 26B violation.
+!dist/
+!dist/src/
+!dist/src/straylight/
+!dist/src/straylight/canonical.js
+!dist/src/straylight/ids.js
+!dist/src/straylight/keyring.js
+!dist/src/straylight/policy.js
+!dist/src/straylight/recall.js
+!dist/src/straylight/signatures.js
+!dist/src/straylight/host/
+!dist/src/straylight/host/intake.js
+!dist/src/straylight/host/tenancy.js
+!dist/src/straylight/runtime/
+!dist/src/straylight/runtime/recall-intake/
+!dist/src/straylight/runtime/recall-intake/dixie-capability.js
+!dist/src/straylight/runtime/recall-intake/handle-recall-intake.js
+!dist/src/straylight/runtime/recall-intake/index.js
+!dist/src/straylight/validators/
+!dist/src/straylight/validators/class-validator.js
 # Phase 24H: dist-types/ is intentionally committed as the type-only package
 # artifact for tag/release consumers. `clean:types && build` must reproduce it.
 # See docs/decisions/ADR-024G-host-package-subpath-implementation.md.

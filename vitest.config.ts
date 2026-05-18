@@ -15,6 +15,12 @@ export default defineConfig({
       "docs/**",
       "fixtures/**"
     ],
-    environment: "node"
+    environment: "node",
+    // Run a single build before any test file. Eliminates the
+    // cross-file race between the Phase 24H type-only consumption
+    // suite and the Phase 26B runtime-subpath suite, which both need
+    // dist-types/ + dist/ present and would otherwise race on
+    // `clean:dist`.
+    globalSetup: "tests/_global-setup.ts"
   }
 });

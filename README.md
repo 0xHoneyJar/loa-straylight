@@ -545,3 +545,95 @@ memory
   → action
   → commitment
   → permanence
+
+## Runtime subpath (experimental, pre-Finn, Dixie-only)
+
+> **Status: Phase 26B implementation of ADR-026A.** Authorized scope.
+> Bounded MVP exception. Migration to Finn is recorded.
+
+`@loa/straylight/runtime/recall-intake` is the **only** runtime
+(value-import) subpath the package exposes. The root `@loa/straylight`
+subpath and the `@loa/straylight/host` subpath remain `"types"`-only
+under the package's `exports` map, per ADR-024G + ADR-026A §"Decision"
+§5; runtime / value imports of either of those still fail to resolve
+with `ERR_PACKAGE_PATH_NOT_EXPORTED` by design.
+
+The runtime subpath is marked **experimental**, **pre-Finn**, and
+**Dixie-only** in four places per ADR-026A §"Decision" §6:
+
+- JSDoc on the runtime barrel and on every exported handler / helper
+  (`@experimental`, plus pre-Finn / Dixie-only / migration-to-Finn
+  language).
+- Emitted `.d.ts` declarations: the JSDoc survives `tsc` emission so
+  consumers see the marker through `import type`.
+- This README section.
+- [`docs/mvp/package-boundary.md`](docs/mvp/package-boundary.md)
+  §"Runtime subpath — `./runtime/recall-intake`".
+
+### Allowlist (ADR-026A §"Decision" §3)
+
+The runtime barrel exports exactly:
+
+```
+handleRecallIntake          (the one MVP runtime entrypoint)
+createDixieCapability       (Dixie-only refusal mechanism — see below)
+DixieCapabilityError        (refusal-mechanism error class)
+DixieCapability             (type re-export)
+```
+
+`executeRecall`, `EstateStore`, `AuditLog`, `JsonlStorage`,
+`dispositionFor`, `verifyChain`, `computeCommitmentRoot`, `devSign`,
+`devSignatureFor`, `validateCandidateAssertion`,
+`validateRecallRequest`, `evaluateCompetence`, `InMemoryStorage`,
+`loadBundle`, `saveBundle`, `createInMemoryRecallIntakeDeps`, and every
+other §1–11 wedge stable-surface entry are **not** exported as runtime
+values from this seam. Adding any of them requires a separate, future,
+expanding ADR.
+
+### Concrete non-Dixie refusal mechanism (ADR-026A §"Decision" §7)
+
+The runtime barrel **fails closed** unless the calling process plants
+`STRAYLIGHT_RUNTIME_DIXIE_KEY` in its env. The mechanism is HMAC-SHA256
+challenge-response:
+
+1. Dixie's deployment plants the shared key in its process env.
+2. Dixie calls `createDixieCapability()`. The constructor refuses
+   (throws `DixieCapabilityError`) if the env key is absent or empty.
+   Otherwise it mints a fresh nonce, HMAC-signs it with the env key,
+   and returns a capability object. The capability is also branded for
+   recognition by membership in a closure-private `WeakSet` so a
+   structurally-identical hand-rolled object is rejected at the brand
+   check.
+3. Dixie passes the capability through to `handleRecallIntake(store,
+   req, deps, capability)`. The runtime barrel verifies the brand,
+   re-reads the env key, and verifies the proof under
+   `crypto.timingSafeEqual`. On any failure, the response is shaped as
+   a closed-enum `denied` outcome with `raw_reasons` carrying the
+   seam-level refusal code.
+
+Per-attack-shape coverage analysis is in
+[`src/straylight/runtime/recall-intake/dixie-capability.ts`](src/straylight/runtime/recall-intake/dixie-capability.ts)'s
+module header and in the
+[`tests/phase-26b-runtime-recall-intake.test.ts`](tests/phase-26b-runtime-recall-intake.test.ts)
+suite, which exercises:
+
+- direct ESM import from a non-Dixie fixture without the env key;
+- forged caller-metadata values passed alongside a missing capability;
+- a fake `"dixie"`-named wrapper package importing the subpath;
+- dependency-object spoofing via a hand-rolled `{ nonce, proof }`
+  literal that lacks the closure-private brand.
+
+A capability minted in process A cannot be replayed in process B
+without B also carrying the env key.
+
+### Dixie-only is bounded; Finn migration is recorded
+
+This subpath is a pre-Finn MVP exception, **not** a permanent lane
+transfer. Dixie does **not** become a semantic / runtime authority;
+Straylight remains the semantic wedge owner; Finn remains the
+eventual runtime-enforcement owner. When ADR-022E gate #9 fires, a
+future ADR (provisionally ADR-026B or successor) will move runtime
+enforcement to Finn, deprecate this subpath with a documented
+deprecation window, retire it in a clean package-surface change, and
+restore Straylight to its full type-only posture (ADR-026A §"Decision"
+§8).
