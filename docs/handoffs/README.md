@@ -2898,6 +2898,82 @@ pre-merge Flatline requirement applies to docs-only changes that
 closure is asserted only after that Flatline pass returns PASS
 or REVISE-with-resolution AND the ADR-026A PR merges.
 
+## Phase 26C — Dixie recall-intake consumer contract (in-repo only)
+
+Phase 26C is a **Straylight-side, in-repo consumer-contract
+record** for the runtime recall-intake subpath that ADR-026A
+authorized and Phase 26B (PR #45) implemented (with Phase 26B-F
+runtime-packaging hardening on PR #46). Phase 26C does **not**
+authorize a Dixie endpoint, a Dixie adapter, a sibling-repo
+edit, a deployment, a Straylight package-surface change, a
+Straylight runtime-source change, a fixture / script / build
+change, a `dist/` or `dist-types/` commit, a Hounfour adoption
+flip, a Finn wiring step, a Freeside surface, a Loa framework
+edit, a tag, a release, or a package publish. The future Dixie
+endpoint, if and when it ships, remains independently gated by
+Phase 26A-1 T13–T18 + ADR-022E gate #10 + the operator-authority
+discipline pinned by ADR-026A0. ADR-022E gates and Phase 25A /
+25B / 26A-0 / 26A-1 refusal rules **remain binding**.
+
+ADR-026C records the contract a future Dixie endpoint or
+adapter, **if separately authorized**, would have to satisfy in
+order to consume `@loa/straylight/runtime/recall-intake`
+correctly: subpath-only import (no root, no `./host`, no deep
+import); capability mint via the public
+`createDixieCapability()` constructor; deployment-bound
+`STRAYLIGHT_RUNTIME_DIXIE_KEY` planted in process env;
+capability passed to `handleRecallIntake` as the fourth
+argument; no metadata-trust (no `package_name`,
+`caller_identity`, or `user_agent` carries weight); no
+cross-process replay (each process mints its own capability
+locally); and fail-closed handling of `runtime_seam:capability_*`
+denials. The contract is descriptive on the consumer side and
+already enforced on the Straylight side by the Phase 26B HMAC +
+closure-private-brand gate and the package's `exports` map.
+
+| Document / artifact | Purpose |
+|---|---|
+| [`phase-26c-dixie-recall-intake-consumer-contract.md`](./phase-26c-dixie-recall-intake-consumer-contract.md) | Phase 26C summary handoff: status banner; why Phase 26C exists; eight-item consumer-contract obligations a future Dixie endpoint / adapter would have to satisfy if separately authorized (subpath-only import, no deep import, capability mint via the public constructor, env-key binding, capability passed to `handleRecallIntake`, no metadata-trust, no cross-process replay, fail-closed handling); ten-item Phase 26C test invariants; explicit non-goal block (no Dixie endpoint, no sibling-repo edit, no package-surface change, no runtime-source change, no fixture/script change, no `dist/` or `dist-types/` commit, no `.github/` / `.loa.config.yaml` / `.claude/` / `.beads/` / `.run/` / `grimoires/` edit, no release/tag/publish, no Hounfour bump, no relaxation of any ADR-022E or Phase 25/26 refusal rule, no SKP-005 re-claim, no successor-ADR pre-approval); validation expectations; cross-references. |
+| [`../decisions/ADR-026C-dixie-recall-intake-consumer-contract.md`](../decisions/ADR-026C-dixie-recall-intake-consumer-contract.md) | Phase 26C decision-lock: Status (Accepted-for-Phase-26C; Straylight-side consumer-contract record; not authorization for any Dixie endpoint, sibling-repo edit, deployment, storage, Finn enforcement, Hounfour adoption, or package export change); Context (why ADR-026C exists; why a Straylight-side, in-repo decision-lock is the right shape; what the Phase 26C consumer-shaped test proves); **Decision** (§1 file set, §2 contract subject, §3 consumer-contract obligations, §4 Straylight-side obligations the contract depends on, §5 Phase 26C test invariants, §6 explicit non-goals, §7 future-ADR contract reminder); Consequences; Source files inspected. |
+| [`../../tests/phase-26c-dixie-consumer-contract.test.ts`](../../tests/phase-26c-dixie-consumer-contract.test.ts) | vitest suite that simulates a Dixie-shaped consumer flow against `@loa/straylight/runtime/recall-intake`. Uses the same temp-fixture-symlink pattern Phase 24H and Phase 26B already use: `node_modules/@loa/straylight` is symlinked to the repo so consumer imports flow through the real `exports` map, and small consumer `.mjs` files exercise positive + negative shapes in fresh subprocesses. Asserts subpath-only resolution (root + `./host` + named deep-import paths fail), positive served path with env key + minted capability + BFF-shaped payload, fail-closed without env key, fail-closed across env-key rotation, capability-shape spoofing rejection, cross-process replay rejection. Consumes the existing Phase 26B build outputs and the existing [`../../fixtures/index.ts`](../../fixtures/index.ts) builders; does not edit `src/`, `scripts/`, `fixtures/`, `dist/`, or `dist-types/`. |
+
+The Phase 26C packet consumes ADR-026A, ADR-026A0, the Phase
+26A-1 threat-model amendment, the Phase 26A-2 authorization
+handoff, the merged Phase 26B implementation, and the existing
+[`./dixie-recall-mapping.md`](./dixie-recall-mapping.md),
+[`./cross-repo-implementation-order.md`](./cross-repo-implementation-order.md),
+[`../mvp/package-boundary.md`](../mvp/package-boundary.md), and
+[`../mvp/threat-model.md`](../mvp/threat-model.md) records
+without editing any of them.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+npm run build
+npm pack --dry-run
+git status --short -- dist dist-types
+git diff --stat
+git diff --name-only
+git status --short
+```
+
+Expected: `npm run typecheck` clean; `npm test` passes (the new
+`phase-26c-dixie-consumer-contract` suite passes; the existing
+`phase-26b-runtime-recall-intake` suite still passes; no other
+test changes verdict); `npm run build` clean (artifacts under
+`dist/` and `dist-types/` byte-identical to the post-Phase-26B-F
+baseline because Phase 26C touches no `src/` file); `npm pack
+--dry-run` shape unchanged from the post-Phase-26B-F tarball;
+`git status --short -- dist dist-types` empty; `git diff --stat`
+shows only the four Phase 26C files (this README append, the
+new handoff, ADR-026C, and the new test file); `git diff
+--name-only` matches that four-file set; `git status --short`
+shows the four Phase 26C files plus any pre-existing local dirt
+outside the Phase 26C scope (which remains unstaged per the
+phase brief).
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
