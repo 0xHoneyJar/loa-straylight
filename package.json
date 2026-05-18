@@ -11,17 +11,23 @@
     },
     "./host": {
       "types": "./dist-types/src/straylight/host/index.d.ts"
+    },
+    "./runtime/recall-intake": {
+      "types": "./dist-types/src/straylight/runtime/recall-intake/index.d.ts",
+      "import": "./dist/src/straylight/runtime/recall-intake/index.js"
     }
   },
   "files": [
     "dist-types/",
+    "dist/",
     "README.md",
     "package.json"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",
     "clean:types": "node -e \"require('node:fs').rmSync('dist-types', { recursive: true, force: true })\"",
-    "build": "npm run clean:types && tsc -p tsconfig.build.json",
+    "clean:dist": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean:types && npm run clean:dist && tsc -p tsconfig.build.json && tsc -p tsconfig.runtime.json && node scripts/prune-dist-runtime.mjs",
     "prepare": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",

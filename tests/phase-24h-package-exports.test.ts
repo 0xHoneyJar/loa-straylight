@@ -46,6 +46,14 @@ const PACKAGE_JSON = resolve(ROOT, 'package.json');
 const TSCONFIG_BUILD = resolve(ROOT, 'tsconfig.build.json');
 const WEDGE_DTS = resolve(ROOT, 'dist-types/src/straylight/index.d.ts');
 const HOST_DTS = resolve(ROOT, 'dist-types/src/straylight/host/index.d.ts');
+const RUNTIME_DTS = resolve(
+  ROOT,
+  'dist-types/src/straylight/runtime/recall-intake/index.d.ts',
+);
+const RUNTIME_JS = resolve(
+  ROOT,
+  'dist/src/straylight/runtime/recall-intake/index.js',
+);
 const HOST_GUARD_TEST = resolve(
   ROOT,
   'tests/phase-24c-host-surface-shape.test.ts',
@@ -74,16 +82,34 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function buildOnce(): void {
-  if (existsSync(WEDGE_DTS) && existsSync(HOST_DTS)) return;
+  if (
+    existsSync(WEDGE_DTS) &&
+    existsSync(HOST_DTS) &&
+    existsSync(RUNTIME_DTS) &&
+    existsSync(RUNTIME_JS)
+  ) {
+    return;
+  }
   execFileSync('npm', ['run', 'build'], { cwd: ROOT, stdio: 'pipe' });
 }
 
+// Use the pre-computed `npm pack --dry-run --json` output stashed by
+// vitest globalSetup at `.vitest/pack-dry-run.json`. Running `npm pack`
+// during the test run unconditionally fires the `prepare` script
+// (npm@7+ behavior; `--ignore-scripts` does NOT suppress it), which
+// wipes `dist/` and rebuilds it — racing with subprocess imports in
+// the Phase 26B suite that resolve through the symlinked package's
+// `dist/`. Pre-computing in globalSetup eliminates the race.
+const PACK_CACHE_FILE = resolve(ROOT, '.vitest/pack-dry-run.json');
+
 function runNpmPackDryRun(): string {
-  buildOnce();
-  return execFileSync('npm', ['pack', '--dry-run', '--json'], {
-    cwd: ROOT,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  }).toString('utf8');
+  if (!existsSync(PACK_CACHE_FILE)) {
+    throw new Error(
+      `phase-24h: ${PACK_CACHE_FILE} not found; vitest globalSetup ` +
+        '(tests/_global-setup.ts) is responsible for pre-computing it.',
+    );
+  }
+  return readFileSync(PACK_CACHE_FILE, 'utf8');
 }
 
 interface PackEntry {
@@ -110,15 +136,20 @@ describe('Phase 24H — package.json exports shape', () => {
     expect(pkg.types).toBe('./dist-types/src/straylight/index.d.ts');
   });
 
-  it('declares an `exports` map with exactly two keys: "." and "./host"', () => {
+  it('declares an `exports` map with exactly three keys: ".", "./host", "./runtime/recall-intake" (Phase 26B)', () => {
+    // Phase 24H pinned exactly two keys ("." and "./host"). Phase 26B
+    // (ADR-026A §"Decision" §2) authorizes EXACTLY one additional runtime
+    // subpath at "./runtime/recall-intake". Root "." and "./host" remain
+    // type-only per ADR-026A §"Decision" §5; widening either of those is
+    // out of scope for Phase 26B and requires its own future ADR.
     const pkg = readPackageJson();
     expect(isRecord(pkg.exports)).toBe(true);
     if (!isRecord(pkg.exports)) return;
     const keys = Object.keys(pkg.exports).sort();
-    expect(keys).toEqual(['.', './host']);
+    expect(keys).toEqual(['.', './host', './runtime/recall-intake']);
   });
 
-  it('exports["."] has exactly one key: "types"', () => {
+  it('exports["."] has exactly one key: "types" (root remains type-only post-Phase-26B)', () => {
     const pkg = readPackageJson();
     if (!isRecord(pkg.exports)) throw new Error('exports must be a record');
     const root = pkg.exports['.'];
@@ -128,7 +159,7 @@ describe('Phase 24H — package.json exports shape', () => {
     expect(root.types).toBe('./dist-types/src/straylight/index.d.ts');
   });
 
-  it('exports["./host"] has exactly one key: "types"', () => {
+  it('exports["./host"] has exactly one key: "types" (host remains type-only post-Phase-26B)', () => {
     const pkg = readPackageJson();
     if (!isRecord(pkg.exports)) throw new Error('exports must be a record');
     const host = pkg.exports['./host'];
@@ -138,7 +169,27 @@ describe('Phase 24H — package.json exports shape', () => {
     expect(host.types).toBe('./dist-types/src/straylight/host/index.d.ts');
   });
 
-  it('exports entries do NOT include any runtime / value-import condition (SKP-001)', () => {
+  it('exports["./runtime/recall-intake"] has exactly two keys: "types" and "import" (Phase 26B; ADR-026A §4)', () => {
+    const pkg = readPackageJson();
+    if (!isRecord(pkg.exports)) throw new Error('exports must be a record');
+    const runtime = pkg.exports['./runtime/recall-intake'];
+    expect(isRecord(runtime)).toBe(true);
+    if (!isRecord(runtime)) return;
+    // ADR-026A §"Decision" §4 pins "import" (ESM-only), NOT "default".
+    // The package is `"type": "module"`; "import" is narrower than
+    // "default" (no CJS fallback, no non-Node consumers). A successor
+    // ADR or Flatline pass may reverse this, but absent that reversal
+    // the test holds.
+    expect(Object.keys(runtime).sort()).toEqual(['import', 'types']);
+    expect(runtime.types).toBe(
+      './dist-types/src/straylight/runtime/recall-intake/index.d.ts',
+    );
+    expect(runtime.import).toBe(
+      './dist/src/straylight/runtime/recall-intake/index.js',
+    );
+  });
+
+  it('root "." and "./host" entries do NOT include any runtime / value-import condition (Phase 24H + ADR-026A §5)', () => {
     const pkg = readPackageJson();
     if (!isRecord(pkg.exports)) throw new Error('exports must be a record');
     const forbidden = [
@@ -158,21 +209,23 @@ describe('Phase 24H — package.json exports shape', () => {
       'module',
       'main',
     ];
-    for (const key of Object.keys(pkg.exports)) {
+    // Type-only subpaths preserved per ADR-026A §"Decision" §5: root "."
+    // and "./host" MUST remain `{"types": "..."}`-only. Adding any runtime
+    // condition under either is out of scope for Phase 26B and requires
+    // its own future ADR.
+    for (const key of ['.', './host']) {
       const entry = pkg.exports[key];
       expect(isRecord(entry)).toBe(true);
       if (!isRecord(entry)) continue;
-      // Exactly one condition: "types". Any other condition is a Phase 24H violation.
       expect(Object.keys(entry)).toEqual(['types']);
       for (const condition of forbidden) {
         expect(
           Object.prototype.hasOwnProperty.call(entry, condition),
-          `exports["${key}"] must not declare a "${condition}" condition in Phase 24H`,
+          `exports["${key}"] must not declare a "${condition}" condition`,
         ).toBe(false);
       }
       for (const value of Object.values(entry)) {
         if (typeof value !== 'string') continue;
-        // No source fallback: declarations must come from dist-types/, never src/.
         expect(value.startsWith('./src/')).toBe(false);
         expect(value).toMatch(/^\.\/dist-types\//);
         expect(value.endsWith('.d.ts')).toBe(true);
@@ -180,11 +233,46 @@ describe('Phase 24H — package.json exports shape', () => {
     }
   });
 
-  it('`files` includes "dist-types/"', () => {
+  it('"./runtime/recall-intake" rejects forbidden non-import runtime conditions (ADR-026A §4)', () => {
+    const pkg = readPackageJson();
+    if (!isRecord(pkg.exports)) throw new Error('exports must be a record');
+    const runtime = pkg.exports['./runtime/recall-intake'];
+    expect(isRecord(runtime)).toBe(true);
+    if (!isRecord(runtime)) return;
+    // ADR-026A §"Decision" §4 chose "import" specifically to exclude
+    // CJS fallback (`require`) and non-Node consumers (`browser`, etc.).
+    // A successor ADR may widen this; absent that, every other runtime
+    // condition is forbidden on the runtime subpath.
+    const forbiddenOnRuntime = [
+      'default',
+      'require',
+      'node',
+      'node-addons',
+      'browser',
+      'deno',
+      'bun',
+      'worker',
+      'react-native',
+      'electron',
+      'production',
+      'development',
+      'module',
+      'main',
+    ];
+    for (const condition of forbiddenOnRuntime) {
+      expect(
+        Object.prototype.hasOwnProperty.call(runtime, condition),
+        `exports["./runtime/recall-intake"] must not declare a "${condition}" condition under ADR-026A §4`,
+      ).toBe(false);
+    }
+  });
+
+  it('`files` includes "dist-types/" AND "dist/" (Phase 26B adds dist/ for the runtime subpath)', () => {
     const pkg = readPackageJson();
     expect(Array.isArray(pkg.files)).toBe(true);
     if (!Array.isArray(pkg.files)) return;
     expect(pkg.files).toContain('dist-types/');
+    expect(pkg.files).toContain('dist/');
   });
 
   it('`prepare` script equals "npm run build"', () => {
@@ -194,11 +282,11 @@ describe('Phase 24H — package.json exports shape', () => {
     expect(pkg.scripts.prepare).toBe('npm run build');
   });
 
-  it('`build` script cleans dist-types/ before invoking tsc (IMP-008)', () => {
+  it('`build` script cleans dist-types/ AND dist/ before invoking both tsc passes + prunes dist/ to runtime closure (Phase 26B)', () => {
     const pkg = readPackageJson();
     if (!isRecord(pkg.scripts)) throw new Error('scripts must be a record');
     expect(pkg.scripts.build).toBe(
-      'npm run clean:types && tsc -p tsconfig.build.json',
+      'npm run clean:types && npm run clean:dist && tsc -p tsconfig.build.json && tsc -p tsconfig.runtime.json && node scripts/prune-dist-runtime.mjs',
     );
   });
 
@@ -317,8 +405,8 @@ describe('Phase 24H — emitted declarations match exports map (IMP-011)', () =>
   });
 });
 
-describe('Phase 24H — npm pack contents (IMP-004 / IMP-009)', () => {
-  it('npm pack --dry-run includes ONLY README.md + package.json + dist-types/**', () => {
+describe('Phase 24H + 26B — npm pack contents (IMP-004 / IMP-009 + ADR-026A)', () => {
+  it('npm pack --dry-run includes README.md + package.json + dist-types/** + dist/** (Phase 26B widens to dist/)', () => {
     const output = runNpmPackDryRun();
     const parsed = JSON.parse(output) as PackResult[];
     expect(Array.isArray(parsed)).toBe(true);
@@ -328,18 +416,29 @@ describe('Phase 24H — npm pack contents (IMP-004 / IMP-009)', () => {
       throw new Error('npm pack --dry-run --json returned no files array');
     }
     const paths = firstResult.files.map((f) => f.path);
-    // Required content: the two named declaration files + package.json + README.
+    // Required content (Phase 24H + 26B):
+    //   - the wedge + host declaration files (Phase 24H);
+    //   - the runtime/recall-intake declaration AND emitted JS (Phase 26B);
+    //   - package.json + README (Phase 24H).
     expect(paths).toContain('dist-types/src/straylight/index.d.ts');
     expect(paths).toContain('dist-types/src/straylight/host/index.d.ts');
+    expect(paths).toContain(
+      'dist-types/src/straylight/runtime/recall-intake/index.d.ts',
+    );
+    expect(paths).toContain(
+      'dist/src/straylight/runtime/recall-intake/index.js',
+    );
     expect(paths).toContain('package.json');
     expect(paths).toContain('README.md');
-    // Every shipped path MUST be one of: dist-types/**, README.md, package.json.
-    // No tsconfig, no vitest.config, no package-lock, no `.npmignore` leakage.
+    // Every shipped path MUST be one of: dist-types/**, dist/**, README.md,
+    // package.json. No tsconfig, no vitest.config, no package-lock, no
+    // `.npmignore` leakage.
     for (const path of paths) {
       const allowed =
         path === 'package.json' ||
         path === 'README.md' ||
-        path.startsWith('dist-types/');
+        path.startsWith('dist-types/') ||
+        path.startsWith('dist/');
       expect(allowed, `unexpected file in npm pack output: ${path}`).toBe(true);
     }
   });
@@ -426,6 +525,26 @@ describe('Phase 24H — npm pack contents (IMP-004 / IMP-009)', () => {
       expect(
         allowed,
         `dist-types/ entry must be a declaration file, got ${path}`,
+      ).toBe(true);
+    }
+  });
+
+  it('npm pack --dry-run dist/ entries are only .js (or .js.map) emitted runtime files (Phase 26B)', () => {
+    const output = runNpmPackDryRun();
+    const parsed = JSON.parse(output) as PackResult[];
+    const firstResult = parsed[0];
+    if (!firstResult || !Array.isArray(firstResult.files)) {
+      throw new Error('npm pack --dry-run --json returned no files array');
+    }
+    const paths = firstResult.files.map((f) => f.path);
+    // The dist/ artifact carries emitted JS; no .ts source, no .d.ts
+    // (that's dist-types/), no .json, no leaked tsconfig output.
+    for (const path of paths) {
+      if (!path.startsWith('dist/')) continue;
+      const allowed = path.endsWith('.js') || path.endsWith('.js.map');
+      expect(
+        allowed,
+        `dist/ entry must be an emitted JS file, got ${path}`,
       ).toBe(true);
     }
   });

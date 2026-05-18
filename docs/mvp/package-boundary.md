@@ -587,6 +587,156 @@ A sibling-repo dependency via a commit-SHA pin against an unpublished
 tree, a `main`-HEAD git dependency, or a workspace-path link to a
 developer's local clone is **not** authorized.
 
+## Runtime subpath — `./runtime/recall-intake` (Phase 26A-2 implementation, experimental, pre-Finn, Dixie-only)
+
+> **Status: Phase 26B implementation of ADR-026A** (authorization-record
+> drafted in Phase 26A-2). The subpath is **experimental**, **pre-Finn**,
+> and **Dixie-only**. Root `.` and `./host` remain `"types"`-only. This
+> section is added in the same diff as the `package.json` `exports` map
+> entry per ADR-026A §"Decision" §6.d.
+
+After Phase 26B, the package's `exports` map has exactly three keys:
+
+```json
+{
+  ".": {
+    "types": "./dist-types/src/straylight/index.d.ts"
+  },
+  "./host": {
+    "types": "./dist-types/src/straylight/host/index.d.ts"
+  },
+  "./runtime/recall-intake": {
+    "types":  "./dist-types/src/straylight/runtime/recall-intake/index.d.ts",
+    "import": "./dist/src/straylight/runtime/recall-intake/index.js"
+  }
+}
+```
+
+Root `.` and `./host` MUST remain `{"types": "..."}`-only per ADR-024G
++ ADR-026A §"Decision" §5. Adding a runtime condition to either of
+those is **out of scope** for Phase 26B and requires its own future
+ADR.
+
+### Why `"import"` and not `"default"` (ADR-026A §"Decision" §4)
+
+The runtime subpath uses the `"import"` (ESM-only) condition rather
+than `"default"` because:
+
+- the package is `"type": "module"`;
+- `"import"` is narrower (no CJS fallback, no non-Node consumers);
+- narrower is the safer MVP posture.
+
+A successor authorizing ADR or a pre-merge Flatline pass on this
+implementation PR may reverse this; absent reversal the choice holds.
+
+### Runtime barrel allowlist (ADR-026A §"Decision" §3)
+
+The barrel at `src/straylight/runtime/recall-intake/index.ts` exports
+**exactly**:
+
+| Export | Kind | Notes |
+|---|---|---|
+| `handleRecallIntake` | function | The one MVP runtime entrypoint. Wraps the host-layer handler behind the Dixie-only capability gate. |
+| `createDixieCapability` | function | Mints the per-call capability used to satisfy the non-Dixie refusal mechanism. Refuses (throws) when `STRAYLIGHT_RUNTIME_DIXIE_KEY` is absent. |
+| `DixieCapabilityError` | class | Thrown by `createDixieCapability` when the deployment-bound shared key is absent. |
+| `DixieCapability` | type | Capability interface (no runtime value). |
+
+`createInMemoryRecallIntakeDeps` is intentionally **not** exported.
+Tests build deps inline; keeping this off the allowlist preserves the
+§3 guarantee that the runtime seam does not leak `EstateStore` /
+`AuditLog` / `JsonlStorage` value imports.
+
+The following are **NOT** exported as runtime values from this subpath
+(adding any of them requires a separate, future, expanding ADR):
+`executeRecall`, `EstateStore`, `AuditLog`, `JsonlStorage`,
+`dispositionFor`, `verifyChain`, `computeCommitmentRoot`, `devSign`,
+`devSignatureFor`, `validateCandidateAssertion`,
+`validateRecallRequest`, `evaluateCompetence`, `InMemoryStorage`,
+`loadBundle`, `saveBundle`, and every other §1–11 wedge stable-surface
+entry.
+
+### Experimental / pre-Finn / Dixie-only marker (ADR-026A §"Decision" §6)
+
+The marker is recorded in **four** places, all of which the Phase 26B
+test suite asserts:
+
+- JSDoc on the runtime barrel and on every exported handler / helper.
+- Emitted `.d.ts` declarations: the JSDoc survives `tsc` emission so
+  consumers see the marker through `import type`. The
+  `tests/phase-26b-runtime-recall-intake.test.ts` suite reads the
+  emitted `.d.ts` and asserts the `@experimental` tag plus the marker
+  tokens `pre-Finn`, `Dixie-only`, and migration-to-Finn language are
+  present.
+- README "Runtime subpath (experimental, pre-Finn, Dixie-only)"
+  section.
+- This section.
+
+### Concrete non-Dixie refusal mechanism (ADR-026A §"Decision" §7)
+
+The mechanism is HMAC-SHA256 challenge-response gated by an
+environment-bound shared key (`STRAYLIGHT_RUNTIME_DIXIE_KEY`) plus a
+closure-private brand on the capability object. Per ADR-026A §7 the
+mechanism is (a) unforgeable by a non-Dixie caller without operator
+access, (b) observable in tests, and (c) localized to the runtime
+barrel boundary rather than relying on transitive trust.
+
+Per-attack-shape coverage (ADR-026A §7):
+
+| Attack shape | Defence |
+|---|---|
+| (i) direct ESM import from non-Dixie | Without `STRAYLIGHT_RUNTIME_DIXIE_KEY` in env, `createDixieCapability` refuses; the runtime barrel rejects unbranded objects. |
+| (ii) forged caller metadata | The gate consumes NO caller-identity strings; metadata-forging is a no-op against this gate. |
+| (iii) fake `"dixie"`-named wrapper package | Package-name strings are never inspected; a wrapper without the env key cannot construct a capability. |
+| (iv) dependency-object spoofing | The capability brand is membership in a module-private `WeakSet` populated only by `createDixieCapability`. A hand-rolled `{ nonce, proof }` object — even with a cryptographically-correct proof obtained out-of-band — fails the brand check. |
+
+The full module-level threat-model commentary is in
+[`../../src/straylight/runtime/recall-intake/dixie-capability.ts`](../../src/straylight/runtime/recall-intake/dixie-capability.ts).
+
+If the chosen mechanism is ever found to be insufficient against any
+listed attack shape, Phase 26B is **blocked** and ADR-026A may NOT be
+cited as sufficient authorization (per ADR-026A §"Decision" §7
+block-on-failure rule).
+
+### Threat-model legs (ADR-026A §"Decision" §11)
+
+The runtime seam:
+
+- T13 (network adversary): is **not** the network seam; Dixie's
+  ingress is. The seam re-checks the wedge invariants the wedge
+  re-checks (estate-id scoping, class validation, signer competence,
+  status filtering, audit-chain append) via the host-layer
+  `handleRecallIntake` and is fail-closed on precondition mismatch.
+- T14 (cross-tenant authorization): the seam refuses to act on a
+  tenant value not derived from the authenticated context; the
+  host-layer `checkSameTenant` guard is preserved verbatim.
+- T15 (replay): the seam does not own replay/idempotency state — the
+  Dixie endpoint does. The Straylight runtime seam records no replay
+  state and adds no idempotency layer.
+- T16/T17/T18/T9: the Straylight runtime seam **MUST NOT** add ingress
+  validation, rate limits, body-size limits, per-tenant memory caps,
+  replay/idempotency state, or multi-instance coordination logic.
+  Those remain Dixie-endpoint responsibilities per Phase 26A-1; adding
+  them to the runtime barrel is a Phase 26A-1 leak and is blocked by
+  ADR-026A.
+
+### Migration / retirement to Finn (ADR-026A §"Decision" §8)
+
+This subpath is a pre-Finn MVP exception, **not** a permanent lane
+transfer. When ADR-022E gate #9 fires, a future ADR (provisionally
+ADR-026B or successor) MUST:
+
+- move runtime enforcement to Finn;
+- deprecate `@loa/straylight/runtime/recall-intake` with a documented
+  deprecation window, named in the successor ADR with a concrete
+  trigger and an upper bound that does not require operator inaction
+  to enforce;
+- retire the subpath in a clean package-surface change;
+- restore Straylight to its full type-only posture.
+
+Dixie does NOT become a semantic / runtime authority; Straylight
+remains the semantic wedge owner; Finn remains the eventual
+runtime-enforcement owner.
+
 ## Versioning
 
 The wedge does not yet carry a published semver. Treat the public surface
