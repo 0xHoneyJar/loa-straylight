@@ -388,6 +388,96 @@ edits; sibling-repo edits other than the narrowly-scoped later
 Straylight implementation PR; tag / release creation; or any
 general reorder of Phase 15.
 
+## Phase 26D narrowing — single Dixie recall-intake endpoint PR authorization
+
+> Status: append-only cross-reference recorded by Phase 26D.
+> Bounded to **one** sibling-repo PR in `loa-dixie` adding **one**
+> recall-intake endpoint/adapter consuming
+> `@loa/straylight/runtime/recall-intake`. **No general reorder
+> of the Hounfour → Finn → Dixie → Freeside sequence above.**
+> **No other Dixie work is opened by this narrowing.**
+
+[`../decisions/ADR-026D-dixie-recall-intake-endpoint-authorization.md`](../decisions/ADR-026D-dixie-recall-intake-endpoint-authorization.md)
+authorizes — but does not itself implement — exactly **one**
+future sibling-repo PR in
+[`loa-dixie`](https://github.com/0xHoneyJar/loa-dixie). That
+PR may add **one** recall-intake endpoint/adapter that consumes
+`@loa/straylight/runtime/recall-intake` from the published
+Straylight package surface, uses `createDixieCapability` and
+`handleRecallIntake`, binds `STRAYLIGHT_RUNTIME_DIXIE_KEY` in
+the deployment process environment, honors ADR-026C §3
+obligations 3.1–3.8 in full, and resolves the Phase 26A-1
+endpoint prerequisites (T13–T18 + the T9 persistence-posture
+amendment) under ADR-026D §"Decision" §3 acceptance criteria.
+The companion handoff is
+[`./phase-26d-dixie-recall-intake-endpoint-authorization.md`](./phase-26d-dixie-recall-intake-endpoint-authorization.md).
+
+This authorization narrows the recommended Phase 15
+implementation order **only for this single endpoint slice**:
+
+- The **single future Dixie recall-intake endpoint PR** in
+  `loa-dixie` is now authorized under ADR-026D. The PR may
+  open and merge ahead of any Hounfour adoption flip in
+  `loa-straylight`, ahead of Finn wiring, and ahead of any
+  other Dixie surface, **for this slice only**, because the
+  Straylight runtime subpath authorized by ADR-026A and
+  implemented by Phase 26B is the consumer surface the
+  endpoint depends on, and the Phase 26A-1 threat-model
+  prerequisites are now resolved or gated by ADR-026D §3.
+- **No other Dixie work is authorized** by ADR-026D. The
+  Phase 24E S2–S6 surfaces (receipt retrieval, exclusion
+  display, provenance walk, audit-chain lookup, estate
+  summary), the review-queue management surface, the
+  governance timeline surface, any BFF rebuild, any operator
+  console, and any Discord / Telegram / NATS / REST surface
+  remain **unauthorized**. Each requires its own ADR.
+- **No general reorder** of the Hounfour → Finn → Dixie →
+  Freeside sequence above. The Phase 26D narrowing is bounded
+  to the single recall-intake endpoint/adapter and does not
+  authorize Dixie ahead of Finn for any other handler or
+  surface.
+- **No Hounfour adoption** by this narrowing. ADR-022E gates
+  #1–#5, #17, #18 remain held.
+- **No Finn wiring** by this narrowing. ADR-022E gate #9
+  remains held. **Finn remains the eventual runtime-
+  enforcement owner** per ADR-022B / ADR-022E gate #9; the
+  Straylight runtime subpath is a pre-Finn MVP exception, not
+  a permanent lane transfer.
+- **No Freeside wiring** by this narrowing. ADR-022E gate #11
+  remains held.
+- **No production storage migration** by this narrowing.
+  ADR-022E gate #8 remains held; the per-tenant memory cap
+  and bounded estate-storage posture authorized under
+  ADR-026D §3.a (iii) is the endpoint's own guardrail and
+  does not authorize a production persistence adapter.
+- **No Loa framework edits** by this narrowing. Per Phase
+  26A-0 §"Decision" §7, framework edits remain
+  separately-authorized.
+- **No tag / release / package publish** by this narrowing.
+- **No Straylight package-surface change** by this narrowing.
+  The runtime allowlist is unchanged; no new runtime subpath
+  is opened.
+- **Straylight remains the semantic wedge owner.** Dixie does
+  **not** become a semantic / runtime authority under this
+  narrowing.
+- **Sibling-repo PR review remains in `loa-dixie`** under
+  teammate review. The PR MUST pass a real 3-model Flatline
+  pass AND a real Bridgebuilder review pre-merge per
+  ADR-026A0 §"Decision" §5.
+
+Reviewers may cite this section verbatim to refuse a citation
+of ADR-026D as authorization for: a second Dixie endpoint
+beyond recall-intake; any Phase 24E S2–S6 surface; any review-
+queue / governance / BFF / operator-console / Discord /
+Telegram / NATS / REST surface; broader Dixie integration;
+sibling-repo edits in any repo other than `loa-dixie`;
+Straylight package-surface or runtime-source changes; Finn /
+Hounfour / Freeside wiring; production storage migration
+beyond the §3.a (iii) endpoint guardrail; Loa framework
+edits; tag / release / package publishing; broad autonomy /
+action execution; any general reorder of Phase 15; or any
+successor-ADR pre-approval.
+
 ## Cross-references
 
 - [`cross-repo-handoff-index.md`](./cross-repo-handoff-index.md)

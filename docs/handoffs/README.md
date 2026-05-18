@@ -2974,6 +2974,110 @@ shows the four Phase 26C files plus any pre-existing local dirt
 outside the Phase 26C scope (which remains unstaged per the
 phase brief).
 
+## Phase 26D — Dixie recall-intake endpoint authorization (in-repo only)
+
+Phase 26D is a **Straylight-side authorization record** for
+exactly **one** future sibling-repo PR in
+[`loa-dixie`](https://github.com/0xHoneyJar/loa-dixie) that
+adds a recall-intake endpoint/adapter consuming
+`@loa/straylight/runtime/recall-intake` per ADR-026A and
+ADR-026C. Phase 26D does **not** itself implement the
+endpoint, edit `loa-dixie`, open the sibling-repo PR, or
+authorize broader Dixie integration. Phase 26D does **not**
+authorize: any Dixie endpoint other than the single
+recall-intake endpoint/adapter scoped below; any Phase 24E
+S2–S6 surface (receipt retrieval, exclusion display,
+provenance walk, audit-chain lookup, estate summary); any
+review-queue management surface or governance timeline
+surface; any BFF rebuild, operator console, or
+Discord / Telegram / NATS / REST surface; a Straylight
+package-surface change (no `package.json` / `exports` map /
+runtime allowlist / new subpath edit); a Straylight
+runtime-source change (no edit to the Phase 26B HMAC +
+closure-private brand mechanism, env-key binding, or
+fail-closed defaults); Finn wiring (ADR-022E gate #9 held);
+Hounfour adoption (ADR-022E gates #1–#5, #17, #18 held);
+Freeside wiring (ADR-022E gate #11 held); production storage
+migration (ADR-022E gate #8 held) beyond the per-tenant
+memory cap and bounded estate-storage posture authorized as
+endpoint guardrail under ADR-026D §3.a (iii); a Loa framework
+edit; a tag, a release, a package publish, or a Hounfour
+dependency bump; broad autonomy / action execution; a general
+Phase 15 reorder; or any successor-ADR pre-approval. ADR-022E
+gates and Phase 25A / 25B / 26A-0 / 26A-1 refusal rules
+**remain binding**.
+
+ADR-026D authorizes exactly one future sibling-repo PR in
+`loa-dixie` to add **one** recall-intake endpoint/adapter
+that consumes `@loa/straylight/runtime/recall-intake` from
+the published Straylight package surface. The endpoint MUST:
+use `createDixieCapability` and `handleRecallIntake`; bind
+`STRAYLIGHT_RUNTIME_DIXIE_KEY` in the deployment process
+environment; honor ADR-026C §3 obligations 3.1–3.8 in full;
+resolve the Phase 26A-1 endpoint prerequisites (T13–T18 + the
+T9 persistence-posture amendment) under ADR-026D §"Decision"
+§3 acceptance criteria — request body size limit + per-tenant
+rate limit + per-tenant memory cap + explicit refusal
+behavior (T17 / SKP-002); idempotent replay default OR
+explicit duplicate-audit-OK with replay-cannot-alter-
+authorization (T15 / SKP-003); per-estate serialization OR
+enforced single-instance refusal (T16 + T18 / SKP-004);
+ingress validation + authoritative-tenant resolution (T13 +
+T14); fail-closed under each of ADR-026D §4.a–§4.g (missing
+key, key rotation, spoofed capability, serialised
+capability, metadata-only caller identity, unknown frame,
+cross-tenant intake); and ship the test classes ADR-026D §5.a
+through §5.f mandates in `loa-dixie`'s own test suite. The
+sibling-repo PR MUST pass a real 3-model Flatline pass AND a
+real Bridgebuilder review pre-merge per ADR-026A0
+§"Decision" §5.
+
+| Document / artifact | Purpose |
+|---|---|
+| [`phase-26d-dixie-recall-intake-endpoint-authorization.md`](./phase-26d-dixie-recall-intake-endpoint-authorization.md) | Phase 26D summary handoff: status banner; why Phase 26D exists; **Authorized next PR** table (repo, surfaces in scope, runtime symbols, env binding, consumer obligations, pre-merge gates, scope refusal pointers); **Endpoint prerequisites** table mapping T13–T18 + T9 amendment to ADR-026D §3 resolution paths and recording SKP-002 / SKP-003 / SKP-004 closure as the Dixie PR's responsibility; **Dixie implementation requirements** sections (capability + env binding, subpath discipline, tenant resolution, request controls, idempotency / replay, concurrency posture, fail-closed catalogue); required-tests table (5.a–5.f) with citation anchors; required pre-merge Flatline + Bridgebuilder; explicit non-goal block (no Dixie endpoint other than recall-intake; no broader Dixie integration; no Straylight package-surface change; no new runtime subpath; no edit to Phase 26B HMAC gate; no Finn / Hounfour / Freeside wiring; no production storage migration beyond endpoint guardrails; no tag / release / publish; no broad autonomy; no Loa framework edit; no general Phase 15 reorder; no successor-ADR pre-approval); validation expectations; cross-references. |
+| [`../decisions/ADR-026D-dixie-recall-intake-endpoint-authorization.md`](../decisions/ADR-026D-dixie-recall-intake-endpoint-authorization.md) | Phase 26D decision-lock: Status (Accepted-for-Phase-26D; Straylight-side authorization record for exactly one future sibling-repo PR in `loa-dixie`; not implementation; not a sibling-repo edit by this phase; not authorization for any other Dixie surface or any other sibling repo); Context (why ADR-026D exists; why a Straylight-side authorization record is the right shape); **Decision** (§1 file set; §2 authorized sibling-repo PR scope — repo, endpoint shape, package consumption, required runtime symbols, required env binding, consumer obligations; §3 endpoint prerequisites with resolution paths for T17 / T15 / T16 + T18 / T13 + T14; §4 fail-closed behaviors §4.a–§4.g; §5 required tests in `loa-dixie` before merge §5.a–§5.f; §6 pre-merge Flatline + Bridgebuilder requirement; §7 refusal rules §7.a–§7.n; §8 successor-ADR contract reminder; §9 rollback); Consequences; Source files inspected. |
+| [`./cross-repo-implementation-order.md`](./cross-repo-implementation-order.md) | Append-only Phase 26D cross-reference recording that the **single** future Dixie recall-intake endpoint PR is now authorized under ADR-026D. **No** general reorder of the Hounfour → Finn → Dixie → Freeside sequence; no other Dixie work is opened by this narrowing. |
+
+The Phase 26D packet consumes ADR-026A, ADR-026A0, ADR-026C,
+ADR-022E, the Phase 26A-1 threat-model amendment, the Phase
+26A-2 authorization handoff, the merged Phase 26B
+implementation, the merged Phase 26C consumer-contract
+record, and the existing
+[`./dixie-recall-mapping.md`](./dixie-recall-mapping.md),
+[`../mvp/package-boundary.md`](../mvp/package-boundary.md),
+and [`../mvp/threat-model.md`](../mvp/threat-model.md)
+records without editing any of them.
+
+Validate locally:
+
+```bash
+npm run typecheck
+npm test
+npm run build
+npm pack --dry-run
+git status --short -- dist dist-types
+git diff --stat
+git diff --name-only
+git status --short
+```
+
+Expected: `npm run typecheck` clean; `npm test` passes
+identically to the post-Phase-26C baseline (Phase 26D adds no
+test, edits no test, and changes no source file under
+[`../../src/`](../../src/); the existing Phase 26B and Phase
+26C suites continue to pin the Straylight-side seam);
+`npm run build` clean (`dist/` and `dist-types/` byte-
+identical to the post-Phase-26C baseline because Phase 26D
+touches no `src/` file); `npm pack --dry-run` shape unchanged
+from the post-Phase-26C tarball; `git status --short -- dist
+dist-types` empty; `git diff --stat` shows only the four
+Phase 26D files (this README append, the new handoff,
+ADR-026D, and the `cross-repo-implementation-order.md`
+append); `git diff --name-only` matches that four-file set;
+`git status --short` shows the four Phase 26D files plus any
+pre-existing local dirt outside the Phase 26D scope (which
+remains unstaged per the phase brief).
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
