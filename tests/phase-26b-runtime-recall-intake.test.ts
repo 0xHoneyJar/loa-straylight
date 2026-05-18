@@ -39,7 +39,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import process from 'node:process';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -912,5 +912,130 @@ describe('Phase 26B §10.f.i (subprocess) — direct import from non-Dixie proce
       `subprocess should exit 0; stdout=${result.stdout} stderr=${result.stderr}`,
     ).toBe(0);
     expect(result.stdout).toContain('CONSTRUCT_OK:string');
+  });
+});
+
+// ── Phase 26B-F (W1) — prune-dist-runtime walker import-shape coverage ────────
+//
+// The runtime closure walker in `scripts/prune-dist-runtime.mjs` decides
+// which emitted JS files survive `npm run build` and ship in the tarball.
+// If the walker fails to recognise a relative-import shape that tsc emits
+// — most notably the bare side-effect form `import "./polyfill.js";` — a
+// reachable file is silently deleted and the runtime barrel imports a
+// missing module at consumer load time. Phase 26B-F (Flatline W1) calls
+// out this gap.
+//
+// This block exercises the walker's pure helper directly (no filesystem
+// I/O, no `npm run build` invocation) so a future emit-shape regression
+// fails this test, not a downstream consumer.
+describe('Phase 26B-F (W1) — prune walker covers all relative-import shapes', () => {
+  // The walker module is JS with JSDoc types. Resolve it via a runtime
+  // file:// URL so TypeScript does not need a static type for the .mjs
+  // file (avoids coupling this test to `allowJs` / module-resolution
+  // config decisions).
+  type ExtractFn = (source: string) => string[];
+
+  async function loadWalker(): Promise<{ extractRelativeSpecifiers: ExtractFn }> {
+    const walkerUrl = pathToFileURL(
+      resolve(ROOT, 'scripts/prune-dist-runtime.mjs'),
+    ).href;
+    const mod = (await import(walkerUrl)) as {
+      extractRelativeSpecifiers: ExtractFn;
+    };
+    return mod;
+  }
+
+  it('captures static `from` imports (bindings + namespace + default)', async () => {
+    const { extractRelativeSpecifiers } = await loadWalker();
+    const src = [
+      "import a from './a.js';",
+      "import { b } from './b.js';",
+      "import * as c from './c.js';",
+      "import d, { e } from './d.js';",
+      'import f from "./f.js";', // double-quote variant
+    ].join('\n');
+    const specs = extractRelativeSpecifiers(src).sort();
+    expect(specs).toEqual(
+      ['./a.js', './b.js', './c.js', './d.js', './f.js'].sort(),
+    );
+  });
+
+  it('captures `export … from` re-export forms', async () => {
+    const { extractRelativeSpecifiers } = await loadWalker();
+    const src = [
+      "export * from './re-a.js';",
+      "export { x } from './re-b.js';",
+      "export { y as z } from './re-c.js';",
+      "export { default } from './re-d.js';",
+    ].join('\n');
+    const specs = extractRelativeSpecifiers(src).sort();
+    expect(specs).toEqual(
+      ['./re-a.js', './re-b.js', './re-c.js', './re-d.js'].sort(),
+    );
+  });
+
+  it('captures dynamic `import("./x.js")` calls (sync and awaited)', async () => {
+    const { extractRelativeSpecifiers } = await loadWalker();
+    const src = [
+      "const m = import('./dyn-a.js');",
+      "const n = await import('./dyn-b.js');",
+      "Promise.resolve().then(() => import('./dyn-c.js'));",
+    ].join('\n');
+    const specs = extractRelativeSpecifiers(src).sort();
+    expect(specs).toEqual(['./dyn-a.js', './dyn-b.js', './dyn-c.js'].sort());
+  });
+
+  it('captures BARE side-effect imports — `import "./x.js";` (W1)', async () => {
+    // W1 regression class: tsc emits this shape when a module is
+    // imported solely for its side effects (polyfill registration,
+    // module-level mutation). The pre-26B-F walker missed it.
+    const { extractRelativeSpecifiers } = await loadWalker();
+    const src = [
+      "import './polyfill.js';",
+      "import './side-effect-a.js';",
+      'import "./side-effect-b.js";',
+    ].join('\n');
+    const specs = extractRelativeSpecifiers(src).sort();
+    expect(specs).toEqual(
+      ['./polyfill.js', './side-effect-a.js', './side-effect-b.js'].sort(),
+    );
+  });
+
+  it('skips bare specifiers (npm packages, `node:` builtins)', async () => {
+    // Bare specifiers are never under `dist/` and never need pruning.
+    // The walker MUST NOT return them — returning them would push the
+    // walker into an unresolvable filesystem path.
+    const { extractRelativeSpecifiers } = await loadWalker();
+    const src = [
+      "import { createHash } from 'node:crypto';",
+      "import { z } from 'zod';",
+      "import './local.js';",
+      "const m = await import('node:fs');",
+      "import 'side-effect-pkg';",
+    ].join('\n');
+    const specs = extractRelativeSpecifiers(src);
+    expect(specs).toEqual(['./local.js']);
+  });
+
+  it('returns each specifier exactly once even when referenced multiple times', async () => {
+    const { extractRelativeSpecifiers } = await loadWalker();
+    const src = [
+      "import { a } from './shared.js';",
+      "export { a } from './shared.js';",
+      "const m = await import('./shared.js');",
+      "import './shared.js';",
+    ].join('\n');
+    const specs = extractRelativeSpecifiers(src);
+    expect(specs).toEqual(['./shared.js']);
+  });
+
+  it('captures parent-relative specifiers (`../foo.js`)', async () => {
+    const { extractRelativeSpecifiers } = await loadWalker();
+    const src = [
+      "import { a } from '../sibling/a.js';",
+      "import '../parent/poly.js';",
+    ].join('\n');
+    const specs = extractRelativeSpecifiers(src).sort();
+    expect(specs).toEqual(['../parent/poly.js', '../sibling/a.js'].sort());
   });
 });

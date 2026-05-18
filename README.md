@@ -623,8 +623,47 @@ suite, which exercises:
 - dependency-object spoofing via a hand-rolled `{ nonce, proof }`
   literal that lacks the closure-private brand.
 
-A capability minted in process A cannot be replayed in process B
-without B also carrying the env key.
+#### Cross-process replay (Phase 26B-F W4)
+
+A capability is **not** a transferrable bearer token. The
+runtime barrel recognises a capability by membership in a
+closure-private `WeakSet` populated by `createDixieCapability`
+in the importing module instance. Serialising the capability
+(`JSON.stringify`, structured-clone, RPC marshal, copy through
+shared memory, etc.) and rehydrating it in another process
+produces a new object that is **not** in the source process's
+`WeakSet`, and the verify step rejects it as
+`runtime_seam:capability_unrecognized`. Process B does not
+"replay" process A's capability; process B MUST construct its
+own capability locally by calling `createDixieCapability` with
+its own `STRAYLIGHT_RUNTIME_DIXIE_KEY` planted in its own env.
+There is no supported wire format for capabilities.
+
+#### Env-key rotation (Phase 26B-F W3)
+
+`STRAYLIGHT_RUNTIME_DIXIE_KEY` is the deployment-bound shared
+secret consumed at both mint and verify. If the key is rotated
+between the mint of a capability and a subsequent
+`handleRecallIntake` call:
+
+- The capability still carries the proof produced under the
+  pre-rotation key.
+- The verify step re-reads the env at call time and HMACs the
+  capability's nonce under the post-rotation key.
+- The two HMACs do not match; `crypto.timingSafeEqual` returns
+  false; the seam fails closed with
+  `runtime_seam:proof_invalid`.
+
+Rotation is therefore safe by construction: pre-rotation
+capabilities cannot be replayed against a post-rotation
+deployment. Operationally, **Dixie MUST re-mint capabilities
+after a rotation event** — typically by re-invoking
+`createDixieCapability()` for the next request rather than
+caching the capability across rotations. The `tests/phase-26b-runtime-recall-intake.test.ts`
+suite covers this fail-closed path under §10.f.i ("WRONG env
+key (key rotation / deployment mismatch)"). No HMAC model
+change is implied; this section documents the existing seam
+behavior.
 
 ### Dixie-only is bounded; Finn migration is recorded
 
