@@ -559,6 +559,43 @@ ordering-impact pointer; full decision text lives in
 Reviewers may cite ADR-027A §"Decision" §8 verbatim to refuse a
 sibling-repo or in-repo PR that exceeds the Phase 27A scope.
 
+## Phase 27B — Hounfour / Finn return-gate readiness bundle
+
+> Status: append-only navigation pointer recorded by Phase 27B.
+> Discoverability only. **No general reorder** of the Hounfour →
+> Finn → Dixie → Freeside sequence above. **No sibling-repo edit**
+> is authorized by Phase 27B. **No ADR-022E gate** is fired by
+> Phase 27B.
+
+[ADR-027B](../decisions/ADR-027B-hounfour-return-gate-readiness.md)
+catalogues the current readiness state of each
+[ADR-027A §4](../decisions/ADR-027A-post-dixie-return-gate.md)
+Hounfour return-gate row.
+[ADR-027C](../decisions/ADR-027C-finn-return-gate-readiness.md)
+catalogues the current readiness state of each
+[ADR-027A §5](../decisions/ADR-027A-post-dixie-return-gate.md)
+Finn return-gate row. The Phase 28 coding-candidate note
+([`./phase-27b-phase-28-coding-candidate.md`](./phase-27b-phase-28-coding-candidate.md))
+identifies the likely first code-bearing slice after readiness
+(a Hounfour-side schema-extraction PR opened in `loa-hounfour`
+under teammate review, gated by an ADR-027B-Fire successor —
+**not** a Straylight code change — followed by an in-repo
+Straylight private-alias adoption PR after the Hounfour-side PR
+ships under a pinned tag). The runtime subpath retirement /
+migration handoff
+([`./phase-27b-subpath-retirement-migration.md`](./phase-27b-subpath-retirement-migration.md))
+explains in plain reading what retirement of
+`@loa/straylight/runtime/recall-intake` and migration of the
+Phase 26E Dixie endpoint shipped by `loa-dixie` PR #102 looks
+like — without re-opening PR #102 and without firing ADR-022E
+gate #9.
+
+The §4.d (Hounfour) and §5.e (Finn) pre-merge real 3-model
+Flatline + Bridgebuilder gates remain **currently unsatisfied**
+under Phase 27B (per ADR-027A and Phase 26F §7.1, while the Loa
+substrate is degraded — not skipped, not circular, not
+pre-satisfied by ADR-027B / ADR-027C).
+
 ## Cross-references
 
 - [`cross-repo-handoff-index.md`](./cross-repo-handoff-index.md)
