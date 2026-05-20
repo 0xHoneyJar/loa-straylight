@@ -628,6 +628,55 @@ pre-satisfied by ADR-027B / ADR-027C).
   PR — requires a separate successor ADR (canonical refusal
   text in ADR-027B-Fire §8 / §9).
 
+## Phase 28B — Conformance-vector-only private-alias successor plan
+
+> Status: append-only navigation pointer recorded by Phase 28B.
+> Discoverability only. **Plan, not code authorization.** **No
+> general reorder** of the Hounfour → Finn → Dixie → Freeside
+> sequence above. **No sibling-repo edit** is authorized by
+> Phase 28B. **No ADR-022E gate** is fired by Phase 28B.
+
+### Ordering impact
+
+- **Long-term order unchanged.** The Hounfour → Finn → Dixie →
+  Freeside sequence above remains the recommended order. The
+  Phase 28B successor plan does **not** flip lane authority and
+  does **not** re-order any Phase 27A / Phase 27B / Phase 28A
+  decision.
+- **Successor track narrowed to Track 1 only.** Per
+  [ADR-027B-PrivateAlias-successor-plan](../decisions/ADR-027B-PrivateAlias-successor-plan.md)
+  §"Decision" §2, Phase 28B proposes **conformance-vector-only
+  consumption** of the five Hounfour PR #116 `recall-wedge`
+  vectors as Vitest test inputs behind the existing Phase 17B
+  private-alias seam at
+  [`../../src/straylight/hounfour-alias.ts`](../../src/straylight/hounfour-alias.ts).
+  Track 2 (soft-audit-prefix-only) and Track 3 (private-alias
+  *shape* adoption) are **explicitly disclaimed**; each requires
+  its own first-class successor ADR.
+- **Code authorization remains blocked.** Phase 28B's own §4.d
+  pre-merge real 3-model Flatline + Bridgebuilder gate is
+  **currently unsatisfied** while the Loa control-plane
+  substrate is degraded (per ADR-027A §"Decision" §4.d,
+  ADR-027B §"Decision" §2 §4.d row, ADR-027B-Fire §"Decision"
+  §3 §4.d row, and Phase 26F §7.1). The future Straylight code
+  PR sketched in ADR-027B-PrivateAlias-successor-plan
+  §"Decision" §3 (one new Vitest file under `tests/`; zero or
+  one new fixtures pointer file under `fixtures/hounfour-
+  conformance/`; no public-surface change; no allowlist delta;
+  no `$id` adoption; no Hounfour dependency bump beyond the
+  bounded posture) is **not authorized** until §4.d is
+  satisfied on this proposal's own PR, and the future code PR
+  also independently inherits §4.d on its own under ADR-026A0
+  §"Decision" §3.
+- **ADR-022E gates remain held.** Gates #1, #2, #3, #4, #5,
+  #17, and #18 all remain **HELD**. Phase 28B fires none of
+  them.
+
+Reviewers may cite ADR-027B-PrivateAlias-successor-plan
+§"Decision" §4 (forbidden list) and §"Decision" §11 (refusal
+rules) verbatim to refuse a sibling-repo or in-repo PR that
+exceeds the Phase 28B scope.
+
 ## Cross-references
 
 - [`cross-repo-handoff-index.md`](./cross-repo-handoff-index.md)
