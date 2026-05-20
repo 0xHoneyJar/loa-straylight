@@ -3223,6 +3223,45 @@ The gate table, evidence inventory, refusal rules, and
 forbidden list live there; this index entry is a thin
 pointer.
 
+## Phase 28B — Conformance-vector-only private-alias successor plan (in-repo only)
+
+> Status: append-only index entry recorded by Phase 28B.
+> Discoverability only. **Plan, not code authorization.** **No
+> general reorder** of the Hounfour → Finn → Dixie → Freeside
+> sequence above. **No sibling-repo edit** is authorized by
+> Phase 28B. **No ADR-022E gate** is fired by Phase 28B.
+
+Phase 28B is the **first-class successor proposal** that
+follows Phase 28A's composition-contract evidence lock. It
+chooses the narrowest of the three tracks ADR-027B-Fire §6
+contemplated — **conformance-vector-only consumption** of the
+five Hounfour PR #116 `recall-wedge` vectors as Vitest test
+inputs, behind the existing Phase 17B private-alias seam at
+[`../../src/straylight/hounfour-alias.ts`](../../src/straylight/hounfour-alias.ts)
+— and **explicitly disclaims** Track 2 (soft-audit-prefix-only)
+and Track 3 (private-alias *shape* adoption). Phase 28B
+authorizes **no Straylight code today**; its own §4.d pre-merge
+real 3-model Flatline + Bridgebuilder gate is **currently
+unsatisfied** while the Loa control-plane substrate is degraded
+(per ADR-027A §"Decision" §4.d, ADR-027B §"Decision" §2 §4.d
+row, ADR-027B-Fire §"Decision" §3 §4.d row, and Phase 26F
+§7.1).
+
+ADR-022E gates #1, #2, #3, #4, #5, #17, #18 all remain
+**HELD**. The runtime subpath, runtime allowlist, root / host
+`"types"`-only postures,
+[`../mvp/threat-model.md`](../mvp/threat-model.md), and
+[`../mvp/package-boundary.md`](../mvp/package-boundary.md)
+are unchanged.
+
+Canonical record:
+[`../decisions/ADR-027B-PrivateAlias-successor-plan.md`](../decisions/ADR-027B-PrivateAlias-successor-plan.md).
+The successor-track choice, future-PR shape, forbidden list,
+ADR-022E gate table, dependency posture, §4.d gate posture,
+Hounfour PR #116 evidence accepted as audit, Codex next-audit
+items, and refusal rules live there; this index entry is a thin
+pointer.
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
