@@ -3078,6 +3078,60 @@ append); `git diff --name-only` matches that four-file set;
 pre-existing local dirt outside the Phase 26D scope (which
 remains unstaged per the phase brief).
 
+## Phase 27A — Post-Dixie return gate (in-repo only)
+
+Phase 27A is a **Straylight-side sequencing decision-lock**.
+It closes the Phase 26E/26F Dixie-first MVP exception and pins
+the return-gate criteria a future ADR must satisfy before
+Hounfour-side or Finn-side work resumes against Straylight.
+Phase 27A authors no code, files no sibling-repo PR, fires no
+ADR-022E gate, edits no prior ADR, cuts no tag, and does not
+widen any Straylight surface. The runtime subpath remains
+`@loa/straylight/runtime/recall-intake` per ADR-026A and
+Phase 26B; root `@loa/straylight` and `@loa/straylight/host`
+remain `"types"`-only.
+
+ADR-027A is the canonical record. This index entry is a thin
+pointer; refer to [ADR-027A](../decisions/ADR-027A-post-dixie-return-gate.md)
+for the full decision text. Per ADR-026A0 §3, ADR-027A is the
+**second class** of doc (it tightens refusal, does not create
+authorization), so its own pre-merge Flatline + Bridgebuilder is
+at operator discretion. The future Hounfour / Finn return-gate
+ADRs ADR-027A contemplates are unambiguously the **first class**
+and each independently inherits the full ADR-026A0 §3 pre-merge
+real 3-model Flatline + Bridgebuilder requirement; ADR-027A
+pre-approves no successor.
+
+| Document | Purpose |
+|---|---|
+| [`phase-27a-post-dixie-return-gate.md`](./phase-27a-post-dixie-return-gate.md) | Phase 27A summary handoff: status banner; **What Phase 27A pins** table mapping each pin (Phase 26 chain complete; Dixie-first closed exception; Hounfour return gate §4.a–§4.e with the §4.d pre-merge real Flatline + Bridgebuilder marked **currently unsatisfied** while substrate is degraded; Finn return gate §5.a–§5.f with the same §5.e marker; findings as audit evidence; out of scope; refusal rules §8.a–§8.o; successor-ADR contract) to the canonical ADR-027A section; **Relationship to ADR-026A0** subsection; out-of-scope block; validation expectations using `git diff --name-only` (tracked) + `git ls-files --others --exclude-standard` (untracked) + `git status --short --untracked-files=all` (full set); cross-references. |
+| [`../decisions/ADR-027A-post-dixie-return-gate.md`](../decisions/ADR-027A-post-dixie-return-gate.md) | Phase 27A decision-lock (canonical record): Status; Context (why ADR-027A exists; **Relationship to ADR-026A0** classifying ADR-027A as the §3 second-class doc and successor ADRs as first-class; what is *not* authority — Codex / Flatline / Bridgebuilder / Cheval / Bedrock substrate findings, persisted memory, long context); **Decision** (§1 file set; §2 Phase 26 chain recorded complete; §3 Dixie-first closed exception with five invariants including §3.d long-term lanes labeled candidate / eventual gated by ADR-022E firings; §4 Hounfour return gate §4.a–§4.e with §4.d **currently-unsatisfied** Flatline + Bridgebuilder gate; §5 Finn return gate §5.a–§5.f with §5.e **currently-unsatisfied** gate; §6 findings as audit evidence; §7 out of scope; §8 refusal rules §8.a–§8.o including §8.o no successor pre-approval; §9 successor-ADR contract reminder; §10 rollback); Consequences; Validation; Source files inspected. |
+| [`./cross-repo-implementation-order.md`](./cross-repo-implementation-order.md) | Append-only Phase 27A return-gate section recording the ordering impact: the Hounfour → Finn → Dixie → Freeside long-term order is unchanged; the Phase 26D narrowing is closed forward; the §4 Hounfour return gate and §5 Finn return gate now bound the next code-bearing PR against Straylight. **No** general reorder; **no** sibling-repo edit. |
+
+Validate locally (Phase 27A adds no source / test / fixture /
+script / package change, so the working-tree surface is the
+entire validation):
+
+```bash
+git diff --name-only                         # tracked-file modifications only
+git ls-files --others --exclude-standard     # untracked new files
+git status --short --untracked-files=all     # full four-file working set
+```
+
+Expected: `git diff --name-only` lists exactly the two
+**modified** tracked files (this README and
+`cross-repo-implementation-order.md`); `git ls-files --others
+--exclude-standard` lists exactly the two **untracked** new
+files (ADR-027A and the companion handoff); `git status --short
+--untracked-files=all` lists all four Phase 27A files (two `M`,
+two `??`), plus any pre-existing local dirt outside the Phase
+27A scope (which remains unstaged per the phase brief). Plain
+`git diff --stat` reports tracked-file modifications only and
+will **not** show the new ADR or handoff until they are staged;
+Phase 27A does not stage them. `npm run typecheck`, `npm test`,
+`npm run build`, and `npm pack --dry-run` remain identical to
+the post-Phase-26F baseline by construction.
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.

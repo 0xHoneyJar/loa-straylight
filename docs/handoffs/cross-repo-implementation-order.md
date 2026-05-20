@@ -478,6 +478,87 @@ edits; tag / release / package publishing; broad autonomy /
 action execution; any general reorder of Phase 15; or any
 successor-ADR pre-approval.
 
+## Phase 27A return gate — post-Dixie sequencing decision-lock
+
+> Status: append-only return-gate section recorded by Phase 27A.
+> Closes the Phase 26E/26F Dixie-first MVP exception and pins
+> the return-gate criteria a future ADR must satisfy before
+> Hounfour-side or Finn-side work resumes against
+> `loa-straylight`. **No general reorder** of the Hounfour →
+> Finn → Dixie → Freeside sequence above. **No sibling-repo
+> edit** is authorized by Phase 27A.
+
+ADR-027A is the canonical record. This append is a narrow
+ordering-impact pointer; full decision text lives in
+[ADR-027A](../decisions/ADR-027A-post-dixie-return-gate.md).
+
+### Ordering impact
+
+- **Long-term order unchanged.** The Hounfour → Finn → Dixie →
+  Freeside sequence above remains the recommended order. The
+  Phase 26D narrowing applied to one recall-intake endpoint
+  slice in `loa-dixie` consuming one runtime subpath; it is
+  **not** a precedent for any second Dixie-leading slice and
+  does **not** transfer lane authority. Each long-term lane
+  remains a **candidate** or **eventual** owner — the lanes
+  activate only after the relevant ADR-022E gates fire under
+  the §4 / §5 return gates below
+  ([ADR-027A §"Decision" §3.d](../decisions/ADR-027A-post-dixie-return-gate.md)).
+- **Hounfour return gate (§4) bounds the next Hounfour-touching
+  PR against Straylight.** `@0xhoneyjar/loa-hounfour` adoption
+  flips, `Challenge` / `EstateTransition` / `safeCanonicalize`
+  adoption, the class-validator swap, `move_to_hounfour`, and
+  schema-publication consumption resume only after a separate
+  ADR records §4.a upstream substrate evidence + §4.b T13–T18 +
+  T9 threat-model impact + §4.c consumer-contract delta + §4.d
+  pre-merge real 3-model Flatline + Bridgebuilder (**currently
+  unsatisfied while the Loa control-plane substrate is
+  degraded** per Phase 26F §7.1 — not skipped, not circular,
+  not pre-satisfied by ADR-027A) + §4.e ADR-022E gates #1–#5,
+  #17, #18 still held
+  ([ADR-027A §"Decision" §4](../decisions/ADR-027A-post-dixie-return-gate.md)).
+- **Finn return gate (§5) bounds any retirement of the
+  runtime subpath and any move of `handleRecallIntake`
+  enforcement into Finn.** A separate ADR must record §5.a
+  Finn substrate evidence (Finn tag, Finn issue #159 status,
+  Finn enforcement-mapping closure;
+  [`./finn-runtime-enforcement-issue.md`](./finn-runtime-enforcement-issue.md),
+  [`./finn-runtime-boundary.md`](./finn-runtime-boundary.md),
+  [`./finn-enforcement-mapping.md`](./finn-enforcement-mapping.md))
+  + §5.b subpath retirement plan + §5.c class-vs-policy
+  preservation + §5.d T13–T18 + T9 threat-model continuity +
+  §5.e pre-merge real 3-model Flatline + Bridgebuilder
+  (**currently unsatisfied**, same as §4.d) + §5.f ADR-022E
+  gate #9 still held
+  ([ADR-027A §"Decision" §5](../decisions/ADR-027A-post-dixie-return-gate.md)).
+- **Runtime subpath remains time-bounded.**
+  `@loa/straylight/runtime/recall-intake` remains experimental
+  / pre-Finn / Dixie-only / not permanent per ADR-026A
+  §"Decision" §8 and the Phase 26F decision report §8.3.
+  Retirement is gated by §5 above; the allowlist remains
+  `{ handleRecallIntake, createDixieCapability,
+  DixieCapabilityError }` plus the `DixieCapability` type
+  re-export until a future ADR explicitly amends it.
+- **Findings are audit evidence, not authority.** Codex,
+  Flatline, Bridgebuilder, Cheval, and other multi-model
+  findings, persisted agent memory, and long-context window
+  dumps are evidence the operator weighs under ADR-026A0; they
+  do not authorize widening, gate firings, sibling-repo edits,
+  allowlist changes, or releases. Substrate degradation is a
+  Loa-side concern, not a reason to re-open `loa-dixie` PR
+  #102 or widen Straylight surfaces
+  ([ADR-027A §"Decision" §6](../decisions/ADR-027A-post-dixie-return-gate.md)).
+- **Successor ADRs inherit ADR-026A0 §3 first-class
+  requirements.** The future Hounfour / Finn / subpath-
+  retirement ADRs are §3-class authorization-creating docs and
+  each independently inherits the full pre-merge real 3-model
+  Flatline + Bridgebuilder requirement. ADR-027A pre-approves
+  no successor
+  ([ADR-027A §"Decision" §8.o, §9](../decisions/ADR-027A-post-dixie-return-gate.md)).
+
+Reviewers may cite ADR-027A §"Decision" §8 verbatim to refuse a
+sibling-repo or in-repo PR that exceeds the Phase 27A scope.
+
 ## Cross-references
 
 - [`cross-repo-handoff-index.md`](./cross-repo-handoff-index.md)
