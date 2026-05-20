@@ -677,6 +677,68 @@ Reviewers may cite ADR-027B-PrivateAlias-successor-plan
 rules) verbatim to refuse a sibling-repo or in-repo PR that
 exceeds the Phase 28B scope.
 
+## Phase 28C — Hounfour release / vector-access gate
+
+> Status: append-only navigation pointer recorded by Phase 28C.
+> Discoverability only. **Second-class evidence record under
+> [ADR-026A0 §"Decision" §3](../decisions/ADR-026A0-operator-authority-flatline-rule.md);
+> does not create authorization.** **No general reorder** of
+> the Hounfour → Finn → Dixie → Freeside sequence above. **No
+> sibling-repo edit** is authorized by Phase 28C. **No
+> ADR-022E gate** is fired by Phase 28C.
+
+### Ordering impact
+
+- **Long-term order unchanged.** The Hounfour → Finn → Dixie →
+  Freeside sequence above remains the recommended order. The
+  Phase 28C release / vector-access gate does **not** flip lane
+  authority and does **not** re-order any Phase 27A / Phase
+  27B / Phase 28A / Phase 28B decision.
+- **Hounfour release-evidence remains absent.** Per
+  [`../decisions/ADR-027B-VectorAccess-release-gate.md`](../decisions/ADR-027B-VectorAccess-release-gate.md)
+  §"Decision" §2, the five `recall-wedge` conformance vectors
+  (and the rest of the Hounfour PR #116 composition-contract
+  artifacts) are **not** present in any published, tagged,
+  resolvable `@0xhoneyjar/loa-hounfour` release available to
+  Straylight. The published version inventory at the GitHub
+  Packages registry is `8.4.0 / 8.5.0 / 8.5.1 / 8.5.2 / 8.6.0`;
+  `8.7.0` is not resolvable; the artifacts exist only on
+  Hounfour `origin/main` / `c06ef1ba`.
+- **Track 1 code authorization remains blocked.** The future
+  Track 1 code PR sketched in
+  [`../decisions/ADR-027B-PrivateAlias-successor-plan.md`](../decisions/ADR-027B-PrivateAlias-successor-plan.md)
+  §"Decision" §3 is **BLOCKED** under §"Decision" §8.b outcome
+  (iii). The block is released only by a published, tagged,
+  resolvable `@0xhoneyjar/loa-hounfour` release whose tarball
+  contains the recall-wedge composition-contract artifacts at
+  paths the published package's own `exports` map or shipped
+  on-disk layout makes available (per
+  [`../decisions/ADR-027B-VectorAccess-release-gate.md`](../decisions/ADR-027B-VectorAccess-release-gate.md)
+  §"Decision" §5.a–§5.e). Vendoring is **not** an alternative
+  Phase 28C pre-approves.
+- **Hounfour release request is drafted, not filed.** The
+  paste-ready release-request text lives at
+  [`./phase-28c-hounfour-release-request.md`](./phase-28c-hounfour-release-request.md).
+  Filing it on `loa-hounfour` is a separate operator-driven
+  event; Phase 28C does not file it.
+- **§4.d remains independently unsatisfied.** Even if the
+  Hounfour release evidence lands, the future Track 1 code
+  PR's §4.d pre-merge real 3-model Flatline + Bridgebuilder
+  gate is its own separate gate (per
+  [`../decisions/ADR-026A0-operator-authority-flatline-rule.md`](../decisions/ADR-026A0-operator-authority-flatline-rule.md)
+  §"Decision" §3 and ADR-027B-PrivateAlias-successor-plan
+  §"Decision" §6). It is not satisfied, waived, or
+  pre-satisfied by Phase 28C.
+- **ADR-022E gates remain held.** Gates #1, #2, #3, #4, #5,
+  #17, and #18 all remain **HELD**. Phase 28C fires none of
+  them; a composition-substrate release is not a shape
+  adoption trigger.
+
+Reviewers may cite
+[`../decisions/ADR-027B-VectorAccess-release-gate.md`](../decisions/ADR-027B-VectorAccess-release-gate.md)
+§"Decision" §6 (forbidden list) verbatim to refuse a
+sibling-repo or in-repo PR that exceeds the Phase 28C scope.
+
 ## Cross-references
 
 - [`cross-repo-handoff-index.md`](./cross-repo-handoff-index.md)

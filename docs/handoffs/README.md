@@ -3262,6 +3262,67 @@ Hounfour PR #116 evidence accepted as audit, Codex next-audit
 items, and refusal rules live there; this index entry is a thin
 pointer.
 
+## Phase 28C — Hounfour release / vector-access gate (in-repo only)
+
+> Status: append-only index entry recorded by Phase 28C.
+> Discoverability only. **Second-class evidence record under
+> [ADR-026A0 §"Decision" §3](../decisions/ADR-026A0-operator-authority-flatline-rule.md);
+> does not create authorization.** **No general reorder** of
+> the Hounfour → Finn → Dixie → Freeside sequence above. **No
+> sibling-repo edit** is authorized by Phase 28C. **No
+> ADR-022E gate** is fired by Phase 28C. **No Straylight code,
+> no Hounfour dependency change, and no vendoring** is
+> authorized by Phase 28C.
+
+Phase 28C records the Hounfour-side release / vector-access
+evidence that bears on whether the future Straylight Track 1
+code PR (sketched in
+[`../decisions/ADR-027B-PrivateAlias-successor-plan.md`](../decisions/ADR-027B-PrivateAlias-successor-plan.md)
+§"Decision" §3 and bounded by §"Decision" §8) may yet be
+opened. As of Phase 28C: Hounfour `origin/main` HEAD is
+`c06ef1ba` (the merge for PR #116); no `v8.7.x` tag exists
+locally; `npm view @0xhoneyjar/loa-hounfour versions
+--registry=https://npm.pkg.github.com` returns only
+`8.4.0 / 8.5.0 / 8.5.1 / 8.5.2 / 8.6.0`;
+`npm view @0xhoneyjar/loa-hounfour@8.7.0 dist.tarball
+--registry=https://npm.pkg.github.com` is 404; and the
+`recall-wedge` composition-contract artifacts are not present
+in the resolved `@0xhoneyjar/loa-hounfour@8.6.0` package
+(introduced in PR #116, after the `8.6.0` cut).
+
+The future Track 1 code PR is therefore **BLOCKED** under
+[`../decisions/ADR-027B-PrivateAlias-successor-plan.md`](../decisions/ADR-027B-PrivateAlias-successor-plan.md)
+§"Decision" §8.b outcome (iii) ("vectors available only via an
+untagged Hounfour commit"). The block is released only by a
+published, tagged, resolvable `@0xhoneyjar/loa-hounfour`
+release whose tarball contains the recall-wedge composition-
+contract artifacts at paths the published package's own
+`exports` map or shipped on-disk layout makes available.
+Vendoring is **not** an alternative Phase 28C pre-approves.
+
+ADR-022E gates #1, #2, #3, #4, #5, #17, #18 all remain
+**HELD**. The §4.d pre-merge real 3-model Flatline +
+Bridgebuilder gate for the future Track 1 code PR remains
+**independently unsatisfied** while the Loa control-plane
+substrate is degraded; even if the release evidence lands,
+§4.d remains its own separate gate. The runtime subpath,
+runtime allowlist, root / host `"types"`-only postures,
+[`../mvp/threat-model.md`](../mvp/threat-model.md), and
+[`../mvp/package-boundary.md`](../mvp/package-boundary.md)
+are unchanged. [`../../package.json`](../../package.json) and
+[`../../package-lock.json`](../../package-lock.json) are
+unchanged.
+
+Canonical record:
+[`../decisions/ADR-027B-VectorAccess-release-gate.md`](../decisions/ADR-027B-VectorAccess-release-gate.md).
+The release-evidence inventory, block / unblock disposition,
+exact required release evidence (§5.a–§5.e), forbidden list,
+and ADR-022E gate table live there; this index entry is a
+thin pointer.
+
+Paste-ready release-request draft (not filed by Phase 28C):
+[`./phase-28c-hounfour-release-request.md`](./phase-28c-hounfour-release-request.md).
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
