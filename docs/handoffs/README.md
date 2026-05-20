@@ -3132,6 +3132,69 @@ Phase 27A does not stage them. `npm run typecheck`, `npm test`,
 `npm run build`, and `npm pack --dry-run` remain identical to
 the post-Phase-26F baseline by construction.
 
+## Phase 27B — Hounfour / Finn return-gate readiness bundle (in-repo only)
+
+Phase 27B is a **Straylight-side readiness bundle** that
+converts the [ADR-027A](../decisions/ADR-027A-post-dixie-return-gate.md)
+post-Dixie return gate into the minimum set of successor
+documents needed before any code-bearing Straylight phase
+resumes. Phase 27B authors no code, files no sibling-repo PR,
+fires no ADR-022E gate, edits no prior ADR, cuts no tag, and
+does not widen any Straylight surface. The runtime subpath
+remains `@loa/straylight/runtime/recall-intake`; root
+`@loa/straylight` and `@loa/straylight/host` remain
+`"types"`-only; the runtime allowlist is unchanged.
+
+Per [ADR-026A0 §3](../decisions/ADR-026A0-operator-authority-flatline-rule.md)
+and [ADR-027A §8.o](../decisions/ADR-027A-post-dixie-return-gate.md),
+the Phase 27B readiness ADRs (ADR-027B, ADR-027C) are the
+**second class** of doc — they tighten refusal by enumerating
+evidence rows for the canonical [ADR-027A](../decisions/ADR-027A-post-dixie-return-gate.md)
+§4 / §5 generic criteria, and they pre-approve no successor.
+The future gate-firing successors they contemplate
+(referred to as ADR-027B-Fire / ADR-027C-Fire) are
+unambiguously the **first class** and each independently
+inherits the full pre-merge real 3-model Flatline +
+Bridgebuilder requirement on its own. Phase 27B does **not**
+fire any gate; the §4.d and §5.e Flatline + Bridgebuilder
+gates remain **currently unsatisfied** while the Loa
+substrate is degraded (per ADR-027A and Phase 26F §7.1).
+
+| Document | Purpose |
+|---|---|
+| [`../decisions/ADR-027B-hounfour-return-gate-readiness.md`](../decisions/ADR-027B-hounfour-return-gate-readiness.md) | Hounfour return-gate readiness ADR: Status (Accepted-for-Phase-27B; second-class under ADR-026A0 §3; not gate-firing); Context (relationship to ADR-027A §4); **Decision** (§1 file set; §2 current-state inventory of each ADR-027A §4 row — §4.a upstream substrate evidence `PENDING` for v8.6.x adoption-target version pinning; §4.b threat-model impact `READY` substrate; §4.c consumer-contract delta `READY` allowlist held; §4.d pre-merge real 3-model Flatline + Bridgebuilder **`PENDING` / currently unsatisfied**; §4.e ADR-022E gates #1–#5, #17, #18 `HELD`; §3 bridge handoffs ADR-027B-Fire must cite; §4 class-vs-policy boundary preservation contract; §5 refusal rules §5.a–§5.h; §6 rollback); Consequences; Validation; Source files inspected. |
+| [`../decisions/ADR-027C-finn-return-gate-readiness.md`](../decisions/ADR-027C-finn-return-gate-readiness.md) | Finn return-gate readiness ADR: Status (Accepted-for-Phase-27B; second-class under ADR-026A0 §3; not gate-firing); Context (relationship to ADR-027A §5); **Decision** (§1 file set; §2 current-state inventory of each ADR-027A §5 row — §5.a Finn substrate evidence `PENDING` no Finn tag / Finn issue #159 closure; §5.b subpath retirement plan `READY-AS-PLAN` via Phase 27B retirement handoff / `PENDING-AS-EXECUTION`; §5.c class-vs-policy preservation `READY`; §5.d threat-model continuity `READY` substrate / `PENDING-AS-MIGRATION-PROOF`; §5.e pre-merge real 3-model Flatline + Bridgebuilder **`PENDING` / currently unsatisfied**; §5.f ADR-022E gate #9 `HELD`; §3 bridge handoffs ADR-027C-Fire must cite; §4 refusal rules §4.a–§4.h; §5 rollback); Consequences; Validation; Source files inspected. |
+| [`./phase-27b-subpath-retirement-migration.md`](./phase-27b-subpath-retirement-migration.md) | Phase 27B subpath retirement / migration handoff: explains in plain reading what retirement of `@loa/straylight/runtime/recall-intake` and migration of the Phase 26E Dixie endpoint shipped by `loa-dixie` PR #102 looks like; **does not** retire, deprecate, or migrate; **does not** re-open `loa-dixie` PR #102; **does not** authorize new Dixie implementation; **does not** fire ADR-022E gate #9; pinned to ADR-026A §7 attack shapes + §8 retirement marker, ADR-027A §5, and ADR-027C readiness inventory; ADR-027C-Fire-side checklist (deprecation window, migration-plan PR path, attack-shape test classes, allowlist final state, threat-model continuity, pre-merge Flatline + Bridgebuilder); out-of-scope block; cross-references. |
+| [`./phase-27b-phase-28-coding-candidate.md`](./phase-27b-phase-28-coding-candidate.md) | Phase 28 coding-candidate note: identifies the **likely** first code-bearing slice after Phase 27B (Hounfour-side schema-extraction PR opened in `loa-hounfour` under teammate review — **not** a Straylight code change — gated by ADR-027B-Fire; followed by an in-repo Straylight private-alias adoption PR after the Hounfour-side PR ships under a pinned tag); likely repo / likely file areas / explicit non-goals (no second Dixie endpoint; no second runtime subpath; no `loa-dixie` PR #102 re-open; no Phase 26E re-implementation; no ADR-022E gate firings without ADR-027B-Fire / ADR-027C-Fire; no Freeside / production-storage / Loa-framework / sibling-repo edits) / validation expected (Hounfour-side suite + 12 conformance vectors + Straylight `npm run typecheck` / `npm test` / `npm run build` / `npm pack --dry-run`) / Codex audit expected (real 3-model Flatline + Bridgebuilder on ADR-027B-Fire and on the Straylight-side follow-up PR; findings remain audit evidence not authority) / what must still be true before implementation starts (ADR-027B-Fire merged; ADR-022E gates fired; Hounfour-side PR shipped under pinned tag; pre-merge Flatline + Bridgebuilder verdict; threat-model impact statement; class-vs-policy preservation; consumer-contract delta; Phase 28 phase brief authored separately); cross-references. **Authorizes no code on its own.** |
+| [`./README.md`](./README.md) (this section) | Append-only Phase 27B index entry, in chronological order after the Phase 27A entry. |
+| [`./cross-repo-implementation-order.md`](./cross-repo-implementation-order.md) | Append-only Phase 27B navigation pointer recording that the bundle is discoverable from the cross-repo order doc; **no** general reorder of the Hounfour → Finn → Dixie → Freeside sequence; **no** sibling-repo edit. |
+
+Validate locally (Phase 27B adds no source / test / fixture /
+script / package change, so the working-tree surface is the
+entire validation):
+
+```bash
+git diff --name-only                         # tracked-file modifications only
+git ls-files --others --exclude-standard     # untracked new files
+git status --short --untracked-files=all     # full Phase 27B working set
+```
+
+Expected: `git diff --name-only` lists the two **modified**
+tracked files (this README and
+`cross-repo-implementation-order.md`); `git ls-files --others
+--exclude-standard` lists the four **untracked** new files
+(ADR-027B, ADR-027C, the subpath-retirement / migration
+handoff, the Phase 28 coding-candidate note); `git status
+--short --untracked-files=all` lists the six Phase 27B files
+(two `M`, four `??`), plus any pre-existing local dirt
+outside the Phase 27B scope (which remains unstaged per the
+phase brief). Plain `git diff --stat` reports tracked-file
+modifications only and will **not** show the new ADRs or
+handoffs until they are staged; Phase 27B does not stage
+them. `npm run typecheck`, `npm test`, `npm run build`, and
+`npm pack --dry-run` remain identical to the post-Phase-27A
+baseline by construction.
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
