@@ -3195,6 +3195,34 @@ them. `npm run typecheck`, `npm test`, `npm run build`, and
 `npm pack --dry-run` remain identical to the post-Phase-27A
 baseline by construction.
 
+## Phase 28A — Hounfour composition-contract evidence lock (in-repo only)
+
+Phase 28A is a **Straylight-side evidence lock** that
+adjudicates the post-merge Hounfour PR #116 artifact (the
+**Straylight Recall Wedge composition contracts**, *not* a
+schema extraction; Hounfour origin/main `c06ef1ba`) against
+the [ADR-027B](../decisions/ADR-027B-hounfour-return-gate-readiness.md)
+§2 readiness inventory.
+
+In one paragraph: ADR-027B-Fire narrows ADR-027B §2 §4.a
+substrate disposition from `PENDING-FOR-V8.6.x-ADOPTION-
+TARGET` to `READY-AS-COMPOSITION-SUBSTRATE; PENDING-AS-SHAPE-
+ADOPTION`; leaves §4.b / §4.c `READY` unchanged; leaves §4.d
+**`PENDING` / currently unsatisfied**; and leaves §4.e
+ADR-022E gates #1, #2, #3, #4, #5, #17, #18 all **HELD**.
+**No ADR-022E gate fires.** **No Straylight code is
+authorized.** The runtime subpath, runtime allowlist, root /
+host `"types"`-only postures,
+[`../mvp/threat-model.md`](../mvp/threat-model.md), and
+[`../mvp/package-boundary.md`](../mvp/package-boundary.md)
+are unchanged.
+
+Canonical record:
+[`../decisions/ADR-027B-Fire-hounfour-composition-contracts.md`](../decisions/ADR-027B-Fire-hounfour-composition-contracts.md).
+The gate table, evidence inventory, refusal rules, and
+forbidden list live there; this index entry is a thin
+pointer.
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.

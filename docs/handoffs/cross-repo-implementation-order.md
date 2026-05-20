@@ -596,6 +596,38 @@ under Phase 27B (per ADR-027A and Phase 26F §7.1, while the Loa
 substrate is degraded — not skipped, not circular, not
 pre-satisfied by ADR-027B / ADR-027C).
 
+## Phase 28A — Hounfour composition-contract evidence lock
+
+> Status: append-only evidence-lock pointer recorded by Phase
+> 28A. **No general reorder** of the Hounfour → Finn → Dixie →
+> Freeside sequence above. **No sibling-repo edit** is
+> authorized by Phase 28A. **No ADR-022E gate** is fired by
+> Phase 28A.
+
+### Ordering impact
+
+- **Long-term order unchanged.** The Hounfour → Finn → Dixie →
+  Freeside sequence above remains the recommended order. The
+  Phase 28A evidence lock does **not** flip lane authority and
+  does **not** re-order any Phase 27B / Phase 27A decision.
+- **Hounfour PR #116 is now citable composition-substrate
+  evidence.** Per [ADR-027B-Fire](../decisions/ADR-027B-Fire-hounfour-composition-contracts.md),
+  the post-merge Hounfour PR #116 artifact (origin/main
+  `c06ef1ba`) is the **Straylight Recall Wedge composition
+  contracts**, *not* a schema extraction. ADR-027B §2 §4.a
+  substrate disposition narrows from `PENDING-FOR-V8.6.x-
+  ADOPTION-TARGET` to `READY-AS-COMPOSITION-SUBSTRATE; PENDING-
+  AS-SHAPE-ADOPTION`.
+- **Broader shape adoption and Straylight code remain
+  blocked.** ADR-022E gates #1, #2, #3, #4, #5, #17, and #18
+  all remain **HELD**. The §4.d pre-merge real 3-model
+  Flatline + Bridgebuilder gate remains **currently
+  unsatisfied**. Any next move beyond this evidence lock —
+  shape adoption, conformance-vector-only consumption,
+  soft-audit-prefix-only consumption, or any private-alias
+  PR — requires a separate successor ADR (canonical refusal
+  text in ADR-027B-Fire §8 / §9).
+
 ## Cross-references
 
 - [`cross-repo-handoff-index.md`](./cross-repo-handoff-index.md)
