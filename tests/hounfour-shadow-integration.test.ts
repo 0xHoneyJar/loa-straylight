@@ -1,23 +1,25 @@
-// Phase 17B / Phase 18 / Phase 21A conformance -- Hounfour v8.6.x
-// shadow integration.
+// Phase 17B / Phase 18 / Phase 21A / Phase 29A conformance --
+// Hounfour shadow integration.
 //
-// These tests pin the working-tree contract under the Phase 21A
-// v8.6 consumer-side intake:
+// Historical context: Phases 17B / 18 / 21A established the shadow
+// integration on the Hounfour v8.6 lane (^8.6.0). The active
+// executable contract pinned by these tests is the Phase 29A
+// (ADR-027B Track 1) exact pin to @0xhoneyjar/loa-hounfour@8.7.0:
 //
 //   * package.json declares the dependency with the user-authorized
-//     range (^8.6.0) and the hounfour:shadow-inspect npm script.
-//   * The installed Hounfour package resolves inside the 8.6.x
-//     line. Tests do not hard-pin 8.6.0 -- any 8.6.<patch> within
-//     ^8.6.0 is acceptable.
+//     exact tag `8.7.0` and the hounfour:shadow-inspect npm script.
+//   * The installed Hounfour package resolves to exactly 8.7.0
+//     (no range; Phase 29A pins the exact tag).
 //   * The 15 originally-net-new v8.5.0 schemas (delta #12) remain
-//     present in v8.6.x (strict-additive on v8.5.2) and each
-//     schema's $id matches /loa-hounfour/8.6.\d+/.
+//     present under the 8.7.0 pin (strict-additive on v8.5.2 and
+//     v8.6.x) and each schema's $id matches /loa-hounfour/8.7.0/.
 //   * The Challenge schema family ships in v8.6.0 (delta #7
 //     resolved at the schema-byte surface). Challenge runtime
 //     semantics remain deferred at the Straylight wedge boundary.
 //   * EstateTransition remains absent at runtime (delta #8); the
-//     deferral is honored by the actually-shipped v8.6.x surface,
-//     not just by docs.
+//     deferral is honored by the actually-installed Hounfour
+//     package surface (now exact 8.7.0 under Phase 29A), not just
+//     by docs.
 //   * The Phase 17B alias module
 //     (src/straylight/hounfour-alias.ts) imports only from named
 //     subpaths (delta #9), aliases AgentIdentity as Actor (delta
@@ -33,9 +35,9 @@
 //     @0xhoneyjar/loa-hounfour at the JS module boundary.
 //
 // These pins prove the wedge stays internally consistent against
-// the actually-installed Hounfour v8.6.x package and does not
-// silently flip the wedge's public surface or breach the
-// EstateTransition deferral.
+// the actually-installed Hounfour package (exact 8.7.0 under
+// Phase 29A) and does not silently flip the wedge's public surface
+// or breach the EstateTransition deferral.
 
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -97,7 +99,7 @@ describe('phase 17B -- package.json declares Hounfour dependency and shadow-insp
     expect(pkg.dependencies?.[HOUNFOUR_PACKAGE_NAME]).toBeDefined();
   });
 
-  it('package.json pins the user-authorized range ^8.6.0 (not a tighter rewrite)', () => {
+  it('package.json pins the user-authorized exact tag 8.7.0 (Phase 29A) (not a tighter rewrite)', () => {
     const pkg = JSON.parse(read(PACKAGE_JSON)) as PackageJson;
     expect(pkg.dependencies?.[HOUNFOUR_PACKAGE_NAME]).toBe(
       INTENDED_DEPENDENCY_RANGE,
@@ -113,7 +115,7 @@ describe('phase 17B -- package.json declares Hounfour dependency and shadow-insp
   });
 });
 
-describe('phase 17B -- installed Hounfour package resolves inside the 8.6.x line', () => {
+describe('phase 17B / Phase 29A -- installed Hounfour package resolves to exact 8.7.0 (Phase 29A pin)', () => {
   it('node_modules/@0xhoneyjar/loa-hounfour/package.json exists', () => {
     expect(existsSync(HOUNFOUR_PACKAGE_JSON)).toBe(true);
   });
@@ -125,11 +127,11 @@ describe('phase 17B -- installed Hounfour package resolves inside the 8.6.x line
     expect(pkg.name).toBe(HOUNFOUR_PACKAGE_NAME);
   });
 
-  it('installed package version matches 8.6.<patch>', () => {
+  it('installed package version is exactly 8.7.0 (Phase 29A pin)', () => {
     const pkg = JSON.parse(read(HOUNFOUR_PACKAGE_JSON)) as {
       version?: string;
     };
-    expect(pkg.version).toMatch(/^8\.6\.\d+$/);
+    expect(pkg.version).toBe('8.7.0');
   });
 });
 
@@ -145,7 +147,7 @@ describe('phase 17B -- inspector reports a structurally valid shadow report', ()
   it('report records the resolved package metadata', () => {
     expect(report.resolvedPackage.exists).toBe(true);
     expect(report.resolvedPackage.name).toBe(HOUNFOUR_PACKAGE_NAME);
-    expect(report.resolvedPackage.version).toMatch(/^8\.6\.\d+$/);
+    expect(report.resolvedPackage.version).toBe('8.7.0');
   });
 
   it('report covers every Straylight schema candidate', () => {
@@ -158,13 +160,13 @@ describe('phase 17B -- inspector reports a structurally valid shadow report', ()
     }
   });
 
-  it('report covers every originally-net-new v8.5.0 schema (delta #12; still required in v8.6.x)', () => {
+  it('report covers every originally-net-new v8.5.0 schema (delta #12; still required under the exact 8.7.0 pin)', () => {
     expect(report.netNewSchemas.length).toBe(
       NET_NEW_V850_SCHEMAS.length,
     );
   });
 
-  it('report covers every deferred-schema pattern (delta #8 only under v8.6.x)', () => {
+  it('report covers every deferred-schema pattern (delta #8 only under the exact 8.7.0 pin)', () => {
     expect(report.deferredSchemas.length).toBe(
       DEFERRED_SCHEMA_PATTERNS.length,
     );
@@ -183,11 +185,11 @@ describe('phase 17B -- inspector reports a structurally valid shadow report', ()
   });
 });
 
-describe('phase 21A -- 15 originally-net-new v8.5.0 schemas (delta #12) remain present in v8.6.x and carry an 8.6.x $id', () => {
+describe('phase 21A / Phase 29A -- 15 originally-net-new v8.5.0 schemas (delta #12) remain present under the exact 8.7.0 pin and carry a /loa-hounfour/8.7.0/ $id', () => {
   const report = inspect();
 
   it.each(NET_NEW_V850_SCHEMAS)(
-    'originally-net-new schema %s is present in v8.6.x',
+    'originally-net-new schema %s is present under the exact 8.7.0 pin (Phase 29A)',
     (stem) => {
       const c = report.netNewSchemas.find((s) => s.stem === stem);
       expect(c, `report should include ${stem}`).toBeDefined();
@@ -196,7 +198,7 @@ describe('phase 21A -- 15 originally-net-new v8.5.0 schemas (delta #12) remain p
   );
 
   it.each(NET_NEW_V850_SCHEMAS)(
-    'originally-net-new schema %s declares a $id under /loa-hounfour/8.6.\\d+/',
+    'originally-net-new schema %s declares a $id under /loa-hounfour/8.7.0/ (Phase 29A exact pin)',
     (stem) => {
       const c = report.netNewSchemas.find((s) => s.stem === stem);
       expect(c?.present).toBe(true);
@@ -235,7 +237,7 @@ describe('phase 21A -- EstateTransition deferral honored at runtime (delta #8); 
   });
 });
 
-describe('phase 21A -- inspector blockers list is empty under v8.6.x intake (no Hounfour-side blockers from this run)', () => {
+describe('phase 21A / Phase 29A -- inspector blockers list is empty under the exact 8.7.0 pin (no Hounfour-side blockers from this run)', () => {
   // Phase 21A is not authorized to file blockers; if the inspector
   // surfaces one, the test fails so the user sees it before the
   // findings doc gets updated. Discrepancies short of blockers
@@ -600,14 +602,14 @@ describe('phase 21A -- Challenge ships in Hounfour v8.6.0 (delta #7 resolved); E
     },
   );
 
-  it('Challenge has shipped in v8.6.x (shipsInV85x: true)', () => {
+  it('Challenge has shipped in the installed Hounfour package (exact 8.7.0; shipsInV85x: true)', () => {
     const entry = report.cycleFiveDeferrals.find(
       (e) => e.name === 'Challenge',
     );
     expect(entry?.shipsInV85x).toBe(true);
   });
 
-  it('EstateTransition has not shipped in v8.6.x (shipsInV85x: false)', () => {
+  it('EstateTransition has not shipped in the installed Hounfour package (exact 8.7.0; shipsInV85x: false)', () => {
     const entry = report.cycleFiveDeferrals.find(
       (e) => e.name === 'EstateTransition',
     );
@@ -704,7 +706,7 @@ describe('phase 18 -- inspector report shape carries the new structured fields w
     expect(discoveryRows.length).toBeGreaterThanOrEqual(1);
   });
 
-  it('blockers list remains empty under Phase 21A v8.6.x intake', () => {
+  it('blockers list remains empty under the Phase 29A exact 8.7.0 pin', () => {
     expect(
       report.blockers,
       `unexpected blockers:\n${report.blockers.join('\n')}`,

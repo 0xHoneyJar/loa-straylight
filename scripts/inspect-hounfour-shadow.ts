@@ -1,4 +1,11 @@
-// Phase 17B -- Hounfour v8.5.x shadow inspector CLI.
+// Hounfour shadow inspector CLI.
+//
+// The tool originated in the Phase 17B / Phase 18 / Phase 21A
+// v8.5/v8.6 shadow-inspection line, but the active executable
+// evidence lane is now exact @0xhoneyjar/loa-hounfour@8.7.0 under
+// Phase 29A. This CLI runs the shadow inspection against the
+// installed @0xhoneyjar/loa-hounfour package (currently exact
+// 8.7.0).
 //
 // Usage:
 //   npm run hounfour:shadow-inspect
@@ -7,8 +14,10 @@
 // JSON report to .run/hounfour-shadow-report.json. The report
 // classifies each Straylight schema candidate (under
 // fixtures/schema-candidates/) against the actually-shipped
-// Hounfour v8.5.x schema surface (under
-// node_modules/@0xhoneyjar/loa-hounfour/schemas/).
+// Hounfour schema surface from the installed
+// @0xhoneyjar/loa-hounfour package (under
+// node_modules/@0xhoneyjar/loa-hounfour/schemas/), currently exact
+// 8.7.0.
 //
 // This script:
 //   * does NOT import from @0xhoneyjar/loa-hounfour at the JS module
@@ -21,8 +30,10 @@
 //   * does NOT mutate any source / fixture / doc / test
 //
 // Exit code is 1 when the inspector surfaces any Hounfour-side
-// blocker (e.g. a required v8.5.0 schema is missing, or a
-// deferred-cycle-005 schema accidentally ships in v8.5.x).
+// blocker (for example, a required schema is missing from the
+// installed @0xhoneyjar/loa-hounfour package, or a
+// deferred-cycle-005 schema accidentally ships in the installed
+// package surface).
 
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
