@@ -834,6 +834,95 @@ Reviewers may cite
 §"Decision" §7 (forbidden list) verbatim to refuse a
 sibling-repo or in-repo PR that exceeds the Phase 28D scope.
 
+## Phase 28E — Track 1 code-candidate scope
+
+> Status: append-only navigation pointer recorded by
+> Phase 28E. Discoverability only. **First-class plan record
+> under [ADR-026A0 §"Decision" §3](../decisions/ADR-026A0-operator-authority-flatline-rule.md)
+> for the next implementation PR's shape; does not authorize
+> code on its own.** **No general reorder** of the
+> Hounfour → Finn → Dixie → Freeside sequence above. **No
+> sibling-repo edit** is authorized by Phase 28E. **No
+> ADR-022E gate** is fired by Phase 28E.
+
+### Ordering impact
+
+- **Long-term order unchanged.** The Hounfour → Finn → Dixie →
+  Freeside sequence above remains the recommended order.
+  Phase 28E pins the Track 1 code-candidate scope under the
+  Hounfour lane and does **not** flip lane authority,
+  **not** re-order any Phase 27A / Phase 27B / Phase 28A /
+  Phase 28B / Phase 28C / Phase 28D decision, and **not**
+  promote any sibling lane.
+- **Next implementation PR is named.** Per
+  [`../decisions/ADR-027B-Track1-code-candidate-scope.md`](../decisions/ADR-027B-Track1-code-candidate-scope.md)
+  §"Decision" §2, the next implementation PR authorized as a
+  **drafting target** is **Phase 29A — Hounfour v8.7.0
+  vector-access Track 1 implementation**. Phase 29A is
+  **code-bearing**, **Track 1 only**,
+  **registry-resolution only** against
+  `https://npm.pkg.github.com`, **package-sourced only**,
+  and bound to the **smallest possible code/test diff**.
+- **Release / vector-access precondition is MET; shape-
+  adoption gates remain held.** Phase 28D's release
+  evidence is unchanged; Phase 28E claims no Hounfour shape
+  adoption beyond the already-recorded composition /
+  vector-access evidence.
+- **Phase 29A inherits its own §4.d.** Phase 28E does
+  **not** satisfy §4.d for Phase 29A, does **not** waive
+  §4.d, does **not** weaken §4.d, and does **not**
+  pre-satisfy §4.d. Phase 29A's §4.d is satisfied only by
+  a real 3-model Flatline + Bridgebuilder run against the
+  Phase 29A scope/PR. Local review-substrate smoke-test
+  results are **machinery readiness**, not §4.d evidence
+  for Phase 29A. Phase 28E does **not** claim that the
+  review substrate is currently degraded.
+- **Dependency posture is implementation-PR-only.**
+  Phase 29A may pin / update the existing
+  `@0xhoneyjar/loa-hounfour` declaration to **exactly
+  `8.7.0`** (or confirm a no-manifest-delta posture only if
+  `package.json` and `package-lock.json` already resolve
+  exactly `8.7.0`) — exact tag only, no range widening,
+  registry-resolution only. The dependency-posture change
+  (if any) is inside the **Phase 29A implementation PR**,
+  not Phase 28E. [`../../package.json`](../../package.json)
+  and [`../../package-lock.json`](../../package-lock.json)
+  are unchanged by Phase 28E.
+- **Vendoring is not pre-approved.** Vendoring of any
+  Hounfour `recall-wedge` artifact (vector JSON, recall-wedge
+  `README.md`, envelope schema, architecture doc) into the
+  Straylight tree remains a separate first-class successor
+  with its own §4.d evidence; Phase 28E does **not** propose
+  one and does **not** pre-approve one.
+- **No `loa-hounfour`-`origin/main`, local-tarball,
+  `git+https://`-style, or branch / commit dependency.**
+  Future consumption is registry-resolution only against
+  `https://npm.pkg.github.com`. No sibling-repo working-tree
+  reads are permitted from the Straylight side.
+- **Composition-substrate only; no Hounfour shape adoption.**
+  Phase 28E claims no Hounfour shape adoption. The
+  class-vs-policy boundary is preserved across the
+  Phase 28E → Phase 29A boundary: **Hounfour provides**
+  class / schema / conformance-vector artifacts;
+  **Straylight still owns** policy validation, signer
+  competence, signature verification, audit-chain execution,
+  estate transitions, recall runtime, authorization, and
+  runtime refusal behavior.
+- **ADR-022E gates remain held.** Gates #1, #2, #3, #4, #5,
+  #17, and #18 all remain **HELD** across Phase 28E and
+  across the Phase 29A scope. Phase 28E fires none of them;
+  Phase 29A — under
+  [`../decisions/ADR-027B-Track1-code-candidate-scope.md`](../decisions/ADR-027B-Track1-code-candidate-scope.md)
+  §"Decision" §3–§5 — fires none of them either.
+- **Phase 29A's merger requires its own §4.d.** Phase 28E
+  authorizes drafting / preparing Phase 29A; it does **not**
+  authorize Phase 29A to merge.
+
+Reviewers may cite
+[`../decisions/ADR-027B-Track1-code-candidate-scope.md`](../decisions/ADR-027B-Track1-code-candidate-scope.md)
+§"Decision" §9 (forbidden list) verbatim to refuse a
+sibling-repo or in-repo PR that exceeds the Phase 28E scope.
+
 ## Cross-references
 
 - [`cross-repo-handoff-index.md`](./cross-repo-handoff-index.md)
