@@ -923,6 +923,107 @@ Reviewers may cite
 §"Decision" §9 (forbidden list) verbatim to refuse a
 sibling-repo or in-repo PR that exceeds the Phase 28E scope.
 
+## Phase 29B — Dixie-first Recall Wedge contract pack
+
+> Status: append-only navigation pointer recorded by Phase 29B.
+> Discoverability only. **First-class implementation slice
+> under [ADR-026A0 §"Decision" §3](../decisions/ADR-026A0-operator-authority-flatline-rule.md);
+> code-bearing, type-only / pure-helper.** **No general
+> reorder** of the Hounfour → Finn → Dixie → Freeside sequence
+> above. **No sibling-repo edit** is authorized by Phase 29B
+> (no `loa-dixie`, `loa-finn`, `loa-hounfour`, or
+> `loa-freeside` change). **No ADR-022E gate** is fired by
+> Phase 29B.
+
+### Ordering impact
+
+- **Long-term order unchanged.** The Hounfour → Finn → Dixie →
+  Freeside sequence above remains the recommended order.
+  Phase 29B is the **Straylight-side host contract** layer
+  that the future Dixie consumer will read against; it does
+  **not** flip lane authority, **not** re-order any
+  Phase 27A / 27B / 28A / 28B / 28C / 28D / 28E / 29A
+  decision, and **not** promote any sibling lane.
+- **Phase 29B is in-repo only.** Phase 29B authors a
+  Straylight-side host contract (one source file, one test
+  file, one ADR, one operator handoff, one minimal legacy-test
+  update) and edits **no** sibling repo. `loa-hounfour`,
+  `loa-finn`, `loa-dixie`, and `loa-freeside` are all
+  unedited by Phase 29B.
+- **Substrate is the Phase 29A `8.7.0` posture, verbatim.**
+  Phase 29B consumes the Phase 29A-shipped
+  `@0xhoneyjar/loa-hounfour@8.7.0` posture verbatim.
+  [`../../package.json`](../../package.json) and
+  [`../../package-lock.json`](../../package-lock.json) are
+  **unchanged** by Phase 29B. No `npm install`, no dependency
+  change, no export change. Registry resolution only.
+- **No vendoring.** No vector JSON, no recall-wedge
+  `README.md`, no envelope schema, no architecture doc is
+  copied into the Straylight tree by Phase 29B.
+- **No new wedge public-API export.** The wedge public
+  surface
+  ([`../../src/straylight/index.ts`](../../src/straylight/index.ts))
+  and the host barrel
+  ([`../../src/straylight/host/index.ts`](../../src/straylight/host/index.ts))
+  are unchanged. The Phase 29B contract module is an
+  intentional non-export at the host surface and at the
+  wedge public API.
+- **Dixie-first selection; Finn as boundary marker only.**
+  Phase 29B selects **Dixie** as the first MVP recall
+  inspection / BFF host. The contract names this kind
+  explicitly as `'dixie-first-inspection-bff'` and exposes it
+  as the **default and only active** host kind. Finn is named
+  in the host-kind union (`'finn-runtime-enforcement-later'`)
+  and the environment-surface union (`'finn-runtime'`)
+  **only as a boundary marker**; neither is listed in the
+  active set. The read-only boundary assertion throws if
+  Finn is widened in or Dixie is widened out.
+- **Sibling-repo work remains separate.** A future Phase 29C
+  handoff packet may stage a Dixie-side consumer contract
+  (issue draft + integration map) **without editing
+  `loa-dixie`** — same pattern as Phase 24F vs Phase 24G
+  (handoff-only first; sibling-repo PR is a separate event
+  under teammate review). A future Phase 30A endpoint-
+  candidate proposal may pin the Dixie-hosted recall-
+  inspection / BFF endpoint shape **on top of** the Phase 29B
+  contract, with its own §4.d gate. Phase 29B is **not**
+  authority for either Phase 29C or Phase 30A.
+- **Composition-substrate only; no Hounfour shape adoption.**
+  Phase 29B claims no Hounfour shape adoption beyond the
+  already-recorded Phase 28A / 29A composition / vector-
+  access evidence. The class-vs-policy boundary is preserved:
+  **Hounfour provides** class / schema / conformance-vector
+  substrate; **Straylight still owns** policy validation,
+  signer competence, signature verification, audit-chain
+  execution, estate transitions, recall runtime,
+  authorization, and runtime refusal behavior. Phase 29B's
+  contract surface names ownership; it does **not** transfer
+  any primitive across the boundary.
+- **ADR-022E gates remain held.** Gates #1, #2, #3, #4, #5,
+  #9, #17, and #18 all remain **HELD** across Phase 29B.
+  Phase 29B fires none of them.
+- **Phase 29B is code-bearing and inherits its own §4.d.**
+  ADR-027B-Track1-code-candidate-scope (Phase 28E) and the
+  merged Phase 29A PR (#57; squash SHA `db22d2b`) do **not**
+  satisfy / waive / pre-satisfy §4.d for Phase 29B. Phase
+  29B's §4.d is satisfied only by a real 3-model Flatline +
+  Bridgebuilder run against the Phase 29B scope/PR.
+- **`dist/` forbidden in full; one regenerated `dist-types/`
+  declaration emit authorized.** Per the
+  [ADR-024G](../decisions/ADR-024G-host-package-subpath-implementation.md)
+  committed-declaration policy ("`dist-types/` is committed
+  AND reproducible"), Phase 29B authorizes exactly one
+  regenerated declaration emit
+  (`dist-types/src/straylight/host/recall-wedge-contract.d.ts`)
+  reproducible from `npm run build`. Every other `dist-types/`
+  path remains forbidden by Phase 29B, and `dist/` (runtime
+  JS) remains forbidden by Phase 29B in full.
+
+Reviewers may cite
+[`../decisions/ADR-029B-dixie-first-recall-wedge-contract.md`](../decisions/ADR-029B-dixie-first-recall-wedge-contract.md)
+§"Decision" §7 (non-goals) verbatim to refuse a sibling-repo
+or in-repo PR that exceeds the Phase 29B scope.
+
 ## Cross-references
 
 - [`cross-repo-handoff-index.md`](./cross-repo-handoff-index.md)

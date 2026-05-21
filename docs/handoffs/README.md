@@ -3540,6 +3540,118 @@ there; this index entry is a thin pointer.
 Operator-oriented planning handoff:
 [`./phase-28e-track1-code-candidate-scope.md`](./phase-28e-track1-code-candidate-scope.md).
 
+## Phase 29B — Dixie-first Recall Wedge contract pack (in-repo only)
+
+> Status: append-only index entry recorded by Phase 29B.
+> Discoverability only. **First-class implementation slice
+> under
+> [ADR-026A0 §"Decision" §3](../decisions/ADR-026A0-operator-authority-flatline-rule.md)**;
+> code-bearing, type-only / pure-helper. **No endpoint, no
+> runtime, no policy evaluator, no signature verifier, no
+> signer-competence implementation, no storage adapter, no
+> audit-chain executor, no sibling-repo edit (no `loa-dixie`,
+> `loa-finn`, `loa-hounfour`, or `loa-freeside` change), no
+> `package.json` / `package-lock.json` edit, no new wedge
+> public-API export, no vendoring, no tag / release / publish.**
+
+Phase 29B authors the **Straylight-side host contract** that
+the future Dixie-first recall-inspection / BFF path will
+consume. It ships one source file
+([`../../src/straylight/host/recall-wedge-contract.ts`](../../src/straylight/host/recall-wedge-contract.ts))
+and one test file
+([`../../tests/phase-29b-recall-wedge-contract.test.ts`](../../tests/phase-29b-recall-wedge-contract.test.ts)),
+together with an ADR
+([`../decisions/ADR-029B-dixie-first-recall-wedge-contract.md`](../decisions/ADR-029B-dixie-first-recall-wedge-contract.md))
+and an operator-oriented handoff
+([`./phase-29b-dixie-first-recall-wedge-contract.md`](./phase-29b-dixie-first-recall-wedge-contract.md)).
+A minimal legacy-test update is required by the new
+host-directory file: the Phase 24C host-surface-shape pin's
+manifest is widened to 11 files (adding
+`recall-wedge-contract.ts`) and the Hounfour
+forbidden-import regex is tightened from a bare-string match
+to import-syntax matching (`from '…'`, side-effect `import
+'…'`, dynamic `import('…')`, and `require('…')` forms — each
+with an optional subpath), so that the contract module's
+type-only metadata literal `packageName: '@0xhoneyjar/loa-hounfour'`
+is permitted while actual root- and subpath-imports of the
+package from any host file are still forbidden. The Phase 24C
+intent — **no Hounfour import at the host surface** — is
+preserved verbatim.
+
+Per the
+[ADR-024G](../decisions/ADR-024G-host-package-subpath-implementation.md)
+committed-declaration policy ("`dist-types/` is committed
+AND reproducible"), Phase 29B also ships exactly one
+regenerated declaration emit
+([`../../dist-types/src/straylight/host/recall-wedge-contract.d.ts`](../../dist-types/src/straylight/host/recall-wedge-contract.d.ts))
+reproducible from `npm run build`. This is the **only**
+authorized `dist-types/` change in Phase 29B; every other
+`dist-types/` path remains forbidden, and `dist/` (runtime
+JS) remains forbidden in full.
+
+The contract module pins: the contract version literal
+`'phase-29b.recall-wedge-contract.v0'`; the Hounfour substrate
+package literals (`@0xhoneyjar/loa-hounfour@8.7.0`,
+`recall-wedge-conformance-vectors`, `/loa-hounfour/8.7.0/`);
+the host-kind union
+(`'dixie-first-inspection-bff' | 'finn-runtime-enforcement-later' | 'test'`)
+with **only** `'dixie-first-inspection-bff'` listed as active;
+the boundary-owner union
+(`'straylight' | 'hounfour' | 'dixie' | 'finn' | 'loa'`); the
+inspection request / item / receipt / result interfaces; the
+inclusion-decision union
+(`'include' | 'exclude' | 'redact' | 'refuse'`); and a
+`RECALL_WEDGE_CONTRACT_BOUNDARY` constant + read-only assertion
+that throws if Finn is widened in or Dixie is widened out.
+Three pure helpers (`createRecallWedgeSourceCorpusRef`,
+`summarizeRecallWedgeInspection`,
+`createRecallWedgeInspectionReceipt`) compose the receipt from
+counted items. The contract module imports from no other
+Straylight module; the test imports no Straylight runtime /
+policy / storage / audit / signer behavior.
+
+Finn is represented in the Phase 29B contract **only as a
+boundary marker** — the host-kind union and the
+environment-surface union both name a Finn label, but neither
+is listed in the active set. Phase 29B does **not** edit
+`loa-finn`, does **not** wire any Finn runtime / audit-return
+seam, does **not** trigger ADR-022E gate #9, and does **not**
+discharge any
+[ADR-027C-finn-return-gate-readiness](../decisions/ADR-027C-finn-return-gate-readiness.md)
+gating obligation. Dixie is the active first-MVP recall
+inspection / BFF host kind; the Phase 29B contract is the
+shape Dixie will later consume, **not** a Dixie endpoint.
+Phase 29B does **not** edit `loa-dixie`, does **not** re-open
+PR #102, and does **not** add a second Dixie endpoint.
+
+ADR-022E gates #1, #2, #3, #4, #5, #9, #17, #18 all remain
+**HELD**. Phase 29B fires none of them. The class-vs-policy
+boundary is preserved: **Hounfour provides** class / schema /
+conformance-vector substrate; **Straylight still owns**
+policy validation, signer competence, signature verification,
+audit-chain execution, estate transitions, recall runtime,
+authorization, and runtime refusal behavior.
+
+Phase 29B is **code-bearing**, so it inherits **its own**
+§4.d real 3-model Flatline + Bridgebuilder pre-merge
+requirement under
+[ADR-026A0 §"Decision" §3 / §5](../decisions/ADR-026A0-operator-authority-flatline-rule.md).
+ADR-027B-Track1-code-candidate-scope (Phase 28E) and the
+merged Phase 29A PR (#57; squash SHA `db22d2b`) do **not**
+satisfy / waive / pre-satisfy §4.d for Phase 29B; Phase 29B's
+§4.d is satisfied only by a real run against the Phase 29B
+scope/PR.
+
+Canonical record:
+[`../decisions/ADR-029B-dixie-first-recall-wedge-contract.md`](../decisions/ADR-029B-dixie-first-recall-wedge-contract.md).
+The full contract surface, decision rationale, ADR-022E gate
+disposition, class-vs-policy preservation, successor-phase
+plan (29C handoff/test, 30A endpoint candidate), and §4.d
+posture live there; this index entry is a thin pointer.
+
+Operator-oriented implementation handoff:
+[`./phase-29b-dixie-first-recall-wedge-contract.md`](./phase-29b-dixie-first-recall-wedge-contract.md).
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
