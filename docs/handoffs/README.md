@@ -3408,6 +3408,138 @@ pointer.
 Operator-oriented evidence handoff:
 [`./phase-28d-hounfour-v870-release-evidence.md`](./phase-28d-hounfour-v870-release-evidence.md).
 
+## Phase 28E — Track 1 code-candidate scope (in-repo only)
+
+> Status: append-only index entry recorded by Phase 28E.
+> Discoverability only. **First-class plan record under
+> [ADR-026A0 §"Decision" §3](../decisions/ADR-026A0-operator-authority-flatline-rule.md)
+> for the next implementation PR's shape; does not authorize
+> code on its own.** **No general reorder** of the Hounfour →
+> Finn → Dixie → Freeside sequence above. **No sibling-repo
+> edit** is authorized by Phase 28E. **No ADR-022E gate** is
+> fired by Phase 28E. **No Straylight code, no `package.json`
+> / `package-lock.json` edit, no `npm install`, no vendoring,
+> and no `loa-hounfour`-`origin/main` / local-tarball /
+> `git+https://`-style resolution path** is authorized by
+> Phase 28E.
+
+Phase 28E pins the **next implementation PR**:
+**Phase 29A — Hounfour v8.7.0 vector-access Track 1
+implementation**. Phase 28E is **docs-only** and does not
+itself implement or authorize immediate code. It authorizes
+the **drafting / preparation** of the Phase 29A scope as a
+separate future event; it does **not** authorize Phase 29A
+to merge without its own §4.d evidence.
+
+Phase 28E records that Phase 28D's release / vector-access
+evidence is **MET** —
+`@0xhoneyjar/loa-hounfour@8.7.0` is published, tagged
+(`v8.7.0`), and registry-resolvable from
+`https://npm.pkg.github.com`; the published tarball ships
+the seven recall-wedge composition-substrate paths
+(`package/vectors/conformance/recall-wedge/{assertion-admitted,commitment-root,recall-pack,recall-receipt,recall-request}.json`,
+`package/vectors/conformance/recall-wedge/README.md`,
+`package/schemas/conformance-vector.schema.json`); tarball
+SHA-256 is
+`8c116f205e1ae1771c89b5c455cd0dd3a5c62160962bb3c8e9a4ae6bb50d22f7`.
+**Shape-adoption gates remain held**, however: Phase 28E
+claims no Hounfour shape adoption beyond the already-recorded
+composition / vector-access evidence.
+
+Phase 29A's allowed scope is bounded to: (i) pin / update
+the existing `@0xhoneyjar/loa-hounfour` declaration to
+**exactly `8.7.0`** (or confirm a no-manifest-delta posture
+only if `package.json` and `package-lock.json` already
+resolve exactly `8.7.0`) — exact tag only, no range
+widening, registry-resolution only; (ii) a narrow
+Straylight-side package-access probe reading Hounfour's
+package-shipped recall-wedge vector files **from the
+installed `@0xhoneyjar/loa-hounfour` package**; (iii) a
+narrow Vitest test proving the installed package exposes
+the seven required composition-substrate paths through an
+implementation-approved access path; (iv) optionally a tiny
+internal/private helper that does **not** become a public
+runtime API or expand `package.json` `exports`; (v) all
+Hounfour data **package-sourced** — no copying of vector
+JSON payloads, recall-wedge `README.md`, or envelope schema
+into the Straylight tree; (vi) **smallest possible
+code/test diff**.
+
+Phase 29A's forbidden scope is bounded to: no vendoring;
+no local tarball dependency; no `git+https://`-style
+dependency; no `origin/main` / branch / commit dependency;
+no Hounfour sibling-repo file reads; no generated `dist/` /
+`dist-types/` change unless the Phase 29A PR's own accepted
+scope separately authorizes one; no Straylight runtime
+recall behavior change; no signature verification; no signer
+competence enforcement; no policy execution; no storage
+adapter; no audit-chain enforcement; no Dixie integration
+(no `loa-dixie` PR #102 re-open); no Finn integration (gate
+#9 remains held; Finn governed by ADR-027C); no runtime
+allowlist changes; no public package export changes; no
+ADR-022E gate firing (#1, #2, #3, #4, #5, #17, #18 remain
+HELD); no Phase 28E implementation; no new tests beyond the
+corpus-availability proof; no new fixtures beyond at most a
+single private pointer / manifest under
+`fixtures/hounfour-conformance/` recording Hounfour-side
+on-disk paths inside the resolved package; no tag, release,
+or publish on the Straylight side.
+
+Phase 29A's access-path discipline (acceptance criteria for
+Phase 29A's review): the implementation PR must prove how
+Straylight resolves the installed `@0xhoneyjar/loa-hounfour`
+package root or a supported asset path; must **fail closed**
+if any required path is missing; must **not** rely on
+sibling-repo working-tree layout; must **not** rely on
+unpublished package state (`origin/main`, untagged commits,
+pre-release artifacts); and must **not** bypass
+package-manager resolution semantics. Phase 28E does **not**
+pretend the exact mechanism has already been proven inside
+Straylight.
+
+Phase 29A independently inherits §4.d under
+[`../decisions/ADR-026A0-operator-authority-flatline-rule.md`](../decisions/ADR-026A0-operator-authority-flatline-rule.md)
+§"Decision" §3 / §5. Phase 28E does **not** satisfy, waive,
+weaken, or pre-satisfy §4.d for Phase 29A. The local
+review-substrate smoke-test results recorded by
+[`../decisions/ADR-027B-VectorAccess-release-unblocked.md`](../decisions/ADR-027B-VectorAccess-release-unblocked.md)
+§"Decision" §3 establish that the machinery is **usable**;
+they are **not** §4.d evidence for Phase 29A. Phase 28E
+does **not** claim that the local review substrate is
+currently degraded. Phase 29A's §4.d is satisfied only by a
+**real 3-model Flatline + Bridgebuilder run against the
+Phase 29A scope/PR**.
+
+The class-vs-policy boundary is preserved: **Hounfour
+provides** class / schema / conformance-vector artifacts;
+**Straylight still owns** policy validation, signer
+competence, signature verification, audit-chain execution,
+estate transitions, recall runtime, authorization, and
+runtime refusal behavior. Phase 29A's consumption of the
+recall-wedge corpus as Vitest test inputs **does not**
+transfer any policy / competence / verification / execution
+/ authorization primitive across the Hounfour → Straylight
+boundary.
+
+ADR-022E gates #1, #2, #3, #4, #5, #17, #18 all remain
+**HELD**. Phase 28E fires none of them. Phase 29A — under
+the §"Decision" §3–§5 scope — fires none of them either.
+[`../mvp/threat-model.md`](../mvp/threat-model.md) and
+[`../mvp/package-boundary.md`](../mvp/package-boundary.md)
+are unchanged.
+
+Canonical record:
+[`../decisions/ADR-027B-Track1-code-candidate-scope.md`](../decisions/ADR-027B-Track1-code-candidate-scope.md).
+The full allowed scope (§"Decision" §3), forbidden scope
+(§"Decision" §4), ADR-022E gate disposition (§"Decision"
+§5), access-path acceptance criteria (§"Decision" §6),
+class-vs-policy preservation (§"Decision" §7), §4.d posture
+(§"Decision" §8), and forbidden list (§"Decision" §9) live
+there; this index entry is a thin pointer.
+
+Operator-oriented planning handoff:
+[`./phase-28e-track1-code-candidate-scope.md`](./phase-28e-track1-code-candidate-scope.md).
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
