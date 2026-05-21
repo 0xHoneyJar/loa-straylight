@@ -3323,6 +3323,91 @@ thin pointer.
 Paste-ready release-request draft (not filed by Phase 28C):
 [`./phase-28c-hounfour-release-request.md`](./phase-28c-hounfour-release-request.md).
 
+## Phase 28D — Hounfour v8.7.0 release evidence (in-repo only)
+
+> Status: append-only index entry recorded by Phase 28D.
+> Discoverability only. **Second-class evidence record under
+> [ADR-026A0 §"Decision" §3](../decisions/ADR-026A0-operator-authority-flatline-rule.md);
+> does not create authorization.** **No general reorder** of
+> the Hounfour → Finn → Dixie → Freeside sequence above. **No
+> sibling-repo edit** is authorized by Phase 28D. **No
+> ADR-022E gate** is fired by Phase 28D. **No Straylight code,
+> no Hounfour dependency change, no vendoring, and no
+> `loa-hounfour`-`origin/main` / local-tarball resolution path**
+> is authorized by Phase 28D.
+
+Phase 28D records that the Phase 28C release / accessibility
+blocker is **resolved**. Hounfour issue #70 release comment
+(<https://github.com/0xHoneyJar/loa-hounfour/issues/70#issuecomment-4507326260>)
+announces the release; `@0xhoneyjar/loa-hounfour@8.7.0` is
+published; `loa-hounfour` git tag `v8.7.0` exists;
+`npm view @0xhoneyjar/loa-hounfour versions
+--registry=https://npm.pkg.github.com` includes `8.7.0`;
+`npm view @0xhoneyjar/loa-hounfour@8.7.0 dist.tarball
+--registry=https://npm.pkg.github.com` returns a non-404
+tarball URL; the published tarball contains
+`package/vectors/conformance/recall-wedge/{assertion-admitted,commitment-root,recall-pack,recall-receipt,recall-request}.json`,
+`package/vectors/conformance/recall-wedge/README.md`, and
+`package/schemas/conformance-vector.schema.json`; tarball
+SHA-256 is
+`8c116f205e1ae1771c89b5c455cd0dd3a5c62160962bb3c8e9a4ae6bb50d22f7`.
+
+The release / vector-access precondition recorded by
+[`../decisions/ADR-027B-VectorAccess-release-gate.md`](../decisions/ADR-027B-VectorAccess-release-gate.md)
+§"Decision" §3 / §5 is now **MET** under
+[`../decisions/ADR-027B-PrivateAlias-successor-plan.md`](../decisions/ADR-027B-PrivateAlias-successor-plan.md)
+§"Decision" §8.b branch (i). The vector corpus is accessible
+from a tagged, registry-resolvable package. Phase 28D claims
+no Hounfour shape adoption beyond this published composition /
+vector-access evidence; v8.7.0 is composition-substrate-only.
+
+The future Track 1 code PR remains **not yet authorized**: one
+of two preconditions (release / vector-access) is now met; the
+§4.d pre-merge real 3-model Flatline + Bridgebuilder gate
+remains independently unsatisfied until real 3-model Flatline +
+Bridgebuilder evidence is run against the successor Straylight
+scope/PR. The local review substrate has been smoke-tested
+usable (3-model Flatline live smoke passed; Bridgebuilder
+3-provider dry-run wiring passed); the smoke tests do not
+satisfy §4.d for any future implementation PR. Vendoring
+remains a separate first-class event with its own §4.d
+evidence and is **not** pre-approved by Phase 28D.
+
+Phase 28D **may** authorize the drafting of the next first-class
+code-candidate plan/PR scope for Track 1 as a separate, future,
+docs-only event under its own §4.d gate. The corresponding
+implementation PR is a second future event after that, and may
+pin or update the existing `@0xhoneyjar/loa-hounfour` dependency
+declaration to `8.7.0` (or confirm a manifest delta / no-delta
+posture against actual package state) — exact tag only, no range
+widening, registry-resolution only — but **only** as that
+separate implementation PR with its own first-class §4.d gate.
+[`../../package.json`](../../package.json) and
+[`../../package-lock.json`](../../package-lock.json) are
+**unchanged** by Phase 28D.
+
+ADR-022E gates #1, #2, #3, #4, #5, #17, #18 all remain
+**HELD**. The class-vs-policy boundary is preserved: Hounfour
+provides class / schema / conformance-vector artifacts;
+Straylight still owns policy, signer competence, signature
+verification, audit-chain execution, estate transitions, recall
+runtime, and authorization. The runtime subpath, runtime
+allowlist, root / host `"types"`-only postures,
+[`../mvp/threat-model.md`](../mvp/threat-model.md), and
+[`../mvp/package-boundary.md`](../mvp/package-boundary.md) are
+unchanged.
+
+Canonical record:
+[`../decisions/ADR-027B-VectorAccess-release-unblocked.md`](../decisions/ADR-027B-VectorAccess-release-unblocked.md).
+The release-evidence inventory, block / unblock disposition,
+class-vs-policy preservation, ADR-022E gate table, authorized-
+by-Phase-28D successor scope (§"Decision" §6), and forbidden
+list (§"Decision" §7) live there; this index entry is a thin
+pointer.
+
+Operator-oriented evidence handoff:
+[`./phase-28d-hounfour-v870-release-evidence.md`](./phase-28d-hounfour-v870-release-evidence.md).
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
