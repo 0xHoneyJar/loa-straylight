@@ -739,6 +739,101 @@ Reviewers may cite
 §"Decision" §6 (forbidden list) verbatim to refuse a
 sibling-repo or in-repo PR that exceeds the Phase 28C scope.
 
+## Phase 28D — Hounfour v8.7.0 release evidence
+
+> Status: append-only navigation pointer recorded by Phase 28D.
+> Discoverability only. **Second-class evidence record under
+> [ADR-026A0 §"Decision" §3](../decisions/ADR-026A0-operator-authority-flatline-rule.md);
+> does not create authorization.** **No general reorder** of
+> the Hounfour → Finn → Dixie → Freeside sequence above. **No
+> sibling-repo edit** is authorized by Phase 28D. **No
+> ADR-022E gate** is fired by Phase 28D.
+
+### Ordering impact
+
+- **Long-term order unchanged.** The Hounfour → Finn → Dixie →
+  Freeside sequence above remains the recommended order. The
+  Phase 28D release / vector-access **unblock** evidence does
+  **not** flip lane authority and does **not** re-order any
+  Phase 27A / Phase 27B / Phase 28A / Phase 28B / Phase 28C
+  decision.
+- **Hounfour release-evidence is now present.** Per
+  [`../decisions/ADR-027B-VectorAccess-release-unblocked.md`](../decisions/ADR-027B-VectorAccess-release-unblocked.md)
+  §"Decision" §2, `@0xhoneyjar/loa-hounfour@8.7.0` is published,
+  tagged (`v8.7.0`), and registry-resolvable via
+  `https://npm.pkg.github.com`; the published tarball contains
+  the recall-wedge composition-substrate corpus
+  (`package/vectors/conformance/recall-wedge/{assertion-admitted,commitment-root,recall-pack,recall-receipt,recall-request}.json`,
+  `package/vectors/conformance/recall-wedge/README.md`,
+  `package/schemas/conformance-vector.schema.json`); tarball
+  SHA-256 is
+  `8c116f205e1ae1771c89b5c455cd0dd3a5c62160962bb3c8e9a4ae6bb50d22f7`.
+  The Phase 28C BLOCKED disposition under
+  [`../decisions/ADR-027B-VectorAccess-release-gate.md`](../decisions/ADR-027B-VectorAccess-release-gate.md)
+  §"Decision" §3 flips to **release-evidence-met**.
+- **Track 1 code authorization remains gated.** The future
+  Track 1 code PR sketched in
+  [`../decisions/ADR-027B-PrivateAlias-successor-plan.md`](../decisions/ADR-027B-PrivateAlias-successor-plan.md)
+  §"Decision" §3 is **not yet authorized**: the release /
+  vector-access precondition is now met, but the §4.d pre-merge
+  real 3-model Flatline + Bridgebuilder gate remains
+  independently unsatisfied until real 3-model Flatline +
+  Bridgebuilder evidence is run against the successor Straylight
+  scope/PR. The local review substrate has been smoke-tested
+  usable (3-model Flatline live smoke passed; Bridgebuilder
+  3-provider dry-run wiring passed); the smoke tests do not
+  satisfy §4.d for any future implementation PR. Both
+  preconditions must be true before any Straylight code change
+  is authorized.
+- **Successor plan/PR scope may be drafted.** Phase 28D **may**
+  authorize the drafting of the next first-class code-candidate
+  plan/PR scope for Track 1 as a separate, future, docs-only
+  event. That successor must satisfy its own §4.d evidence
+  before code is authorized; Phase 28D does not pre-satisfy it.
+- **Dependency posture is implementation-PR-only.** The next
+  code candidate **may** pin or update the existing
+  `@0xhoneyjar/loa-hounfour` dependency declaration to `8.7.0`
+  (or confirm a manifest delta / no-delta posture against
+  actual package state) — exact tag only, no range widening,
+  registry-resolution only against `https://npm.pkg.github.com`.
+  This is a **separate implementation PR with its own §4.d
+  gate**, **not** Phase 28D and **not** the successor plan
+  itself. [`../../package.json`](../../package.json) and
+  [`../../package-lock.json`](../../package-lock.json) are
+  unchanged by Phase 28D.
+- **Vendoring is not pre-approved.** Vendoring of the v8.7.0
+  recall-wedge artifacts into the Straylight tree remains a
+  separate first-class successor with its own §4.d evidence;
+  Phase 28D does **not** propose one and does **not** pre-approve
+  one.
+- **No `loa-hounfour`-`origin/main`, local-tarball, or
+  `git+https://`-style resolution.** Future consumption is
+  registry-resolution only against `https://npm.pkg.github.com`.
+- **Composition-substrate only; no Hounfour shape adoption.**
+  Phase 28D claims no Hounfour shape adoption beyond the
+  published composition / vector-access evidence. The
+  class-vs-policy boundary is preserved: Hounfour provides
+  class / schema / conformance-vector artifacts; Straylight
+  still owns policy, signer competence, signature verification,
+  audit-chain execution, estate transitions, recall runtime,
+  and authorization.
+- **§4.d remains independently unsatisfied.** The future Track 1
+  successor plan/PR's §4.d row and the future Track 1
+  implementation PR's §4.d row are each their own gate (per
+  [`../decisions/ADR-026A0-operator-authority-flatline-rule.md`](../decisions/ADR-026A0-operator-authority-flatline-rule.md)
+  §"Decision" §3 and ADR-027B-PrivateAlias-successor-plan
+  §"Decision" §6). Neither is satisfied, waived, or pre-satisfied
+  by Phase 28D.
+- **ADR-022E gates remain held.** Gates #1, #2, #3, #4, #5,
+  #17, and #18 all remain **HELD**. Phase 28D fires none of
+  them; a composition-substrate release is not a shape
+  adoption trigger.
+
+Reviewers may cite
+[`../decisions/ADR-027B-VectorAccess-release-unblocked.md`](../decisions/ADR-027B-VectorAccess-release-unblocked.md)
+§"Decision" §7 (forbidden list) verbatim to refuse a
+sibling-repo or in-repo PR that exceeds the Phase 28D scope.
+
 ## Cross-references
 
 - [`cross-repo-handoff-index.md`](./cross-repo-handoff-index.md)
