@@ -14,3 +14,5 @@ export { handleAuditChainLookup } from './audit-lookup.js';
 export type { AuditLookupDeps } from './audit-lookup.js';
 export { handleEstateSummary } from './estate-summary.js';
 export type { EstateSummaryDeps } from './estate-summary.js';
+export { DEFAULT_RECALL_WEDGE_HOST_KIND, RECALL_WEDGE_ACTIVE_HOST_KINDS, RECALL_WEDGE_CONTRACT_BOUNDARY, STRAYLIGHT_RECALL_WEDGE_CONTRACT_VERSION, assertRecallWedgeContractReadOnlyBoundary, createRecallWedgeInspectionReceipt, createRecallWedgeSourceCorpusRef, summarizeRecallWedgeInspection, } from './recall-wedge-contract.js';
+export type { RecallWedgeActorScope, RecallWedgeBoundaryOwner, RecallWedgeContractBoundary, RecallWedgeEnvironmentFrame, RecallWedgeEnvironmentSurface, RecallWedgeHostKind, RecallWedgeInclusionDecision, RecallWedgeInspectionItem, RecallWedgeInspectionReceipt, RecallWedgeInspectionRequest, RecallWedgeInspectionResult, RecallWedgeInspectionSummary, RecallWedgeRiskLevel, RecallWedgeSourceCorpusRef, StraylightRecallWedgeContractVersion, } from './recall-wedge-contract.js';

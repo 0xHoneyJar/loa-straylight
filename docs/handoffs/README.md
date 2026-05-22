@@ -3652,6 +3652,125 @@ posture live there; this index entry is a thin pointer.
 Operator-oriented implementation handoff:
 [`./phase-29b-dixie-first-recall-wedge-contract.md`](./phase-29b-dixie-first-recall-wedge-contract.md).
 
+## Phase 30 — Host-consumable Recall Wedge contract export (Dixie consumer handoff)
+
+> Status: append-only index entry recorded by Phase 30.
+> Discoverability only. **First-class implementation slice
+> under
+> [ADR-026A0 §"Decision" §3](../decisions/ADR-026A0-operator-authority-flatline-rule.md)**;
+> code-bearing, type-only / pure-helper. **No endpoint, no
+> runtime, no policy evaluator, no signature verifier, no
+> signer-competence implementation, no storage adapter, no
+> audit-chain executor, no sibling-repo edit (no `loa-dixie`,
+> `loa-finn`, `loa-hounfour`, or `loa-freeside` change), no
+> `package.json` / `package-lock.json` edit, no new
+> `package.json` `exports` key, no new wedge public-API export,
+> no vendoring, no tag / release / publish.**
+
+Phase 30 closes the seam left open by Phase 29B. Phase 29B
+authored the Straylight-side Recall Wedge **host contract** at
+[`../../src/straylight/host/recall-wedge-contract.ts`](../../src/straylight/host/recall-wedge-contract.ts)
+but intentionally did **not** widen the host barrel to
+re-export it. Phase 30 widens the host barrel
+([`../../src/straylight/host/index.ts`](../../src/straylight/host/index.ts))
+to re-export the Phase 29B contract surface (named values +
+types). Phase 30 proves the **source host barrel re-export
+shape** AND the **package type-surface readiness** of
+`@loa/straylight/host`: a future Dixie consumer **may
+type-check** against the Recall Wedge host contract from
+`@loa/straylight/host` (the `./host` export remains `types`-only
+per `package.json`; no new `package.json` export key is added).
+**Runtime import / callable helper consumption from
+`@loa/straylight/host` is deferred** — Phase 30 does **not**
+add a runtime `./host` export, and the callable helpers
+re-exported through the host barrel are in-repo / source-level
+contract helpers only in Phase 30. A future phase may add a
+runtime host export or a Dixie-side runtime adapter if
+explicitly authorized.
+
+The seam is proven by an executable contract export test
+([`../../tests/phase-30-host-recall-wedge-contract-export.test.ts`](../../tests/phase-30-host-recall-wedge-contract-export.test.ts)).
+The bulk of cases import the in-repo source host barrel
+(`'../src/straylight/host/index.js'`) to pin its SHAPE; a
+separate type-only consumer fixture is written into a temp
+directory and compiled with the in-repo `tsc --noEmit` to pin
+that a future Dixie consumer can `import type ... from
+'@loa/straylight/host'` against the existing types-only
+`./host` export. Together they pin: the in-repo host barrel
+re-exports the contract; the contract version literal is
+exactly `'phase-29b.recall-wedge-contract.v0'`; Dixie is the
+**default and only active** host kind; Hounfour remains class /
+schema / conformance-vector substrate metadata only; Finn
+remains a **boundary marker only** (the read-only boundary
+assertion throws if Finn is widened in or Dixie is widened
+out); the contract module imports no runtime / policy /
+storage / audit / signature / signer implementation (the
+forbidden-import scan now also catches relative variants like
+`'../runtime/...'` and `'../signer'`); the package surface is
+ready for type-only Dixie consumption (the `./host` export is
+`types`-only; **no new export key is added**).
+
+Phase 30 also updates the Phase 29B export-posture pin in
+[`../../tests/phase-29b-recall-wedge-contract.test.ts`](../../tests/phase-29b-recall-wedge-contract.test.ts):
+the pre-Phase-30 assertion that the host barrel does **not**
+re-export the contract is replaced with the Phase 30 posture
+(the host barrel **does** re-export the contract module under
+the Phase 30 host-consumable seam). The companion pin that
+`package.json` declares the existing **three** export keys
+without adding a Phase 29B-specific subpath is preserved
+**verbatim** — Phase 30 does not add a new export key either.
+
+Per the
+[ADR-024G](../decisions/ADR-024G-host-package-subpath-implementation.md)
+committed-declaration policy ("`dist-types/` is committed
+AND reproducible"), Phase 30 also ships exactly one
+regenerated declaration emit
+([`../../dist-types/src/straylight/host/index.d.ts`](../../dist-types/src/straylight/host/index.d.ts))
+reproducible from `npm run build`. This is the **only**
+authorized `dist-types/` change in Phase 30; every other
+`dist-types/` path remains forbidden, and `dist/` (runtime
+JS) remains forbidden by Phase 30 in full.
+
+Boundary owners are unchanged from Phase 29B: **Hounfour**
+provides class / schema / conformance-vector substrate
+(`@0xhoneyjar/loa-hounfour@8.7.0`); **Straylight** owns the
+contract surface end-to-end and the Recall Wedge semantic
+boundary (policy validation, signer competence, signature
+verification, audit-chain execution, estate transitions,
+recall runtime, authorization, refusal behavior); **Dixie** is
+the first MVP recall inspection / BFF host kind and the
+default + only active host under the contract; **Finn**
+remains a boundary marker only (later runtime enforcement /
+audit-return gate; ADR-022E gate #9 remains HELD); **Loa**
+remains framework-side and unaffected. The host barrel
+re-export describes shape; it does **not** transfer ownership.
+
+ADR-022E gates #1, #2, #3, #4, #5, #9, #17, #18 all remain
+**HELD**. Phase 30 fires none of them. The class-vs-policy
+boundary is preserved verbatim from
+[ADR-027B-Fire §"Decision" §3](../decisions/ADR-027B-Fire-hounfour-composition-contracts.md).
+
+Phase 30 is **code-bearing**, so it inherits **its own** §4.d
+real 3-model Flatline + Bridgebuilder pre-merge requirement
+under
+[ADR-026A0 §"Decision" §3 / §5](../decisions/ADR-026A0-operator-authority-flatline-rule.md).
+ADR-029B (Phase 29B) and the merged Phase 29B PR (#58; squash
+SHA `5b713bd`) do **not** satisfy / waive / pre-satisfy §4.d
+for Phase 30; Phase 30's §4.d is satisfied only by a real run
+against the Phase 30 scope/PR.
+
+Canonical record:
+[`../decisions/ADR-030-host-recall-wedge-contract-export.md`](../decisions/ADR-030-host-recall-wedge-contract-export.md).
+The full host-barrel widening rationale, decision rationale,
+ADR-022E gate disposition, class-vs-policy preservation,
+successor-phase plan (30B / 30C / 31 Dixie-side endpoint
+proposal), and §4.d posture live there; this index entry is a
+thin pointer.
+
+Operator-oriented implementation handoff (the Dixie consumer
+handoff):
+[`./phase-30-host-recall-wedge-contract-export.md`](./phase-30-host-recall-wedge-contract-export.md).
+
 ## Phase 15 — Cross-repo coordination
 
 Phases 9 / 10 / 12 / 14 each stage a sibling-repo handoff packet.
