@@ -22,6 +22,27 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '..');
 const HOST_DIR = resolve(ROOT, 'src/straylight/host');
 
+// Phase 29B note: the Hounfour-package guard is tightened from a
+// bare-string match to an import-syntax match. The Phase 29B
+// recall-wedge-contract module legitimately names
+// `'@0xhoneyjar/loa-hounfour'` as type-only metadata
+// (`packageName: '@0xhoneyjar/loa-hounfour'`); it does NOT import
+// from the package. The Phase 24C intent — no Hounfour import at
+// the host surface — is preserved verbatim. The pattern matches
+// real import syntax only:
+//   * `from '@0xhoneyjar/loa-hounfour(/subpath)?'` (static
+//     named, default, type-only, and `export … from` re-exports);
+//   * `import '@0xhoneyjar/loa-hounfour(/subpath)?'` (side-effect
+//     import);
+//   * `import('@0xhoneyjar/loa-hounfour(/subpath)?')` (dynamic
+//     import);
+//   * `require('@0xhoneyjar/loa-hounfour(/subpath)?')` (CJS
+//     interop, included for completeness).
+// A trailing `(/subpath)?` permits any subpath after the package
+// name so subpath imports are caught alongside root imports.
+const HOUNFOUR_IMPORT_PATTERN =
+  /(?:\bfrom\s+|\bimport\s+|\bimport\s*\(\s*|\brequire\s*\(\s*)['"]@0xhoneyjar\/loa-hounfour(?:\/[^'"]*)?['"]/;
+
 describe('phase-24c host barrel — exports the six surfaces + helpers', () => {
   it.each([
     'handleRecallIntake',
@@ -84,7 +105,7 @@ describe('phase-24c host — no forbidden imports anywhere under src/straylight/
     { label: 'loa-dixie', pattern: /['"]loa-dixie['"]/ },
     { label: 'loa-finn', pattern: /['"]loa-finn['"]/ },
     { label: 'loa-freeside', pattern: /['"]loa-freeside['"]/ },
-    { label: '@0xhoneyjar/loa-hounfour', pattern: /['"]@0xhoneyjar\/loa-hounfour['"]/ },
+    { label: '@0xhoneyjar/loa-hounfour (import)', pattern: HOUNFOUR_IMPORT_PATTERN },
     { label: 'hounfour-alias', pattern: /['"][^'"]*\bhounfour-alias[^'"]*['"]/ },
   ];
 
@@ -92,7 +113,7 @@ describe('phase-24c host — no forbidden imports anywhere under src/straylight/
     .filter((f) => f.endsWith('.ts'))
     .map((f) => resolve(HOST_DIR, f));
 
-  it('host directory contains at least the 10 approved files', () => {
+  it('host directory contains at least the 11 approved files (Phase 24C + Phase 29B)', () => {
     const names = readdirSync(HOST_DIR).filter((f) => f.endsWith('.ts')).sort();
     expect(names).toEqual(
       [
@@ -104,6 +125,7 @@ describe('phase-24c host — no forbidden imports anywhere under src/straylight/
         'intake.ts',
         'provenance.ts',
         'receipt.ts',
+        'recall-wedge-contract.ts',
         'tenancy.ts',
         'types.ts',
       ].sort(),
@@ -121,6 +143,84 @@ describe('phase-24c host — no forbidden imports anywhere under src/straylight/
       }
     });
   }
+});
+
+describe('phase-24c host — Hounfour import-guard regex behavior (Phase 29B tightening)', () => {
+  // The guard MUST allow naming the package as type-only metadata
+  // (the Phase 29B recall-wedge-contract.ts case) and MUST reject
+  // every real import / require form against the package root
+  // AND any subpath under it. These cases pin the behavior of
+  // `HOUNFOUR_IMPORT_PATTERN` so future drift is visible.
+
+  const ALLOWED_NON_IMPORT_FORMS: ReadonlyArray<string> = [
+    // Type-only metadata literal as it appears in
+    // src/straylight/host/recall-wedge-contract.ts.
+    "const HOUNFOUR_PACKAGE_NAME_LITERAL = '@0xhoneyjar/loa-hounfour' as const;",
+    "packageName: '@0xhoneyjar/loa-hounfour',",
+    "// reference to '@0xhoneyjar/loa-hounfour' in a comment",
+    '// reference to "@0xhoneyjar/loa-hounfour" in a comment',
+    "const note = 'see @0xhoneyjar/loa-hounfour for substrate';",
+  ];
+
+  const FORBIDDEN_ROOT_IMPORT_FORMS: ReadonlyArray<string> = [
+    "import '@0xhoneyjar/loa-hounfour';",
+    'import "@0xhoneyjar/loa-hounfour";',
+    "import x from '@0xhoneyjar/loa-hounfour';",
+    "import { x } from '@0xhoneyjar/loa-hounfour';",
+    "import * as h from '@0xhoneyjar/loa-hounfour';",
+    "import type { T } from '@0xhoneyjar/loa-hounfour';",
+    "export { x } from '@0xhoneyjar/loa-hounfour';",
+    "export * from '@0xhoneyjar/loa-hounfour';",
+    "const m = await import('@0xhoneyjar/loa-hounfour');",
+    'const m = await import("@0xhoneyjar/loa-hounfour");',
+    "const m = require('@0xhoneyjar/loa-hounfour');",
+  ];
+
+  const FORBIDDEN_SUBPATH_IMPORT_FORMS: ReadonlyArray<string> = [
+    "import '@0xhoneyjar/loa-hounfour/foo';",
+    'import "@0xhoneyjar/loa-hounfour/schemas/x";',
+    "import x from '@0xhoneyjar/loa-hounfour/core';",
+    "import { x } from '@0xhoneyjar/loa-hounfour/core';",
+    "import * as h from '@0xhoneyjar/loa-hounfour/schemas/conformance-vector.schema.json';",
+    "import type { T } from '@0xhoneyjar/loa-hounfour/types';",
+    "export { x } from '@0xhoneyjar/loa-hounfour/foo';",
+    "export * from '@0xhoneyjar/loa-hounfour/bar/baz';",
+    "const m = await import('@0xhoneyjar/loa-hounfour/foo');",
+    "const m = require('@0xhoneyjar/loa-hounfour/core');",
+  ];
+
+  it.each(ALLOWED_NON_IMPORT_FORMS)(
+    'metadata literal / comment / string is allowed: %s',
+    (line) => {
+      expect(HOUNFOUR_IMPORT_PATTERN.test(line)).toBe(false);
+    },
+  );
+
+  it.each(FORBIDDEN_ROOT_IMPORT_FORMS)(
+    'forbids root import form: %s',
+    (line) => {
+      expect(HOUNFOUR_IMPORT_PATTERN.test(line)).toBe(true);
+    },
+  );
+
+  it.each(FORBIDDEN_SUBPATH_IMPORT_FORMS)(
+    'forbids subpath import form: %s',
+    (line) => {
+      expect(HOUNFOUR_IMPORT_PATTERN.test(line)).toBe(true);
+    },
+  );
+
+  it('the recall-wedge-contract.ts metadata literal is allowed by the guard (live-source check)', () => {
+    const text = readFileSync(
+      resolve(HOST_DIR, 'recall-wedge-contract.ts'),
+      'utf8',
+    );
+    // The literal `'@0xhoneyjar/loa-hounfour'` MUST be present as
+    // type-only metadata. The guard MUST NOT match because the
+    // file imports nothing from the package.
+    expect(text).toMatch(/'@0xhoneyjar\/loa-hounfour'/);
+    expect(HOUNFOUR_IMPORT_PATTERN.test(text)).toBe(false);
+  });
 });
 
 describe('phase-24c host — wedge does not depend on host', () => {
