@@ -562,14 +562,14 @@ describe('Phase 29B — this test file does NOT import Straylight runtime / poli
   });
 });
 
-describe('Phase 29B — package export posture', () => {
-  // Phase 29B authorizes the contract module under the existing
-  // ./host export ONLY if that path is required by an existing repo
-  // convention. It is not. The repo's host barrel
-  // (src/straylight/host/index.ts) is intentionally NOT re-exported
-  // through the wedge public API, and the Phase 29B contract module
-  // does NOT add a new package.json export. This test pins that
-  // posture so future changes are explicit.
+describe('Phase 29B — package export posture (carried into Phase 30)', () => {
+  // Phase 29B authored the contract module without changing
+  // package.json `exports`. Phase 30 makes the contract host-
+  // consumable through the EXISTING `./host` export (a
+  // `types`-only surface) by re-exporting the Phase 29B contract
+  // through `src/straylight/host/index.ts`. The set of declared
+  // package.json export keys does not change; pinning it here
+  // keeps that posture visible.
   it('package.json declares the existing three exports keys without adding a Phase 29B-specific subpath', () => {
     const pkg = JSON.parse(
       readFileSync(resolve(ROOT, 'package.json'), 'utf8'),
@@ -578,16 +578,24 @@ describe('Phase 29B — package export posture', () => {
     if (!pkg.exports) return;
     const keys = Object.keys(pkg.exports).sort();
     expect(keys).toEqual(['.', './host', './runtime/recall-intake']);
-    // Phase 29B did not add ./host/recall-wedge-contract or any
-    // similar subpath; the contract is in-tree only.
+    // Phase 29B / 30 did not add ./host/recall-wedge-contract or
+    // any similar subpath; the contract is exposed via the
+    // existing ./host export, not a new one.
     expect(keys).not.toContain('./host/recall-wedge-contract');
   });
 
-  it('the host barrel does NOT re-export the Phase 29B contract module (kept import-by-path)', () => {
+  it('the host barrel re-exports the Phase 29B contract module under the Phase 30 host-consumable seam', () => {
+    // Phase 30 supersedes the Phase 29B "kept import-by-path"
+    // posture. The contract is now reachable from the existing
+    // `./host` export so a future Dixie BFF consumer can import
+    // it as `@loa/straylight/host`. The contract module itself
+    // is unchanged; it imports from no other Straylight module.
     const barrel = readFileSync(
       resolve(ROOT, 'src/straylight/host/index.ts'),
       'utf8',
     );
-    expect(/recall-wedge-contract/.test(barrel)).toBe(false);
+    expect(/from\s+['"]\.\/recall-wedge-contract\.js['"]/.test(barrel)).toBe(
+      true,
+    );
   });
 });
