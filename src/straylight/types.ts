@@ -476,6 +476,7 @@ export interface RecallReceipt {
   included_assertion_ids: ID[];
   marked_assertion_ids: ID[];
   redacted_count: number;
+  redacted_counts_by_reason: RedactionSummary[];
   excluded_counts_by_reason: Record<string, number>;
   policy_decision_ref: string;
   requester_signature_ref: string;
