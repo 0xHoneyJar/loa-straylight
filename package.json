@@ -33,6 +33,7 @@
     "test:watch": "vitest",
     "demo:recall": "vite-node scripts/demo-recall-wedge.ts",
     "demo:recall:json": "vite-node scripts/demo-recall-wedge.ts -- --json --out=.run/recall-demo.json",
+    "demo:recall-wedge": "vite-node scripts/demo-recall-wedge-31f.ts",
     "schema:candidates": "vite-node scripts/export-schema-candidates.ts",
     "hounfour:conformance": "vite-node scripts/export-hounfour-conformance.ts",
     "hounfour:handoff": "vite-node scripts/print-hounfour-handoff-summary.ts",
