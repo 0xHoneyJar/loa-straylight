@@ -1,5 +1,6 @@
 # Loa-Straylight
 
+(June 08 2026: I'm not gonna update this until the 6 mvps are done)
 **Continuity-under-authorization for persistent AI agents: signed memory, governed recall, challenge, revocation, and commitments.**
 
 > **MVP status (Phase 5 + Phase 6 + Phase 7 + Phase 8 + Phase 9 +
