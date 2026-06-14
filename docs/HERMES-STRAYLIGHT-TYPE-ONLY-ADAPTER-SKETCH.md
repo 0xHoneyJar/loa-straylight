@@ -269,7 +269,7 @@ const req: RecallRequest = {
   created_at,                              // ISO8601
 };
 ```
-**Discipline:** recall output is **context-with-provenance**, not automatic authority. A recalled item carries its provenance and a `use_instruction` (`usable|mark_as_contested|use_as_background_only|do_not_use_for_action`, `types.d.ts:240`); Hermes consuming it does not make it a Hermes fact without separate adjudication. `executeRecall` is **not** called here.
+**Discipline:** recall output is **context**, not automatic authority. A recalled item (`RecallItem`, `types.d.ts:241–250`) carries `provenance_refs: string[]` — **provenance *references*, not full provenance** — plus a `use_instruction` (`usable|mark_as_contested|use_as_background_only|do_not_use_for_action`, `types.d.ts:240`). Those references are **conditional on `include_provenance: true`** on the `RecallRequest`; the example request above **omits** `include_provenance`, so under current behavior `provenance_refs` would be an **empty array**. If `include_provenance` is omitted or `false`, consumers MUST treat provenance references as **absent/empty** and **fail closed** for any authority-sensitive use that requires provenance. Hermes consuming a recalled item does not make it a Hermes fact without separate adjudication. `executeRecall` is **not** called here.
 
 ---
 
