@@ -33,6 +33,46 @@
 
 ---
 
+## Correction / posture clarification (supersedes the original §9 next-lane selection)
+
+> **This block is the corrective amendment (added after the original Phase 48K publication). Where it
+> conflicts with the original §9 next-lane selection or the §6 / §7 "wait / next checkpoint" routing
+> language, this block governs.**
+
+Phase 48K remains **accepted as a safe checkpoint**. Its recorded state —
+`NO_POST_RECORDED` / `NO_RECORDED_RESPONSE`, no post / target / URL / owner response / acceptance
+recorded, no sibling repo bound, no #9 / #10 evidence lane opened, no canonical-store physical host
+selected, no proposed production adapter, `ADR-022E:57` not satisfied, full D.1 NOT YET SATISFIED,
+D.2 not started, ADR-022E gate #8 OPEN / HELD, MVP-2 OPEN — is correct and is **not** disturbed by
+this correction. What is corrected here is **only the selected next-lane framing.**
+
+Because the current posting-execution state is **`NO_POST_RECORDED`**, **owner-response wait is
+premature**: no owner can be expected to respond to a request that has not been posted or otherwise
+recorded as routed. The original §9 selection of "Phase 48L — owner-response wait continuation / next
+checkpoint" is therefore **withdrawn** as the selected next lane.
+
+**The correct current posture is `BLOCKED_FOR_HUMAN_ROUTING`** (equivalently: *human-routing required
+/ no-post hold gate*).
+
+`NO_POST_RECORDED` / `NO_RECORDED_RESPONSE` does **not** route to another owner-response wait
+checkpoint by default. It routes to a **held posture** until either:
+
+1. a human / operator records a concrete post under the Phase 48H / 48I controls, after which
+   `POSTED_NO_RESPONSE` may be tracked and an owner-response wait first becomes valid; or
+2. a concrete owner response appears through accepted evidence, after which a separate
+   response-intake verification gate may classify it.
+
+**Owner-response wait is only valid once the state is at least `POSTED_NO_RESPONSE`.** Until then the
+checkpoint loop **stops** — it does **not** spawn another wait continuation — and resumes only if new
+**post evidence** or **owner-response evidence** appears.
+
+**The next actual step is outside this docs-only phase.** Either (a) a human / operator may choose to
+manually post the already-approved Phase 48D / 48F owner-response request artifact under the Phase
+48H / 48I controls (after which `POSTED_NO_RESPONSE` may be tracked), or (b) the corridor remains
+held. **No lane opens here, this phase performs no post, and no §10 non-authorization is relaxed.**
+
+---
+
 ## Naming note (preface)
 
 This checkpoint lands as
@@ -97,8 +137,13 @@ added to, and none is created or modified.
 
 ## 1. Status and scope
 
-- **In-`loa-straylight`, docs/decision-only.** The only change on this branch is this one new
-  Markdown document under `docs/`. No file under `src/`, `tests/`, `scripts/`, `fixtures/`,
+- **In-`loa-straylight`, docs/decision-only.** This corrective branch modifies **only this one
+  tracked Phase 48K Markdown file** under `docs/`
+  (`docs/ADR-022E-SIBLING-GATE-9-10-OWNER-RESPONSE-WAIT-POSTING-STATUS-CHECKPOINT.md`); it adds no
+  new in-scope file. An untracked Phase 48L draft
+  (`docs/ADR-022E-SIBLING-GATE-9-10-OWNER-RESPONSE-WAIT-CONTINUATION-NEXT-CHECKPOINT.md`) is present
+  in the working tree but is **out of scope** for this corrective patch and **must not be staged or
+  committed** here. No file under `src/`, `tests/`, `scripts/`, `fixtures/`,
   `dist/`, `dist-types/`; no `package.json` / `package-lock.json` / `exports` / runtime allowlist;
   no schema / config / env / CI / generated / hidden / memory / `.claude` / `.loa` / grimoire /
   sibling-repo path is touched.
@@ -362,7 +407,7 @@ not assertions that any such evidence exists.
 
 | Checkpoint condition | Posting status | Owner-response status | Evidence source (available now) | Safe interpretation | What remains blocked | Allowed next route |
 |----------------------|----------------|-----------------------|---------------------------------|---------------------|----------------------|--------------------|
-| **Re-check at Phase 48K (live)** | **`NO_POST_RECORDED`** — no post, no target, no URL is recorded. | **`NO_RECORDED_RESPONSE`** — no owner response, no owner acceptance is recorded. | Clean working tree (`git status --porcelain=v1 --untracked-files=all`); Phase 48J as the latest corridor artifact; read-only PR #78 / PR #77 / issue #76 metadata, which concern the Phase 48J tracker gate and the Phase 48I instruction packet — **not** a post and **not** a response. | Silence is its own classified state. Re-checking an absence is not a license; a posted request would be a *question*, not an *answer*. Absence of evidence fails closed, inventing no post / target / URL / response / acceptance. | Gate #8 OPEN / HELD; #9 / #10 HELD; full D.1 NOT YET SATISFIED; D.2 not started; MVP-2 OPEN; no host selected; no adapter proposed; no sibling bound. | Docs-only **wait / next checkpoint** (the §7 `NO_POST_RECORDED` + `NO_RECORDED_RESPONSE` holding route); **no #9 / #10 evidence lane opens here.** |
+| **Re-check at Phase 48K (live)** | **`NO_POST_RECORDED`** — no post, no target, no URL is recorded. | **`NO_RECORDED_RESPONSE`** — no owner response, no owner acceptance is recorded. | Current corrective-branch scope evidence (`git status --porcelain=v1 --untracked-files=all`): one tracked modified Phase 48K file, one untracked out-of-scope Phase 48L draft, nothing staged; Phase 48J as the latest corridor artifact; read-only PR #78 / PR #77 / issue #76 metadata, which concern the Phase 48J tracker gate and the Phase 48I instruction packet — **not** a post and **not** a response. | Silence is its own classified state. Re-checking an absence is not a license; a posted request would be a *question*, not an *answer*. Absence of evidence fails closed, inventing no post / target / URL / response / acceptance. | Gate #8 OPEN / HELD; #9 / #10 HELD; full D.1 NOT YET SATISFIED; D.2 not started; MVP-2 OPEN; no host selected; no adapter proposed; no sibling bound. | **`BLOCKED_FOR_HUMAN_ROUTING`** — held no-post posture (the §7 `NO_POST_RECORDED` + `NO_RECORDED_RESPONSE` holding route per the Correction / posture clarification): the checkpoint loop stops, owner-response wait is premature (it requires `POSTED_NO_RESPONSE`), and the next actual step is a human / operator decision *outside* this docs-only phase — either post under Phase 48H / 48I controls or remain held. **No #9 / #10 evidence lane opens here; no post occurs here.** |
 | **If a posting record later appears** *(prepared; not live)* | Re-classify under the Phase 48J §5 posting-execution states; a claim lacking safe target / confirmation / no-automation proof fails closed to `POSTED_TARGET_UNKNOWN_OR_UNSAFE`. | Unchanged until a response is separately recorded; a post alone leaves the tracker at `NO_RECORDED_RESPONSE`. | A future, after-the-fact posting record under Phase 48J §7 evidence requirements — not produced or assumed here. | A post is a *question*, never acceptance and never a lane opening; this checkpoint records no post because none is evidenced. | All §3 items hold until a recorded response is separately intaken and verified. | Docs-only **posting-status update intake** (Phase 48J §5 / §9.1 machinery); still no lane opens here. |
 | **If a recorded owner response later appears** *(prepared; not live)* | Unchanged by the response itself. | Re-classify under the Phase 48J §6 owner-response tracker states; an unverifiable claim fails closed to `UNSAFE_OR_UNVERIFIABLE_RESPONSE`. | A future response recorded by the owner in the owner's repo under teammate review, or in an accepted cross-repo decision — not produced or assumed here. | Only a recorded, separately-verified ACCEPT can *permit* a future evidence-lane opening, elsewhere; this checkpoint verifies, opens, and records nothing. | All §3 items hold; even a recorded ACCEPT opens its lane only later, in the owner's repo, under teammate review, via a separate gate. | Docs-only **response-intake verification gate** (Phase 48E taxonomy; Phase 48J §6 / §9.2); no lane opens here. |
 
@@ -377,14 +422,16 @@ not assertions that any such evidence exists.
 
 This is the **routing rulebook**: for each state it names the **single safe next action**. Every
 next action is **docs/decision-only** and **opens no #9 / #10 evidence lane here**. **Only the
-current rule fires now** (`NO_POST_RECORDED` + `NO_RECORDED_RESPONSE` → docs-only wait / next
-checkpoint, §8); the rest are *prepared rules* for a later gate. Even when a substantive rule later
+current rule fires now** (`NO_POST_RECORDED` + `NO_RECORDED_RESPONSE` → `BLOCKED_FOR_HUMAN_ROUTING`
+held no-post posture, §8; owner-response wait is premature until at least `POSTED_NO_RESPONSE` — see
+the Correction / posture clarification block); the rest are *prepared rules* for a later gate. Even
+when a substantive rule later
 fires, any sibling lane opens only as a separate PR in the owner's repo under teammate review, after
 a separate intake gate verifies the predicate — never via this checkpoint.
 
 | State (posting / owner-response) | Safe next action | Opens a lane? |
 |----------------------------------|------------------|---------------|
-| **`NO_POST_RECORDED` + `NO_RECORDED_RESPONSE`** *(current)* | Hold at the current state; docs-only **wait / next checkpoint** or a docs-only **manual posting execution handoff packet** — re-surface the outstanding request to the human / code-owner. **Not** evidence-lane opening; no lane opens. | **No.** |
+| **`NO_POST_RECORDED` + `NO_RECORDED_RESPONSE`** *(current)* | **`BLOCKED_FOR_HUMAN_ROUTING`** — held no-post posture. **Stop the checkpoint loop** (do *not* spawn an owner-response wait continuation — owner-response wait is premature until at least `POSTED_NO_RESPONSE`). Re-surface the outstanding request to the human / code-owner and hold. The next actual step is *outside* this docs-only phase: a human / operator either posts the already-approved Phase 48D / 48F artifact under the Phase 48H / 48I controls (after which `POSTED_NO_RESPONSE` may be tracked) or the corridor remains held. The loop resumes only if new post evidence or owner-response evidence appears. **Not** evidence-lane opening; no lane opens; no post occurs here. | **No.** |
 | **`POST_HELD`** | Continue the held state; re-evaluate postability docs-only (Phase 48H); the post stays held; the tracker stays `NO_RECORDED_RESPONSE`. No lane opens. | **No.** |
 | **`POSTED_NO_RESPONSE`** | Route to an **owner-response wait / intake checkpoint** — the corridor awaits a recorded owner response to the posted *question*. No lane opens. | **No.** |
 | **`POSTED_RESPONSE_RECORDED`** | Route the recorded response to a docs-only **response-intake verification gate** (Phase 48E taxonomy; Phase 48J §6); classify before any further step. No lane opens in this phase. | **No.** |
@@ -420,10 +467,13 @@ evidence.
 
 **Locally provable (authoritative for this repo):**
 
-1. **No working-tree change records a post or a response.** The working tree is clean apart from this
-   checkpoint once written: `git status --porcelain=v1 --untracked-files=all` shows no other
-   untracked or modified file, so no Straylight-side document records that a template was posted or
-   that an owner responded.
+1. **No working-tree change records a post or a response.** On this corrective branch,
+   `git status --porcelain=v1 --untracked-files=all` shows exactly **one tracked modified Phase 48K
+   file** (this checkpoint document) and **one untracked, out-of-scope Phase 48L draft**
+   (`docs/ADR-022E-SIBLING-GATE-9-10-OWNER-RESPONSE-WAIT-CONTINUATION-NEXT-CHECKPOINT.md`), with
+   **nothing staged**. Neither file records that a template was posted or that an owner responded:
+   this checkpoint document posts nothing, and the untracked Phase 48L draft is not staged, not
+   committed, and out of scope here. No Straylight-side document records a post or an owner response.
 2. **Phase 48J is the latest corridor artifact.** The most recent corridor commit is Phase 48J
    (`docs: add phase 48j posting execution tracker gate (#78)`); no later posting-record or
    owner-response artifact precedes this checkpoint. Phase 48J recorded `NO_POST_RECORDED` /
@@ -479,35 +529,53 @@ records:**
 
 ## 9. Next-lane selection
 
-> **Selected next lane: `Phase 48L — owner-response wait continuation / next checkpoint`, in
-> `loa-straylight`, docs/decision-only.**
+> **Corrected.** See the **Correction / posture clarification** block near the top of this document,
+> which governs over this section where they conflict. This section is amended to match it.
 
-Because the result is `NO_POST_RECORDED` / `NO_RECORDED_RESPONSE` (§8), no new post or response
-evidence exists, and Phase 48I already documented the exact manual posting procedure (Phase 48I §6),
-the safest next action is to **continue the held state** — another docs-only checkpoint that holds
-the state, re-checks for a posting record or a recorded owner response, and re-surfaces the
-outstanding request to the human / code-owner — without itself posting anything, opening a lane,
-binding a sibling, or treating any record as owner acceptance. This stays on the `loa-straylight`
+> **Selected current posture: `BLOCKED_FOR_HUMAN_ROUTING`** (equivalently: *human-routing required /
+> no-post hold gate*), in `loa-straylight`, docs/decision-only. **No lane opens here; this phase
+> performs no post; the checkpoint loop stops until new post evidence or owner-response evidence
+> appears.**
+
+> **Original selection (now withdrawn):** the original Phase 48K publication selected "Phase 48L —
+> owner-response wait continuation / next checkpoint" as the strong-default next lane. That framing is
+> **corrected here.** Because the result is `NO_POST_RECORDED` (§8), there is nothing for an owner to
+> respond to, so an owner-response wait is **premature**. Owner-response wait first becomes valid only
+> once the state reaches at least `POSTED_NO_RESPONSE` (§7). The withdrawn "wait continuation" lane is
+> retained in the table below only as a **rejected** candidate, for traceability.
+
+Because the result is `NO_POST_RECORDED` / `NO_RECORDED_RESPONSE` (§8), no post or response evidence
+exists, and Phase 48I already documented the exact manual posting procedure (Phase 48I §6), the
+safest posture is **`BLOCKED_FOR_HUMAN_ROUTING`**: hold the state, **stop the checkpoint loop** (do
+not spawn another owner-response wait continuation), and surface the outstanding request to the human
+/ code-owner. The next *actual* step is **outside this docs-only phase**: a human / operator either
+(a) manually posts the already-approved Phase 48D / 48F owner-response request artifact under the
+Phase 48H / 48I controls — after which `POSTED_NO_RESPONSE` may be tracked and an owner-response wait
+first becomes valid — or (b) leaves the corridor held. This phase itself posts nothing, opens no
+lane, binds no sibling, and treats no record as owner acceptance; it stays on the `loa-straylight`
 decision-frame side, keeps the no-host default intact, and routes any future recorded response
 through the existing Phase 48E / 48J intake machinery via a separate gate.
 
-Five candidate next lanes were considered:
+Candidate next lanes / postures considered:
 
-| Candidate next lane | Selected? | Reason |
+| Candidate next lane / posture | Selected? | Reason |
 |---------------------|-----------|--------|
-| **Phase 48L: owner-response wait continuation / next checkpoint in `loa-straylight`, docs-only** — hold at `NO_POST_RECORDED` / `NO_RECORDED_RESPONSE`, re-check for a posting record or a recorded response, and re-surface the outstanding request. | **Yes (strong default).** | The result is `NO_POST_RECORDED` / `NO_RECORDED_RESPONSE` (§8), no new post and no response evidence exists, and the §7 rule for that state is precisely a docs-only wait / next checkpoint. It binds nothing, opens no lane, posts nothing, keeps the no-host default intact, and is the natural successor to a checkpoint that re-checked and found nothing new. |
-| Phase 48L: **manual posting execution handoff packet in `loa-straylight`, docs-only** — restate the exact copy/paste instructions a human / operator would follow outside the repo workflow. | **Held in reserve.** | Appropriate only if a human / operator still wants exact copy/paste posting material *outside* the repo workflow that Phase 48I has not already supplied. Phase 48I §6 already documents the full operator procedure, so a fresh handoff is largely redundant now; it is recorded so a human can choose it if the existing instructions prove insufficient. It is subsumed as the wait / checkpoint's "manual-post-decision continuation" branch (§7). |
-| Phase 48L: **posting-status update intake in `loa-straylight`, docs-only** — intake a concrete posting record. | **No (precondition unmet).** | Requires concrete post evidence to appear (a Phase 48J §5 posting record under the §7 evidence requirements). No post is evidenced (§8); an update intake is premature. Recorded so a human can choose it if concrete post evidence later appears. |
+| **`BLOCKED_FOR_HUMAN_ROUTING` — held no-post posture in `loa-straylight`, docs-only** — hold at `NO_POST_RECORDED` / `NO_RECORDED_RESPONSE`, stop the checkpoint loop, and surface the outstanding request to the human / code-owner. The next actual step (manual post under Phase 48H / 48I controls, or remain held) is a human / operator decision *outside* this docs-only phase. | **Yes (current posture).** | The result is `NO_POST_RECORDED` / `NO_RECORDED_RESPONSE` (§8) and the §7 rule for that state is precisely a held human-routing posture. With no post recorded there is nothing for an owner to respond to, so the loop stops rather than spawning a premature owner-response wait. It binds nothing, opens no lane, posts nothing, and keeps the no-host default intact. |
+| ~~Phase 48L: **owner-response wait continuation / next checkpoint**~~ — re-check and re-surface, holding for an owner response. | **No (withdrawn — precondition unmet; was the original strong default).** | **Premature.** Owner-response wait requires that a post first exist; with `NO_POST_RECORDED`, no owner can be expected to respond to a request that has not been posted or recorded as routed. This lane becomes valid only once the state is at least `POSTED_NO_RESPONSE` (§7). The original §9 selection of this lane is **withdrawn** in favor of `BLOCKED_FOR_HUMAN_ROUTING`. Retained here for traceability only. |
+| Phase 48L: **manual posting execution handoff packet in `loa-straylight`, docs-only** — restate the exact copy/paste instructions a human / operator would follow outside the repo workflow. | **Held in reserve (human-routing branch).** | Appropriate only if a human / operator still wants exact copy/paste posting material *outside* the repo workflow that Phase 48I has not already supplied. Phase 48I §6 already documents the full operator procedure, so a fresh handoff is largely redundant; it is recorded so a human can choose it under the `BLOCKED_FOR_HUMAN_ROUTING` posture if the existing instructions prove insufficient. The actual post, if any, remains a human / operator act outside this phase. |
+| Phase 48L: **posting-status update intake in `loa-straylight`, docs-only** — intake a concrete posting record. | **No (precondition unmet).** | Requires concrete post evidence to appear (a Phase 48J §5 posting record under the §7 evidence requirements). No post is evidenced (§8); an update intake is premature. Recorded so a human can choose it if concrete post evidence later appears, after which `POSTED_NO_RESPONSE` may be tracked. |
 | Phase 48L: **response-intake verification gate in `loa-straylight`, docs-only** — verify and classify a recorded owner response. | **No (precondition unmet).** | Requires concrete owner-response evidence to appear (a response recorded by the owner in the owner's repo under teammate review, or an accepted cross-repo decision). No owner response is recorded (§8); verification is premature. Recorded so a human can choose it if concrete owner-response evidence later appears. |
 | Phase 48L: **#9 / #10 evidence-lane opening authorization gate**. | **No (precondition unmet; explicitly refused).** | An evidence lane opens only on a **recorded `ACCEPT_RECORDED`** that is **later verified by a separate intake gate**, as a separate PR in the owner's repo under teammate review. No such record exists (§8). Opening or even authorizing a lane now would skip the §4 ordering. **Strongly refused unless a verified ACCEPT exists; it does not.** Not selected. |
 
-**Why the owner-response wait continuation / next checkpoint is safest.** It is the only lane whose
-precondition is fully met: the result is `NO_POST_RECORDED` / `NO_RECORDED_RESPONSE` (§8), no new
-post or response evidence exists, the posting procedure is already documented (Phase 48I §6), and the
-outstanding docs-side question is *how to keep watching and re-checking safely*. Documenting that
-continuation is docs-only, binds nothing, opens no lane, posts nothing, and keeps the no-host default
-intact. The manual posting execution handoff is held in reserve (subsumed as the checkpoint's
-manual-post-decision continuation branch); the posting-status update intake and the response-intake
+**Why `BLOCKED_FOR_HUMAN_ROUTING` is safest.** It is the only posture whose precondition is fully
+met: the result is `NO_POST_RECORDED` / `NO_RECORDED_RESPONSE` (§8), no post or response evidence
+exists, the posting procedure is already documented (Phase 48I §6), and — critically — there is
+nothing for an owner to respond to until a post exists, so the outstanding docs-side reality is *the
+corridor is blocked pending a human / operator routing decision made outside this phase*. Holding at
+`BLOCKED_FOR_HUMAN_ROUTING` is docs-only, binds nothing, opens no lane, posts nothing, and keeps the
+no-host default intact. The owner-response wait continuation is **withdrawn as premature**; the
+manual posting execution handoff is held in reserve as the human-routing branch (the actual post, if
+any, occurs outside this phase); the posting-status update intake and the response-intake
 verification gate are each conditioned on concrete evidence that does not exist; the evidence-lane
 opening authorization gate is conditioned on a verified `ACCEPT_RECORDED` that does not exist and is
 explicitly **refused**.
@@ -516,16 +584,16 @@ explicitly **refused**.
 
 | Lane | Likely repo | Owns | Status |
 |------|-------------|------|--------|
-| Phase 48L owner-response wait continuation / next checkpoint | `loa-straylight` | The posting-status / owner-response watch frame; the checkpoint; the no-host default; the decision frame | Recommended; not yet opened |
+| `BLOCKED_FOR_HUMAN_ROUTING` held no-post posture (current) | `loa-straylight` | The posting-status / owner-response watch frame; the held posture; the no-host default; the decision frame | Current posture; loop stopped pending human / operator routing decision outside this phase |
 | Gate #9 runtime evidence lane | `loa-finn` (candidate) | Runtime / enforcement placement (#9) | HELD; opens only on recorded owner ACCEPT (E8), later verified by a separate gate |
 | Gate #10 boundary evidence lane | `loa-dixie` (candidate) | Route-side ingress / control-plane boundary (#10) | HELD (broad); opens only on recorded owner ACCEPT (E8), later verified by a separate gate |
 | Substrate-schema dependency (if implicated) | `loa-hounfour` (candidate) | Substrate schema only — never Straylight semantics | Out of scope here; route only if evidence implicates it |
 
 **PR title format (future).** Any follow-on PR title **must include the phase label**, e.g.:
 
-- `Phase 48L: owner-response wait continuation / next checkpoint`
-- `Phase 48L: manual posting execution handoff packet` *(only if a human / operator still wants copy/paste posting material outside repo workflow)*
-- `Phase 48L: posting-status update intake` *(only if concrete post evidence appears)*
+- `Phase 48L: manual posting execution handoff packet` *(only if a human / operator still wants copy/paste posting material outside repo workflow; the actual post remains a human / operator act outside the repo)*
+- `Phase 48L: posting-status update intake` *(only if concrete post evidence appears; then `POSTED_NO_RESPONSE` may be tracked)*
+- `Phase 48L: owner-response wait / intake checkpoint` *(only once the state is at least `POSTED_NO_RESPONSE` — i.e. a post exists; premature while `NO_POST_RECORDED`)*
 - `Phase 48L: response-intake verification gate` *(only if concrete owner-response evidence appears)*
 - `Phase 48L: evidence-lane opening authorization gate` *(only if a verified recorded ACCEPT exists)*
 
@@ -605,10 +673,12 @@ Additionally, this checkpoint does **not**:
 
 > **No production-readiness claim.** Re-checking the posting / response status, holding it at
 > `NO_POST_RECORDED` / `NO_RECORDED_RESPONSE`, recording the safe interpretation and the routing rule
-> for each state, and selecting a docs-only owner-response wait continuation / next checkpoint next
-> lane clarifies *what the status still is (nothing yet), how a future record must be classified, and
-> where the corridor safely goes next*; it does **not** clear the independent production gates and it
-> records **no** acceptance. Gate #8 stays OPEN, gates #9 / #10 stay HELD, gate #11 (Freeside,
+> for each state, and selecting a docs-only **`BLOCKED_FOR_HUMAN_ROUTING`** held no-post posture (the
+> owner-response wait continuation having been withdrawn as premature — see the Correction / posture
+> clarification block and §9) clarifies *what the status still is (nothing yet), how a future record
+> must be classified, and where the corridor safely goes next (a human / operator routing decision
+> outside this phase)*; it does **not** clear the independent production gates and it records **no**
+> acceptance. Gate #8 stays OPEN, gates #9 / #10 stay HELD, gate #11 (Freeside,
 > `ADR-022E:60`) and gate #12 (new network surface, `ADR-022E:61`) stay HELD, and the
 > threat-model-widening discipline (gate #20, `ADR-022E:69`) is untouched.
 
@@ -619,9 +689,14 @@ Additionally, this checkpoint does **not**:
 An independent auditor should be able to confirm **every** line below by inspection of this checkpoint
 and the cited `loa-straylight` files. Each is a verifiable claim:
 
-- [ ] **Single-file change.** The branch adds exactly one new file,
-      `docs/ADR-022E-SIBLING-GATE-9-10-OWNER-RESPONSE-WAIT-POSTING-STATUS-CHECKPOINT.md`, and changes
-      nothing else (verify via `git status --porcelain=v1 --untracked-files=all`).
+- [ ] **Single tracked-file change.** This corrective branch modifies **exactly the existing tracked
+      Phase 48K checkpoint file**,
+      `docs/ADR-022E-SIBLING-GATE-9-10-OWNER-RESPONSE-WAIT-POSTING-STATUS-CHECKPOINT.md`; it does
+      **not** add a new in-scope file, and it does **not** stage, commit, or include the untracked,
+      out-of-scope Phase 48L draft
+      (`docs/ADR-022E-SIBLING-GATE-9-10-OWNER-RESPONSE-WAIT-CONTINUATION-NEXT-CHECKPOINT.md`). Verify
+      via `git status --porcelain=v1 --untracked-files=all`: exactly one tracked modified Phase 48K
+      file, one untracked out-of-scope Phase 48L draft, nothing staged.
 - [ ] **No forbidden paths.** No change under `src/`, `tests/`, `scripts/`, `fixtures/`, `dist/`,
       `dist-types/`, `package.json`, `package-lock.json`, `.github/`, `.claude/`, `.loa/`,
       `grimoires/`, or any sibling repo.
@@ -652,7 +727,9 @@ and the cited `loa-straylight` files. Each is a verifiable claim:
       acceptance, and evidence-lane opening, with the non-collapsing ordering rule and the statement
       that no lane opens until a recorded ACCEPT is later verified by a separate gate.
 - [ ] **Fail-closed re-check method present.** §5 re-checks using only the evidence available now
-      (clean working tree; Phase 48J as latest artifact; read-only PR #78 / PR #77 / issue #76
+      (§5 uses current scope evidence rather than clean-working-tree evidence: one tracked modified
+      Phase 48K file, one untracked out-of-scope Phase 48L draft, nothing staged; Phase 48J as latest
+      artifact; read-only PR #78 / PR #77 / issue #76
       observation), keeps `NO_POST_RECORDED` if no post evidence exists and `NO_RECORDED_RESPONSE` if
       no owner response exists, classifies an unsafe / unverifiable claim fail-closed, and invents no
       post / target / URL / owner / response / acceptance / silence-based status.
@@ -661,7 +738,8 @@ and the cited `loa-straylight` files. Each is a verifiable claim:
       `NO_POST_RECORDED` / `NO_RECORDED_RESPONSE` and conditional, not-live rows for a later posting
       record or recorded response, all fail-closed.
 - [ ] **Routing rules present.** §7 routes every state: `NO_POST_RECORDED` + `NO_RECORDED_RESPONSE` →
-      wait / next checkpoint or manual posting handoff (not evidence-lane); `POST_HELD` → continue
+      `BLOCKED_FOR_HUMAN_ROUTING` held no-post posture — stop the loop, owner-response wait premature
+      (manual posting handoff held in reserve; not evidence-lane); `POST_HELD` → continue
       held / re-evaluate postability; `POSTED_NO_RESPONSE` → owner-response wait/intake checkpoint;
       `POSTED_RESPONSE_RECORDED` → response-intake verification gate (no lane in this phase);
       `ACCEPT_RECORDED` → future separate evidence-lane opening authorization gate only after separate
@@ -670,7 +748,9 @@ and the cited `loa-straylight` files. Each is a verifiable claim:
       `NEEDS_MORE_EVIDENCE_RECORDED` → evidence-prep docs (not production); unsafe/conflicting → fail
       closed.
 - [ ] **Current result recorded with evidence.** §8 records `NO_POST_RECORDED` /
-      `NO_RECORDED_RESPONSE`, cites the clean working tree, Phase 48J as the latest corridor artifact,
+      `NO_RECORDED_RESPONSE`, cites current corrective-branch scope evidence, not a clean working
+      tree: one tracked modified Phase 48K file, one untracked out-of-scope Phase 48L draft, nothing
+      staged; Phase 48J as the latest corridor artifact,
       the absence of any Straylight-side post / owner response, and the read-only PR #78 / PR #77 /
       issue #76 observation that they concern corridor docs (not a post or a response).
 - [ ] **No state opens a lane here / changes gate #8 / closes D.1 / starts D.2.** §3, §4, §5, §6, §7,
@@ -683,11 +763,18 @@ and the cited `loa-straylight` files. Each is a verifiable claim:
       inside a negation / non-authorization / conditional / state-definition.
 - [ ] **No GitHub posting performed.** No GitHub issue, PR, or comment was created; no GitHub API for
       posting was called; no template was posted; no destination was recorded (§5, §8, §10).
-- [ ] **Next-action lane named with phase label + repo routing.** §9 selects Phase 48L owner-response
-      wait continuation / next checkpoint (`loa-straylight`, docs/decision-only) as the strong
-      default, holds the manual posting execution handoff packet in reserve, conditions the
-      posting-status update intake and the response-intake verification gate on evidence that does not
-      yet exist, and refuses the evidence-lane opening authorization gate (no verified ACCEPT).
+- [ ] **Posture corrected; next step is human routing outside this phase.** The Correction / posture
+      clarification block and §9 select **`BLOCKED_FOR_HUMAN_ROUTING`** (held no-post posture) as the
+      current posture, **withdraw** the original "owner-response wait continuation / next checkpoint"
+      selection as premature (owner-response wait requires at least `POSTED_NO_RESPONSE`; `NO_POST_RECORDED`
+      means there is nothing for an owner to respond to), stop the checkpoint loop until new post or
+      owner-response evidence appears, hold the manual posting execution handoff packet in reserve as the
+      human-routing branch (the actual post being a human / operator act outside this phase), condition the
+      posting-status update intake and the response-intake verification gate on evidence that does not yet
+      exist, and refuse the evidence-lane opening authorization gate (no verified ACCEPT).
+- [ ] **`NO_POST_RECORDED` routes to `BLOCKED_FOR_HUMAN_ROUTING`, not owner-response wait.** §6, §7,
+      §9, and the Correction block all route `NO_POST_RECORDED` / `NO_RECORDED_RESPONSE` to a held
+      human-routing posture and explicitly mark owner-response wait as premature until a post exists.
 - [ ] **No secret / connection / host leak.** No connection string, port, credential, database-engine
       product name, or container/orchestration detail appears (the words "private data" / "secrets"
       appear only inside the §5 fail-closed reference to the Phase 48J prohibition and this no-leak
@@ -716,9 +803,9 @@ publication.
 | REQ-48K-7 | Checkpoint table (posting status; owner-response status; evidence source; safe interpretation; what remains blocked; allowed next route) | §6 | ✅ (7 columns — a condition label + the 6 required; 3 rows) |
 | REQ-48K-8 | Routing rules from checkpoint (all `*_RECORDED` + current + unsafe/conflicting) | §7 | ✅ (10 rules) |
 | REQ-48K-9 | Current Phase 48K outcome (`NO_POST_RECORDED` / `NO_RECORDED_RESPONSE`; no lane opens; all blockers held) | §8 | ✅ |
-| REQ-48K-10 | Select next lane (Phase 48L owner-response wait continuation / next checkpoint) with routing + alternatives | §9 | ✅ (5 considered) |
+| REQ-48K-10 | Select next posture (`BLOCKED_FOR_HUMAN_ROUTING` held no-post posture; owner-response wait continuation withdrawn as premature) with routing + alternatives | §9 + Correction block | ✅ (6 candidates considered, incl. withdrawn wait continuation) |
 | REQ-48K-11 | Explicit non-authorizations | §10 | ✅ (27 numbered items) |
-| REQ-48K-12 | Independent-auditor checklist | §11 | ✅ (21 lines) |
+| REQ-48K-12 | Independent-auditor checklist | §11 | ✅ (22 lines) |
 | REQ-48K-13 | Coverage ledger (only if counts match) | §12 (this table) | ✅ |
 
 **Count verification (exact):**
@@ -741,12 +828,13 @@ publication.
 - Routing rules in §7: **10** (`NO_POST_RECORDED` + `NO_RECORDED_RESPONSE`; `POST_HELD`;
   `POSTED_NO_RESPONSE`; `POSTED_RESPONSE_RECORDED`; `ACCEPT_RECORDED`; `REJECT_RECORDED`;
   `DEFER_RECORDED`; `NEEDS_SPLIT_RECORDED`; `NEEDS_MORE_EVIDENCE_RECORDED`; unsafe/conflicting).
-- Next-lane candidates considered in §9: **5** (owner-response wait continuation / next checkpoint
-  [default]; manual posting execution handoff packet [reserve]; posting-status update intake
-  [precondition unmet]; response-intake verification gate [precondition unmet]; evidence-lane opening
-  authorization gate [refused]).
+- Next-lane / posture candidates considered in §9: **6** (`BLOCKED_FOR_HUMAN_ROUTING` held no-post
+  posture [selected current posture]; owner-response wait continuation / next checkpoint [withdrawn
+  as premature — the original strong default, now rejected]; manual posting execution handoff packet
+  [reserve / human-routing branch]; posting-status update intake [precondition unmet]; response-intake
+  verification gate [precondition unmet]; evidence-lane opening authorization gate [refused]).
 - Non-authorization numbered items in §10: **27**.
-- Auditor checklist lines in §11: **21**.
+- Auditor checklist lines in §11: **22**.
 
 > The ledger is included **because** these counts were verified to match exactly. If any count had
 > differed, this ledger would have been omitted rather than published with a mismatch.
@@ -823,12 +911,18 @@ publication.
 
 ---
 
-*End of Phase 48K checkpoint. Docs/decision-only owner-response wait / posting-status checkpoint.
-This checkpoint RE-CHECKS the posting / response status on the evidence available now; RECORDS the
-result as `NO_POST_RECORDED` (no post is evidenced) and `NO_RECORDED_RESPONSE` (no owner response is
-recorded); DEFINES how a future posting record or recorded owner response would re-classify (via the
-Phase 48J / 48E machinery, in a separate gate); and SELECTS a docs-only Phase 48L owner-response wait
-continuation / next checkpoint as the next lane. It POSTS nothing, OPENS no #9 / #10 evidence lane,
+*End of Phase 48K checkpoint (with Correction / posture clarification). Docs/decision-only
+owner-response wait / posting-status checkpoint. This checkpoint RE-CHECKS the posting / response
+status on the evidence available now; RECORDS the result as `NO_POST_RECORDED` (no post is evidenced)
+and `NO_RECORDED_RESPONSE` (no owner response is recorded); DEFINES how a future posting record or
+recorded owner response would re-classify (via the Phase 48J / 48E machinery, in a separate gate);
+and — as corrected — SELECTS the docs-only **`BLOCKED_FOR_HUMAN_ROUTING`** held no-post posture as the
+current posture, WITHDRAWING the original owner-response wait continuation / next checkpoint selection
+as PREMATURE (owner-response wait requires at least `POSTED_NO_RESPONSE`; with `NO_POST_RECORDED`
+there is nothing for an owner to respond to), STOPPING the checkpoint loop until new post evidence or
+owner-response evidence appears, and leaving the next actual step (a human / operator posting under
+Phase 48H / 48I controls, or remaining held) OUTSIDE this docs-only phase. It POSTS nothing, OPENS no
+#9 / #10 evidence lane,
 INVENTS no post / target / URL / owner response / acceptance, CREATES no GitHub issue / PR / comment,
 CALLS no GitHub API, AUTHORIZES no automation or bot to post, BINDS no sibling repo, RECORDS / ASSUMES
 no acceptance, treats no silence / postability / posting / instruction / template /
