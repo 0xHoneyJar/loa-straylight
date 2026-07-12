@@ -1,11 +1,21 @@
 # ADR-049 — Six-MVP product roadmap, risk-tiered gates, and Straylight decision authority
 
-> **Status**: Accepted — operator decision, `operator:eileen`, 2026-07-10.
+> **Decision provenance**: Approved by `operator:eileen` on 2026-07-10.
+> **Repository status**: Proposed — effective as accepted governance upon
+> operator-authorized merge. These are two distinct truths, both recorded:
+> the underlying operator decisions were made and approved on 2026-07-10 and
+> are not reopened by this status line; the document becomes durable, citable
+> repository governance only when the operator authorizes its merge. No
+> co-signature by Claude, Codex, Flatline, Bridgebuilder, ChatGPT, or any
+> repository maintainer is required or implied for either truth.
 > **Provenance**: Direct operator directive issued 2026-07-10 after an audited
 > reconstruction of the full cross-repo phase record (loa-straylight PRs #1–#114,
 > loa-hounfour #70/#105/#116, loa-dixie #92→#255 lane, loa-finn #159/#171/#172/#194–#196/#258,
-> loa-freeside #203, freeside-characters Phases 33–42). This ADR records operator
-> decisions; it was drafted by Claude under the drafting role defined in §7.
+> loa-freeside #203, freeside-characters Phases 33–42). The Estate Atlas
+> produced during that reconstruction is preserved as forensic project
+> evidence only; it is not authority and is not a co-governing source. This
+> ADR records operator decisions; it was drafted by Claude under the drafting
+> role defined in §7.
 > **Supersedes / narrows**: nothing in ADR-022E is discharged by this document.
 > It gives the standing gates the canonical roadmap frame they previously cited
 > only as Dixie-side Phase-47 evidence (ADR-048B §"six-MVP roadmap framing").
@@ -248,6 +258,35 @@ decision; complete audit record. The full corridor remains appropriate here
 because a bad semantic or authority decision can corrupt every estate using
 it.
 
+### Tier-classification authority
+
+Who proposes, challenges, audits, and decides a ceremony tier:
+
+- **ChatGPT** proposes the work classification and ceremony tier during
+  workflow planning.
+- **Claude** may report evidence that a declared classification or tier is
+  incorrect.
+- **Flatline, Bridgebuilder, or Codex** may challenge or audit a declared
+  classification within their assigned roles.
+- **`operator:eileen` is the final authority for tier classification**,
+  including contested classifications.
+- An implementer, drafter, auditor, maintainer, or reviewer **cannot
+  unilaterally lower** the ceremony tier.
+- A reviewer **may identify that a higher tier is required**.
+- The selected tier and its rationale are recorded in the task packet,
+  authority artifact, or PR where material.
+- Tiering changes review depth and evidence requirements; it does not create
+  additional Straylight authorities.
+
+Classification clarifications:
+
+- Descriptive blocker bookkeeping does not automatically elevate an artifact's
+  tier when it changes no authority, gate disposition, contract, or capability
+  authorization.
+- A docs-only artifact that authorizes, accepts, rejects, discharges,
+  delegates, or changes a gate is **not** Tier 0 merely because it is
+  Markdown.
+
 ### One signer across all tiers
 
 Tiering changes the amount of evidence and ceremony. It does not create new
@@ -269,6 +308,18 @@ That is intentional and exclusive. Ownership or maintenance of other Loa
 repositories does not confer Straylight product authority, semantic
 authority, or acceptance authority. Repo ownership and Straylight authority
 are different things.
+
+`operator:eileen` is the sole human Loa-Straylight product authority, roadmap
+authority, semantic authority, architectural authority, acceptance authority,
+gate-disposition authority, and MVP-completion authority.
+
+Runtime requirements for different competent signers across actor-estate
+transitions govern estate behavior. They do not imply multiple human product
+owners, architectural authorities, gate-disposition authorities, or
+acceptance authorities for the Loa-Straylight development project. The
+keyring plurality that Straylight doctrine requires is a runtime/product
+invariant of estates; it is not an instruction to multiply project
+decision-makers.
 
 The operator: defines the roadmap; interprets the doctrine; accepts or
 rejects evidence; authorizes cross-repo Straylight changes; selects hosts and
@@ -293,6 +344,8 @@ it revocable. **There is currently no standing delegation.**
 Other participants have narrower roles, and none of them converts evidence
 into acceptance:
 
+- **ChatGPT** proposes work classifications and ceremony tiers during
+  workflow planning (§5).
 - **Claude** drafts and implements bounded work.
 - **Codex** independently audits.
 - **Flatline and Bridgebuilder** provide adversarial review.
