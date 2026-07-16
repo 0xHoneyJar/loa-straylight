@@ -49,6 +49,12 @@ export function evaluate(lane, policy, context = {}) {
   if (context.pr_state !== "open") {
     reasons.push(`PR state is ${context.pr_state ?? "unknown"}, not open (fail closed)`);
   }
+  // A draft PR is not ready to merge (documented draft policy). When the
+  // adapter reports draft state, a draft is ineligible; when it is unknown
+  // (undefined), fail closed the same way.
+  if (context.pr_draft !== false) {
+    reasons.push(`PR draft state is ${context.pr_draft ?? "unknown"}, not false (fail closed)`);
+  }
   if (typeof context.pr_base_ref !== "string") {
     reasons.push("PR base branch unavailable (fail closed)");
   } else if (context.pr_base_ref !== lane.base_branch) {

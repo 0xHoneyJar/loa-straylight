@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/0xHoneyJar/loa-straylight/.straylight/schemas/audit-v1.schema.json",
   "title": "Straylight Control Plane audit record (v1)",
-  "description": "Codex's independent audit verdict, bound to an exact head SHA and posted EXTERNALLY (PR comment / lane event) — never committed into the audited PR, because committing it changes the audited target (lesson of PR #116, ADR-050 §5.3). Executable validator: .straylight/lib/validate.mjs#validateAuditRecord.",
+  "description": "Codex's independent audit verdict, bound to an exact head SHA. CANONICAL LOCATION: a comment on the LANE ISSUE (the only stream the reducer/watchdog reconstruct from). It is never committed into the audited PR, because committing it changes the audited target (lesson of PR #116, ADR-050 §5.3). Executable validator: .straylight/lib/validate.mjs#validateAuditRecord.",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -59,13 +59,13 @@
     "validation_summary": { "type": "string" },
     "audit_committed_in_pr": {
       "const": false,
-      "description": "PR #116 lesson: an audit committed into the audited PR changes the audited target and invalidates itself. The validator rejects true."
+      "description": "AUDITOR ATTESTATION (self-reported), not a mechanical fact: the auditor asserts the audit was not committed into the audited PR (PR #116 lesson). The validator rejects a true attestation; the exact-SHA / live-head binding in the reducer is what mechanically defeats an audit that actually committed into the PR (its head SHA would no longer match). See ADR-050 §5.3."
     },
     "retryable": {
       "type": "boolean",
       "description": "Only meaningful with CANNOT_AUDIT: true routes back to ready-for-codex within the retry budget; otherwise blocked."
     },
-    "audit_comment_ref": { "type": "string", "description": "URL or id of the externally posted audit comment." },
+    "audit_comment_ref": { "type": "string", "description": "URL or id of the lane-issue comment carrying this audit record (the canonical location)." },
     "next_actor": { "enum": ["coordinator", "implementer", "auditor", "operator", "system", "none"] }
   }
 }

@@ -84,13 +84,18 @@
     },
     "lease": {
       "type": ["object", "null"],
-      "required": ["lane_id", "actor_role", "lease_id", "grant_sequence", "acquired_at", "expires_at", "expected_state"],
+      "required": ["lane_id", "actor_role", "lease_id", "holder_login", "grant_sequence", "acquired_at", "expires_at", "expected_state"],
       "properties": {
         "lane_id": { "type": "string", "pattern": "^lane-[a-z0-9][a-z0-9-]{1,62}$" },
         "actor_role": { "enum": ["implementer", "auditor"] },
         "lease_id": { "type": "string", "pattern": "^lease-[a-z0-9][a-z0-9-]{1,62}$" },
+        "holder_login": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(\\[bot\\])?$",
+          "description": "Authenticated GitHub login that acquired the lease. Completion/release/block/escalation must come from this same login."
+        },
         "grant_sequence": { "type": "integer", "minimum": 1 },
-        "acquired_at": { "type": "string", "format": "date-time" },
+        "acquired_at": { "type": "string", "format": "date-time", "description": "Trusted GitHub comment created_at at grant time, not the actor-supplied occurred_at." },
         "expires_at": { "type": "string", "format": "date-time" },
         "expected_state": { "type": "string" }
       }

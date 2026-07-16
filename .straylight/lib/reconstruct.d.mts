@@ -1,7 +1,7 @@
 // Type surface for tests/tooling. Runtime source of truth: reconstruct.mjs
 export interface ReconstructInput {
   issue_body: string;
-  comments: Array<{ id: number; user: string; body: string; created_at?: string }>;
+  comments: Array<{ id: number; user: string; body: string; created_at?: string; updated_at?: string }>;
   policy: Record<string, any>;
   context?: Record<string, any>;
 }

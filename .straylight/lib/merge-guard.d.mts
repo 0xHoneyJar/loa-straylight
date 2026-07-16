@@ -24,6 +24,8 @@ export declare function evaluate(
     checks?: MergeGuardChecks;
     /** Live PR state ("open" | "closed"); anything but "open" fails closed. */
     pr_state?: string;
+    /** Live PR draft flag; anything but false fails closed (draft not mergeable). */
+    pr_draft?: boolean;
     /** Live PR base branch; must equal lane.base_branch or fails closed (retarget). */
     pr_base_ref?: string;
   }

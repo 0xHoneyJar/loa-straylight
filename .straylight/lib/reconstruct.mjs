@@ -9,28 +9,35 @@
 //
 // input = {
 //   issue_body:  string,
-//   comments:    [{ id, user, body, created_at? }...]
+//   comments:    [{ id, user, body, created_at?, updated_at? }...]
 //                // user = AUTHENTICATED GitHub commenter login from the
-//                // API; created_at = GitHub-recorded post time. Both are
-//                // supplied by the adapter — never taken from the payload
-//                // itself.
+//                // API; created_at = GitHub-recorded post time; updated_at =
+//                // GitHub-recorded last-edit time. All supplied by the
+//                // adapter — never taken from the payload itself.
 //   policy:      parsed automation-policy.json
-//   context:     { now, pr_head_sha?, pr_heads? }
+//   context:     { now, pr_head_sha?, pr_metadata?, pr_heads? }
 // }
 //
 // Returns {
 //   ok, lane, dispositions: [{comment_id, status, refusal?, detail?}...],
-//   labels: [...], refusal?, detail?
+//   labels: [...], frozen, refusal?, detail?
 // }
 //
 // Idempotent by construction: same input → same output. Refused events
 // never advance the lane, so replaying an already-processed comment stream
 // converges to the same state.
+//
+// Referenced-artifact binding (R2/R4): an event may reference a task packet
+// or audit record only by an EARLIER comment (comment_id < event_comment_id)
+// — a later comment can never retroactively validate an earlier event. The
+// selected artifact is bound by its source author and a canonical content
+// digest, so editing the source comment breaks the binding.
 
 import { MARKERS, extractPayload, hasMarker } from "./markers.mjs";
 import { validateLane } from "./validate.mjs";
 import { reduce } from "./reducer.mjs";
 import { nextActorFor } from "./state-machine.mjs";
+import { payloadDigest } from "./canonical.mjs";
 
 export function reconstructLane(input) {
   const { issue_body, comments, policy, context = {} } = input ?? {};
@@ -68,35 +75,65 @@ export function reconstructLane(input) {
     };
   }
 
-  const dispositions = [];
   const ordered = [...(Array.isArray(comments) ? comments : [])].sort((a, b) => a.id - b.id);
-  // The transient live PR head (context.pr_head_sha) is authoritative ONLY at
-  // the live audit frontier — the newest event-bearing comment. It must NOT
-  // enter the replay of HISTORICAL events, or reconstruction stops being a
-  // pure function of durable content: a head move after a legitimate ACCEPT
-  // would re-judge the already-applied historical auditor.audit_completed and
-  // rewind the projection (ready-for-merge → codex-working), desyncing from
-  // the watchdog's replay-deterministic system.head_moved recovery. Historical
-  // events bind to their event-recorded head (lane.pr_head_sha); the live head
-  // only gates a freshly-arriving audit at the frontier.
-  const frontierCommentId = (() => {
-    for (let i = ordered.length - 1; i >= 0; i--) {
-      if (hasMarker(ordered[i].body, MARKERS.event)) return ordered[i].id;
-    }
-    return null;
-  })();
+
+  // The transient live PR metadata (context.pr_metadata / pr_head_sha) is
+  // authoritative ONLY at the live audit frontier: the comment carrying the
+  // LAST event that actually ADVANCED the lane. It must NOT enter the replay
+  // of HISTORICAL events, or reconstruction stops being a pure function of
+  // durable content (a head move after a legitimate ACCEPT would re-judge the
+  // already-applied historical audit and rewind the projection).
+  //
+  // The frontier is the last-APPLIED event's comment, found by a first
+  // metadata-free replay pass — NOT merely "the newest comment bearing an
+  // event marker". Otherwise a trailing junk/refused/foreign comment (even a
+  // stranger's wrong-lane event) would shift the frontier off a genuine
+  // just-arrived audit, silently downgrading its binding from live metadata
+  // to the recorded-head fallback. Two passes keep the frontier immune to
+  // trailing noise while staying deterministic.
+  const dryRun = replayStream(lane, ordered, replayPolicy, {}, null);
+  const frontierCommentId = dryRun.lastAppliedCommentId;
+
+  const live = replayStream(lane, ordered, replayPolicy, context, frontierCommentId);
+  return { ok: true, lane: live.lane, dispositions: live.dispositions, labels: deriveLabels(live.lane), frozen };
+}
+
+// Replay the ordered comment stream over `startLane`. When `frontierCommentId`
+// is non-null, the live context (pr_metadata / pr_head_sha) is passed through
+// ONLY for that comment; every other comment is replayed with those transient
+// signals stripped. Returns { lane, dispositions, lastAppliedCommentId }.
+function replayStream(startLane, ordered, replayPolicy, context, frontierCommentId) {
+  let lane = startLane;
+  const dispositions = [];
+  let lastAppliedCommentId = null;
   // The lane's CURRENT task packet, tracked as coordinator packet events are
-  // applied, so later implementer events validate against it without having
-  // to repeat the reference.
+  // applied, so later implementer events validate against it.
   let currentPacketCommentId = null;
-  // Every applied event's ID must be unique within the lane. The reducer's
-  // sequence gate already stops a duplicate event from applying twice, but
-  // it does NOT stop two DIFFERENT comments from reusing one event_id, which
-  // would make the append-only audit trail non-uniquely addressable.
+  // Applied event ids (uniqueness) and consumed lease ids (no reuse), R3/R4.
   const seenEventIds = new Set();
+  const usedLeaseIds = new Set();
 
   for (const comment of ordered) {
     if (!hasMarker(comment.body, MARKERS.event)) continue; // prose comment
+
+    // Comment-mutation posture (R5): the event record is append-oriented, but
+    // GitHub comments are editable/deletable. An EDITED protocol comment
+    // (updated_at strictly after created_at) is routed to operator-required
+    // rather than silently trusted — a v1 shadow-mode limitation, honestly
+    // enforced instead of asserted.
+    if (isEdited(comment)) {
+      dispositions.push({
+        comment_id: comment.id,
+        status: "refused",
+        refusal: "protocol-comment-edited",
+        detail: `comment edited after posting (created ${comment.created_at}, updated ${comment.updated_at})`,
+      });
+      if (lane.state !== "operator-required" && !isTerminalState(lane.state)) {
+        lane = toOperatorRequired(lane, `protocol-comment-edited: comment ${comment.id} was edited after posting`);
+      }
+      continue;
+    }
+
     const payload = extractPayload(comment.body, MARKERS.event);
     if (!payload.ok) {
       dispositions.push({ comment_id: comment.id, status: "refused", refusal: "event-unreadable", detail: payload.reason });
@@ -105,8 +142,7 @@ export function reconstructLane(input) {
     const event = payload.value;
 
     // Identity binding: the event's CLAIMED github_actor must equal the
-    // AUTHENTICATED commenter. An event pasted by someone else — even with
-    // a perfectly forged payload — dies here.
+    // AUTHENTICATED commenter. An event pasted by someone else dies here.
     if (typeof comment.user !== "string" || event.github_actor !== comment.user) {
       dispositions.push({
         comment_id: comment.id,
@@ -119,12 +155,9 @@ export function reconstructLane(input) {
 
     // Event-ID uniqueness: a reused evt-* id (checked AFTER identity binding
     // so a stranger's forged comment cannot burn a legitimate id) makes the
-    // durable record ambiguous — refuse the later occurrence. An id is
-    // "used" only once its event is APPLIED (added to seenEventIds after a
-    // successful reduce below), NOT when merely seen: a reducer-refused
-    // comment must not burn its id, or an allowlisted actor could pre-post a
-    // refused event carrying a future recovery event_id and permanently deny
-    // that recovery (event-id burn / denial-of-recovery).
+    // durable record ambiguous. An id is "used" only once its event is
+    // APPLIED (added below), NOT when merely seen — a reducer-refused comment
+    // must not burn its id (event-id burn / denial-of-recovery).
     if (typeof event.event_id === "string" && seenEventIds.has(event.event_id)) {
       dispositions.push({
         comment_id: comment.id,
@@ -135,29 +168,25 @@ export function reconstructLane(input) {
       continue;
     }
 
-    // Supporting payloads referenced by the event are extracted from the
-    // durable record as well (task packets / audits live in comments).
-    // Lease-expiry checks use the GitHub-recorded comment time so that a
-    // replay of history is deterministic (an event valid when posted stays
-    // valid; a late event stays refused).
     const ctx = { ...context };
     if (typeof comment.created_at === "string") {
       ctx.event_observed_at = comment.created_at;
     }
-    // Live head is authoritative at the frontier only (see above). For every
-    // earlier (historical) event, strip it so the reducer binds the audit to
-    // the deterministic event-recorded head instead.
+    // The authenticated comment author binds the lease holder + holder checks.
+    ctx.comment_author = typeof comment.user === "string" ? comment.user : null;
+    ctx.used_lease_ids = usedLeaseIds;
+    // Live PR authority applies at the frontier only. Every non-frontier
+    // event has the transient signals stripped so the reducer binds to the
+    // deterministic event-recorded head.
     if (comment.id !== frontierCommentId) {
       delete ctx.pr_head_sha;
+      delete ctx.pr_metadata;
     }
-    // Task-packet binding: an implementer must NOT be able to point the
-    // reducer at a packet it authored itself. Only a coordinator
-    // packet-posting event — whose comment is identity-bound to an
-    // allowlisted coordinator — may name a fresh packet comment; every other
-    // event uses the coordinator-approved packet tracked in
-    // currentPacketCommentId (set only from an APPLIED coordinator packet
-    // event below). An implementer's own refs.task_packet_comment_id is
-    // ignored, so substituting a wide-scope self-authored packet fails closed.
+    // Task-packet binding (R2): only a coordinator packet-posting event may
+    // NAME a packet comment, and only an EARLIER one. Every other event uses
+    // the coordinator-approved packet tracked in currentPacketCommentId. The
+    // packet is bound by source author + canonical digest, so editing the
+    // packet comment after it was referenced breaks the binding.
     const isCoordinatorPacketEvent =
       event.event_type === "coordinator.task_packet_posted" ||
       event.event_type === "coordinator.patch_packet_posted";
@@ -165,32 +194,51 @@ export function reconstructLane(input) {
       ? (event.refs?.task_packet_comment_id ?? null)
       : currentPacketCommentId;
     if (packetRef != null) {
-      const src = ordered.find((c) => c.id === packetRef);
-      const tp = src ? extractPayload(src.body, MARKERS.taskPacket) : { ok: false, reason: "task-packet-comment-not-found" };
-      if (tp.ok) ctx.task_packet = tp.value;
+      const bound = bindArtifact(ordered, packetRef, comment, MARKERS.taskPacket, {
+        // A coordinator packet event must reference an EARLIER comment authored
+        // by the SAME (coordinator) login that posts the packet event — mirror
+        // the audit path. Without this an implementer could pre-post its own
+        // wide-scope packet and a coordinator event merely naming it would
+        // bind it. For downstream (non-coordinator) events reusing the tracked
+        // currentPacketCommentId, the packet was already coordinator-authored
+        // when it was tracked, so no author re-check is needed.
+        requireEarlier: isCoordinatorPacketEvent,
+        requireSameAuthor: isCoordinatorPacketEvent,
+      });
+      if (bound.ok) {
+        ctx.task_packet = bound.value;
+        ctx.task_packet_digest = bound.digest;
+        ctx.task_packet_source = { comment_id: packetRef, author: bound.author };
+      } else {
+        ctx.task_packet_bind_error = bound.reason;
+      }
     }
-    // Audit binding: the referenced audit comment must be authored by the
-    // SAME authenticated actor that posts the audit_completed event (already
-    // identity-bound above and, in reduce, allowlist-checked as an auditor).
-    // Without this, any actor could post an audit payload and an auditor's
-    // completion event could bind to it. When authorship fails the audit
-    // record is left unset and the reducer refuses (audit-record-invalid).
+    // Audit binding (R4): the referenced audit comment must be an EARLIER
+    // comment authored by the SAME auditor posting the completion event,
+    // bound by canonical digest. A future/foreign/edited audit comment
+    // leaves audit_record unset → reducer refuses.
     if (event.refs?.audit_comment_id != null) {
-      const src = ordered.find((c) => c.id === event.refs.audit_comment_id);
-      const authored = src && typeof src.user === "string" && src.user === comment.user;
-      const ar = authored
-        ? extractPayload(src.body, MARKERS.audit)
-        : { ok: false, reason: "audit-comment-author-mismatch" };
-      if (ar.ok) ctx.audit_record = ar.value;
+      const bound = bindArtifact(ordered, event.refs.audit_comment_id, comment, MARKERS.audit, {
+        requireEarlier: true,
+        requireSameAuthor: true,
+      });
+      if (bound.ok) {
+        ctx.audit_record = bound.value;
+        ctx.audit_digest = bound.digest;
+        ctx.audit_source = { comment_id: event.refs.audit_comment_id, author: bound.author };
+      } else {
+        ctx.audit_bind_error = bound.reason;
+      }
     }
 
     const decision = reduce(lane, event, replayPolicy, ctx);
     if (decision.ok) {
       lane = decision.lane;
-      // Burn the event_id only now that the event has actually advanced the
-      // lane — a refused event leaves its id available for the legitimate
-      // event that will carry it.
+      lastAppliedCommentId = comment.id;
       if (typeof event.event_id === "string") seenEventIds.add(event.event_id);
+      if (event.event_type.endsWith("lease_acquired") && typeof event.lease_id === "string") {
+        usedLeaseIds.add(event.lease_id);
+      }
       if (
         (event.event_type === "coordinator.task_packet_posted" ||
           event.event_type === "coordinator.patch_packet_posted") &&
@@ -212,7 +260,54 @@ export function reconstructLane(input) {
     }
   }
 
-  return { ok: true, lane, dispositions, labels: deriveLabels(lane), frozen };
+  return { lane, dispositions, lastAppliedCommentId };
+}
+
+// A protocol comment is "edited" when the adapter reports an updated_at
+// strictly after created_at. Both are GitHub-recorded; a missing updated_at
+// (older adapter) is treated as not-edited.
+function isEdited(comment) {
+  const c = comment?.created_at;
+  const u = comment?.updated_at;
+  if (typeof c !== "string" || typeof u !== "string") return false;
+  return Date.parse(u) > Date.parse(c);
+}
+
+function isTerminalState(state) {
+  return state === "merged" || state === "superseded";
+}
+
+function toOperatorRequired(lane, reason) {
+  return {
+    ...lane,
+    state: "operator-required",
+    next_actor: nextActorFor("operator-required"),
+    operator_required_reason: reason,
+  };
+}
+
+// Bind a referenced artifact (task packet / audit record) from the durable
+// stream, enforcing: EARLIER-than-referencing-comment (no forward reference),
+// optional same-author-as-referencing-comment, and returning a canonical
+// content digest so a later edit of the source comment breaks the binding.
+// Returns { ok, value, digest, author } or { ok: false, reason }.
+function bindArtifact(ordered, refId, referencingComment, marker, { requireEarlier = false, requireSameAuthor = false } = {}) {
+  const src = ordered.find((c) => c.id === refId);
+  if (!src) return { ok: false, reason: "artifact-comment-not-found" };
+  if (requireEarlier && !(src.id < referencingComment.id)) {
+    return { ok: false, reason: "artifact-forward-reference" };
+  }
+  if (isEdited(src)) {
+    return { ok: false, reason: "artifact-comment-edited" };
+  }
+  if (requireSameAuthor) {
+    if (typeof src.user !== "string" || src.user !== referencingComment.user) {
+      return { ok: false, reason: "artifact-author-mismatch" };
+    }
+  }
+  const parsed = extractPayload(src.body, marker);
+  if (!parsed.ok) return { ok: false, reason: parsed.reason };
+  return { ok: true, value: parsed.value, digest: payloadDigest(parsed.value), author: src.user };
 }
 
 // Labels are DERIVED state (ADR-050 §1.1) — reconstruct them, never trust

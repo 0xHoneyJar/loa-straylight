@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/0xHoneyJar/loa-straylight/.straylight/schemas/event-v1.schema.json",
   "title": "Straylight Control Plane event record (v1)",
-  "description": "One append-only lane event, embedded in a GitHub comment after the marker `<!-- straylight:event:v1 -->`. Events are never edited or deleted; corrections are new events. Executable validator: .straylight/lib/validate.mjs#validateEvent.",
+  "description": "One append-oriented lane event, embedded in a GitHub comment after the marker `<!-- straylight:event:v1 -->`. Protocol convention: events are appended, not edited or deleted; corrections are new events. GitHub comments are technically editable/deletable, so reconstruction routes any comment whose updated_at is after created_at to operator-required (a documented v1 shadow-mode limitation, not a cryptographic guarantee). Executable validator: .straylight/lib/validate.mjs#validateEvent.",
   "type": "object",
   "additionalProperties": true,
   "required": [

@@ -28,6 +28,8 @@ import {
   validateLease,
   validateTaskPacket,
   validateAuditRecord,
+  validatePrMetadata,
+  parseIsoInstant,
 } from "./validate.mjs";
 
 function refuse(lane, code, detail, escalate = false) {
@@ -58,7 +60,16 @@ function actorAllowed(policy, role, githubActor) {
 //                       checks so replaying history is deterministic: an
 //                       event valid when posted stays valid on every replay,
 //                       and a late event stays refused. Falls back to `now`.
-//   pr_head_sha         current head SHA of the lane PR, if known
+//   pr_head_sha         current head SHA of the lane PR, if known (legacy;
+//                       superseded by pr_metadata for authoritative binding)
+//   pr_metadata         normalized live PR object (repository, pr_number,
+//                       state, draft, merged, base_branch, base_sha,
+//                       head_branch, head_sha, fetch_ok) — AUTHORITATIVE at
+//                       the audit frontier. Missing/partial → fail closed.
+//   comment_author      authenticated GitHub login of the event's comment,
+//                       used to bind a lease to its real holder (R3)
+//   used_lease_ids      Set/array of lease IDs already consumed earlier in
+//                       lane history (reused IDs are refused, R3)
 //   task_packet         parsed task-packet payload backing an implementer event
 //   audit_record        parsed audit payload backing auditor.audit_completed
 export function reduce(lane, event, policy, context = {}) {
@@ -186,11 +197,32 @@ export function reduce(lane, event, policy, context = {}) {
           `packet base ${packet.base_sha} != lane base ${lane.base_sha}`,
         );
       }
+      // Every packet field that names a target must correspond with the lane
+      // (the same "every field must correspond" guarantee R1 applies to live
+      // PR metadata). Without this a packet could drive the implementer into a
+      // FOREIGN repository or an arbitrary target branch, or misdeclare the
+      // next actor / patch cycle — none of which the format validator catches.
+      if (packet.repository !== lane.repository) {
+        return refuse(lane, "task-packet-wrong-repository", `packet repo ${packet.repository} != lane repo ${lane.repository}`);
+      }
+      if (lane.working_branch != null && packet.target_branch !== lane.working_branch) {
+        return refuse(lane, "task-packet-wrong-target-branch", `packet target ${packet.target_branch} != lane working_branch ${lane.working_branch}`);
+      }
+      // An initial/patch packet hands off to the auditor after implementation.
+      if (packet.expected_next_actor !== "auditor") {
+        return refuse(lane, "task-packet-wrong-next-actor", `packet expected_next_actor ${packet.expected_next_actor} != auditor`);
+      }
       if (event.event_type === "coordinator.patch_packet_posted") {
         if (packet.packet_kind !== "patch") {
           return refuse(lane, "task-packet-kind-mismatch", "patch event requires packet_kind=patch");
         }
         const nextCycle = lane.patch_cycle + 1;
+        // The patch packet must declare the cycle it belongs to (the cycle it
+        // advances the lane INTO), so a stale/duplicated packet cannot be
+        // replayed at the wrong cycle.
+        if (packet.patch_cycle !== nextCycle) {
+          return refuse(lane, "task-packet-wrong-patch-cycle", `patch packet cycle ${packet.patch_cycle} != expected ${nextCycle}`);
+        }
         if (nextCycle > policy.maximum_patch_cycles) {
           return advance(
             lane, event, "operator-required",
@@ -208,6 +240,10 @@ export function reduce(lane, event, policy, context = {}) {
       if (packet.packet_kind !== "initial") {
         return refuse(lane, "task-packet-kind-mismatch", "initial event requires packet_kind=initial");
       }
+      // An initial packet belongs to the lane's current (pre-patch) cycle.
+      if (packet.patch_cycle !== lane.patch_cycle) {
+        return refuse(lane, "task-packet-wrong-patch-cycle", `initial packet cycle ${packet.patch_cycle} != lane ${lane.patch_cycle}`);
+      }
       return advance(lane, event, "ready-for-claude");
     }
 
@@ -218,7 +254,8 @@ export function reduce(lane, event, policy, context = {}) {
       }
       // A lease grant is time-bearing: without a trusted observed time we
       // cannot bound its expiry, so fail closed rather than store an
-      // actor-chosen, unbounded window.
+      // actor-chosen, unbounded window. observedAt uses the GitHub-recorded
+      // comment time (event_observed_at), NOT the actor-supplied occurred_at.
       const grantAt = observedAt(context);
       if (grantAt === null) {
         return refuse(lane, "time-missing", "lease grant requires event_observed_at or now");
@@ -226,19 +263,27 @@ export function reduce(lane, event, policy, context = {}) {
       if (lane.lease) {
         // Unknown time already handled above; the existing lease is active
         // until its recorded expiry.
-        if (Date.parse(lane.lease.expires_at) > grantAt) {
+        const laneExp = parseIsoInstant(lane.lease.expires_at);
+        if (laneExp === null || laneExp > grantAt) {
           return refuse(lane, "lease-already-held", `active lease ${lane.lease.lease_id}`);
         }
       }
+      // A lease id may be consumed at most once across the whole lane history.
+      // Reusing a released/expired id would let a stale worker's late result
+      // re-match a fresh lease. The adapter tracks consumed ids in
+      // context.used_lease_ids.
+      const usedIds = leaseIdSet(context);
+      if (usedIds.has(event.lease_id)) {
+        return refuse(lane, "lease-id-reused", `lease_id ${event.lease_id} was already used in this lane`);
+      }
       // The expiry is actor-supplied but must not exceed observed grant time
-      // + the policy lease duration. An unbounded (e.g. year-2099) expiry
-      // would park the lane forever: the watchdog only reaps a lease once
-      // its recorded expiry passes, so an unbounded lease is never reaped
-      // and the lane never recovers. Fail closed on any over-long window.
+      // + the policy lease duration, and must be a real calendar instant. An
+      // unbounded (e.g. year-2099) expiry would park the lane forever: the
+      // watchdog only reaps a lease once its recorded expiry passes.
       const maxExpiry = grantAt + policy.lease_duration_minutes * 60000;
-      const claimedExpiry = Date.parse(event.lease_expires_at);
-      if (Number.isNaN(claimedExpiry)) {
-        return refuse(lane, "lease-expiry-invalid", "lease_expires_at is not a valid time");
+      const claimedExpiry = parseIsoInstant(event.lease_expires_at);
+      if (claimedExpiry === null) {
+        return refuse(lane, "lease-expiry-invalid", "lease_expires_at is not a valid UTC calendar instant");
       }
       if (claimedExpiry > maxExpiry) {
         return refuse(
@@ -246,6 +291,14 @@ export function reduce(lane, event, policy, context = {}) {
           "lease-expiry-unbounded",
           `lease_expires_at ${event.lease_expires_at} exceeds observed grant + ${policy.lease_duration_minutes}m`,
         );
+      }
+      // The lease is bound to the AUTHENTICATED comment author, not the
+      // claimed github_actor (which validateEvent has already matched to the
+      // allowlist for the role; reconstruct binds github_actor to the real
+      // commenter). Without a known author we cannot bind a holder → fail closed.
+      const holderLogin = context.comment_author ?? event.github_actor ?? null;
+      if (typeof holderLogin !== "string" || holderLogin.length === 0) {
+        return refuse(lane, "lease-holder-unknown", "lease grant requires an authenticated comment author");
       }
       const role = event.event_type === "implementer.lease_acquired" ? "implementer" : "auditor";
       // Claude must not begin implementation without a valid current task
@@ -264,8 +317,12 @@ export function reduce(lane, event, policy, context = {}) {
         lane_id: lane.lane_id,
         actor_role: role,
         lease_id: event.lease_id,
+        holder_login: holderLogin,
         grant_sequence: event.sequence,
-        acquired_at: event.occurred_at,
+        // acquired_at comes from the TRUSTED GitHub comment time, not the
+        // actor-supplied occurred_at, so a forged occurred_at cannot widen
+        // the lease window.
+        acquired_at: observedIso(context) ?? event.occurred_at,
         expires_at: event.lease_expires_at,
         expected_state: role === "implementer" ? "claude-working" : "codex-working",
       };
@@ -338,40 +395,94 @@ export function reduce(lane, event, policy, context = {}) {
       if (event.verdict !== audit.verdict) {
         return refuse(lane, "audit-verdict-mismatch", "event verdict must equal audit record verdict");
       }
-      // Exact-SHA binding: the audit only counts if it audited the CURRENT
-      // head. The LIVE PR head (context.pr_head_sha, fetched read-only by the
-      // reducer/merge-guard workflow) is AUTHORITATIVE when available — it is
-      // the ground truth against which an ACCEPT must bind. The event-derived
-      // head (lane.pr_head_sha, set from the implementer's CLAIMED head in
-      // implementer.completed) is only a fallback for deterministic replay
-      // when no live head is supplied; it must never override the live head,
-      // or an implementer could bind an ACCEPT to a stale/false SHA it chose
-      // (B1). This is replay-safe: reconstruction only supplies pr_head_sha
-      // when the caller explicitly provides it, and when it does the live
-      // head is exactly what the exact-SHA rule must check against. Unknown
-      // head → fail closed.
-      const liveHead = context.pr_head_sha ?? null;
-      const currentHead = liveHead ?? lane.pr_head_sha ?? null;
-      if (!currentHead) {
-        return refuse(lane, "head-unknown", "current PR head SHA unavailable; cannot bind audit");
-      }
-      // If both a live head and an event-recorded head exist and disagree,
-      // the recorded head is stale relative to live truth — the audit cannot
-      // be trusted to have reviewed the live target. Fail closed.
-      if (liveHead && lane.pr_head_sha && liveHead !== lane.pr_head_sha &&
-          audit.audited_head_sha !== liveHead) {
-        return refuse(
-          lane,
-          "audit-stale-head",
-          `audited ${audit.audited_head_sha}; live head ${liveHead} diverges from recorded ${lane.pr_head_sha}`,
-        );
-      }
-      if (audit.audited_head_sha !== currentHead) {
-        return refuse(
-          lane,
-          "audit-stale-head",
-          `audited ${audit.audited_head_sha} but current head is ${currentHead}`,
-        );
+      // -- Live PR target authority (R1). ------------------------------------
+      // At the audit FRONTIER the adapter supplies context.pr_metadata: the
+      // normalized live PR object. When PRESENT it is AUTHORITATIVE and every
+      // field must correspond with the lane and the audit record; a closed,
+      // merged, draft, retargeted, wrong-repo, wrong-number, wrong-branch, or
+      // head-moved PR must NOT record eligibility. A partial/malformed object,
+      // or one whose fetch_ok is false, fails closed. This binds at the audit
+      // transition itself — not only later in the merge guard — so a stale
+      // ACCEPT is never stored.
+      //
+      // reconstruct supplies pr_metadata only for the frontier event, so
+      // historical replay stays deterministic (non-frontier events take the
+      // recorded-head branch below). When pr_metadata is WHOLLY ABSENT (an
+      // adapter that supplies no live PR object at all, or historical replay),
+      // this falls back to the event-recorded head — deterministic but NOT the
+      // full live-liveness check. That is acceptable in v1 because it is
+      // shadow-only and the merge guard independently fails closed on a
+      // non-open / unverifiable PR before any human acts; the shipped reducer
+      // workflow always attaches pr_metadata (fetch_ok:false on failure), so
+      // the live check runs whenever a PR is named.
+      const meta = context.pr_metadata ?? null;
+      let currentHead;
+      if (meta !== null) {
+        const mv = validatePrMetadata(meta);
+        if (!mv.ok) {
+          return refuse(lane, "pr-metadata-invalid", mv.errors.join("; "));
+        }
+        if (meta.fetch_ok !== true) {
+          return refuse(lane, "pr-metadata-unavailable", "live PR metadata fetch failed; cannot bind audit (fail closed)");
+        }
+        if (meta.repository !== lane.repository) {
+          return refuse(lane, "pr-wrong-repository", `live PR repo ${meta.repository} != lane repo ${lane.repository}`);
+        }
+        if (meta.pr_number !== lane.pr_number) {
+          return refuse(lane, "pr-wrong-number", `live PR #${meta.pr_number} != lane PR #${lane.pr_number}`);
+        }
+        if (meta.state !== "open") {
+          return refuse(lane, "pr-not-open", `live PR state is ${meta.state}, not open`);
+        }
+        if (meta.merged === true) {
+          return refuse(lane, "pr-already-merged", "live PR is already merged; audit cannot record eligibility");
+        }
+        // Draft policy (documented): a draft PR is by definition not ready to
+        // merge, so an ACCEPT must not record eligibility against it. Fail
+        // closed — the PR must be marked ready-for-review first.
+        if (meta.draft === true) {
+          return refuse(lane, "pr-draft", "live PR is a draft; mark it ready-for-review before an audit can record eligibility");
+        }
+        if (meta.base_branch !== lane.base_branch) {
+          return refuse(lane, "pr-retargeted-branch", `live PR base ${meta.base_branch} != lane base_branch ${lane.base_branch}`);
+        }
+        if (meta.base_sha !== lane.base_sha) {
+          return refuse(lane, "pr-base-sha-mismatch", `live PR base sha ${meta.base_sha} != lane base_sha ${lane.base_sha}`);
+        }
+        if (audit.base_branch !== meta.base_branch) {
+          return refuse(lane, "audit-base-branch-mismatch", `audit base branch ${audit.base_branch} != live ${meta.base_branch}`);
+        }
+        if (audit.head_branch !== meta.head_branch) {
+          return refuse(lane, "audit-head-branch-mismatch", `audit head branch ${audit.head_branch} != live ${meta.head_branch}`);
+        }
+        if (audit.audited_head_sha !== meta.head_sha) {
+          return refuse(lane, "audit-stale-head", `audited ${audit.audited_head_sha} but live head is ${meta.head_sha}`);
+        }
+        currentHead = meta.head_sha;
+      } else {
+        // No metadata (historical replay, or a legacy pr_head_sha-only path):
+        // fall back to the live head SHA if supplied, else the event-recorded
+        // head, for deterministic replay. Unknown head → fail closed.
+        const liveHead = context.pr_head_sha ?? null;
+        currentHead = liveHead ?? lane.pr_head_sha ?? null;
+        if (!currentHead) {
+          return refuse(lane, "head-unknown", "current PR head SHA unavailable; cannot bind audit");
+        }
+        if (liveHead && lane.pr_head_sha && liveHead !== lane.pr_head_sha &&
+            audit.audited_head_sha !== liveHead) {
+          return refuse(
+            lane,
+            "audit-stale-head",
+            `audited ${audit.audited_head_sha}; live head ${liveHead} diverges from recorded ${lane.pr_head_sha}`,
+          );
+        }
+        if (audit.audited_head_sha !== currentHead) {
+          return refuse(
+            lane,
+            "audit-stale-head",
+            `audited ${audit.audited_head_sha} but current head is ${currentHead}`,
+          );
+        }
       }
       if (audit.complete_diff_reviewed !== true) {
         return refuse(lane, "audit-incomplete-diff", "complete base-to-head diff not confirmed");
@@ -534,17 +645,31 @@ export function reduce(lane, event, policy, context = {}) {
 
 // Authoritative time for lease checks: the GitHub-recorded comment time
 // when replaying history (deterministic), else reduction wall-clock.
-// Returns epoch millis or null (null → callers fail closed).
+// Returns epoch millis or null (null → callers fail closed). Uses the strict
+// calendar parser so an ISO-shaped but impossible time fails closed.
 function observedAt(context) {
   const iso = context.event_observed_at ?? context.now;
-  if (typeof iso !== "string") return null;
-  const t = Date.parse(iso);
-  return Number.isNaN(t) ? null : t;
+  return parseIsoInstant(typeof iso === "string" ? iso : null);
+}
+
+// The observed time as its ISO string (the trusted comment time), or null.
+function observedIso(context) {
+  const iso = context.event_observed_at ?? context.now;
+  return typeof iso === "string" && parseIsoInstant(iso) !== null ? iso : null;
+}
+
+// Consumed lease ids across applied lane history (adapter-supplied), so a
+// released/expired id cannot be reused by a stale worker.
+function leaseIdSet(context) {
+  const raw = context.used_lease_ids;
+  if (raw instanceof Set) return raw;
+  if (Array.isArray(raw)) return new Set(raw);
+  return new Set();
 }
 
 // A completion/release for a work role requires the active, unexpired lease
-// with a matching lease_id. Late results after expiry are refused (v1 has
-// no validated late-result path).
+// with a matching lease_id AND a matching authenticated holder login. Late
+// results after expiry are refused (v1 has no validated late-result path).
 function requireHeldLease(lane, event, role, context) {
   if (!lane.lease) {
     return refuse(lane, "no-active-lease", `${event.event_type} requires an active lease`);
@@ -555,11 +680,28 @@ function requireHeldLease(lane, event, role, context) {
   if (!event.lease_id || event.lease_id !== lane.lease.lease_id) {
     return refuse(lane, "lease-id-mismatch", "event does not carry the active lease id");
   }
+  // Holder binding: the authenticated author of THIS event's comment must be
+  // the login that acquired the lease. A different worker (even one
+  // allowlisted for the same role) cannot complete/release someone else's
+  // lease. When the lease predates holder_login (legacy) or no author is
+  // supplied, skip this specific check rather than fail an otherwise-valid
+  // holder — the id + role + expiry checks still bind.
+  if (lane.lease.holder_login) {
+    const author = context.comment_author ?? event.github_actor ?? null;
+    if (typeof author !== "string" || author !== lane.lease.holder_login) {
+      return refuse(
+        lane,
+        "lease-holder-mismatch",
+        `lease held by ${lane.lease.holder_login}, event from ${author ?? "unknown"}`,
+      );
+    }
+  }
   const at = observedAt(context);
   if (at === null) {
     return refuse(lane, "time-missing", "lease validity check requires event_observed_at or now");
   }
-  if (Date.parse(lane.lease.expires_at) <= at) {
+  const exp = parseIsoInstant(lane.lease.expires_at);
+  if (exp === null || exp <= at) {
     return refuse(lane, "lease-expired", `lease expired at ${lane.lease.expires_at}; no late-result path in v1`);
   }
   return null;

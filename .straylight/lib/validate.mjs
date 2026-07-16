@@ -25,7 +25,42 @@ const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const GH_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(\[bot\])?$/;
 const RELATIVE_PATH_RE = /^(?!\/)(?!.*\.\.)[\x20-\x7E]{1,300}$/;
 
-function checkString(errors, obj, key, re, { optional = false, maxLength } = {}) {
+// Strict UTC calendar instant: the ISO shape AND a real calendar date/time.
+// A regex alone accepts 2026-13-40T25:61:99Z; this rejects impossible months,
+// days (leap-year aware), hours, minutes, and seconds, and requires the `Z`
+// zone (no other offset is permitted in v1). Returns epoch millis or null.
+export function parseIsoInstant(s) {
+  if (typeof s !== "string") return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?Z$/.exec(s);
+  if (!m) return null;
+  const year = +m[1], month = +m[2], day = +m[3], hour = +m[4], min = +m[5], sec = +m[6];
+  if (month < 1 || month > 12) return null;
+  if (hour > 23 || min > 59 || sec > 59) return null; // leap seconds not accepted
+  const isLeap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
+  const daysInMonth = [31, isLeap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  if (day < 1 || day > daysInMonth[month - 1]) return null;
+  const frac = m[7] ? Number(m[7]) : 0; // fractional seconds
+  const t = Date.UTC(year, month - 1, day, hour, min, sec) + Math.round(frac * 1000);
+  return Number.isNaN(t) ? null : t;
+}
+
+// Validate a field as a strict UTC calendar instant (see parseIsoInstant).
+function checkTimestamp(errors, obj, key, { optional = false } = {}) {
+  const v = obj[key];
+  if (v === undefined || v === null) {
+    if (!optional) errors.push(`${key}: missing`);
+    return;
+  }
+  if (typeof v !== "string") {
+    errors.push(`${key}: not a string`);
+    return;
+  }
+  if (parseIsoInstant(v) === null) {
+    errors.push(`${key}: not a valid UTC calendar instant (${JSON.stringify(v.slice(0, 40))})`);
+  }
+}
+
+function checkString(errors, obj, key, re, { optional = false, maxLength, minLength } = {}) {
   const v = obj[key];
   if (v === undefined || v === null) {
     if (!optional) errors.push(`${key}: missing`);
@@ -39,6 +74,29 @@ function checkString(errors, obj, key, re, { optional = false, maxLength } = {})
   if (maxLength !== undefined && v.length > maxLength) {
     errors.push(`${key}: exceeds maxLength ${maxLength}`);
   }
+  if (minLength !== undefined && v.trim().length < minLength) {
+    errors.push(`${key}: shorter than minLength ${minLength} (after trim)`);
+  }
+}
+
+// A string array whose ITEMS must each be substantive (non-blank), used for
+// task-packet semantic fields that must not be smuggled through as [""].
+function checkNonEmptyStringArray(errors, obj, key, { minItems = 1 } = {}) {
+  const v = obj[key];
+  if (v === undefined || v === null) {
+    errors.push(`${key}: missing`);
+    return;
+  }
+  if (!Array.isArray(v)) {
+    errors.push(`${key}: not an array`);
+    return;
+  }
+  if (v.length < minItems) errors.push(`${key}: fewer than ${minItems} items`);
+  v.forEach((item, i) => {
+    if (typeof item !== "string" || item.trim().length === 0) {
+      errors.push(`${key}[${i}]: not a substantive (non-blank) string`);
+    }
+  });
 }
 
 function checkEnum(errors, obj, key, values, { optional = false } = {}) {
@@ -104,12 +162,17 @@ export function validateLease(v) {
   checkString(errors, v, "lane_id", LANE_ID_RE);
   checkEnum(errors, v, "actor_role", ["implementer", "auditor"]);
   checkString(errors, v, "lease_id", LEASE_ID_RE);
+  checkString(errors, v, "holder_login", GH_LOGIN_RE);
   checkInt(errors, v, "grant_sequence", { min: 1 });
-  checkString(errors, v, "acquired_at", ISO_RE);
-  checkString(errors, v, "expires_at", ISO_RE);
+  checkTimestamp(errors, v, "acquired_at");
+  checkTimestamp(errors, v, "expires_at");
   checkEnum(errors, v, "expected_state", STATES);
-  if (errors.length === 0 && v.expires_at <= v.acquired_at) {
-    errors.push("expires_at: not after acquired_at");
+  if (errors.length === 0) {
+    const acq = parseIsoInstant(v.acquired_at);
+    const exp = parseIsoInstant(v.expires_at);
+    if (acq !== null && exp !== null && exp <= acq) {
+      errors.push("expires_at: not after acquired_at");
+    }
   }
   return result(errors, v);
 }
@@ -183,11 +246,11 @@ export function validateEvent(v) {
   checkString(errors, v, "audited_sha", SHA_RE, { optional: true });
   checkEnum(errors, v, "verdict", VERDICTS, { optional: true });
   checkString(errors, v, "lease_id", LEASE_ID_RE, { optional: true });
-  checkString(errors, v, "lease_expires_at", ISO_RE, { optional: true });
+  checkTimestamp(errors, v, "lease_expires_at", { optional: true });
   checkInt(errors, v, "attempt", { min: 0, optional: true });
   checkInt(errors, v, "patch_cycle", { min: 0, optional: true });
   checkString(errors, v, "reason", null, { optional: true, maxLength: 4000 });
-  checkString(errors, v, "occurred_at", ISO_RE);
+  checkTimestamp(errors, v, "occurred_at");
   if (v.refs !== undefined && v.refs !== null) {
     if (!isPlainObject(v.refs)) {
       errors.push("refs: not an object");
@@ -209,19 +272,22 @@ export function validateTaskPacket(v) {
   if (!isPlainObject(v)) return { ok: false, errors: ["task_packet: not an object"] };
   checkEnum(errors, v, "schema", ["straylight.task-packet.v1"]);
   checkString(errors, v, "lane_id", LANE_ID_RE);
-  checkString(errors, v, "authority_basis", null);
+  // Semantic fields must be SUBSTANTIVE, not merely present: a blank
+  // authority basis / success condition / completion-report requirement is a
+  // hole an actor could slip an unbounded assignment through.
+  checkString(errors, v, "authority_basis", null, { minLength: 8 });
   checkString(errors, v, "base_sha", SHA_RE);
   checkString(errors, v, "repository", REPO_RE);
   checkString(errors, v, "target_branch", BRANCH_RE);
   checkStringArray(errors, v, "allowed_paths", RELATIVE_PATH_RE, { minItems: 1 });
   checkStringArray(errors, v, "forbidden_paths", RELATIVE_PATH_RE);
-  checkString(errors, v, "capability_success_condition", null);
-  checkStringArray(errors, v, "non_goals", null, { minItems: 1 });
-  checkStringArray(errors, v, "required_tests", null, { minItems: 1 });
-  checkStringArray(errors, v, "required_negative_tests", null, { minItems: 1 });
-  checkStringArray(errors, v, "required_no_leak_checks", null, { minItems: 1 });
-  checkString(errors, v, "required_completion_report", null);
-  checkStringArray(errors, v, "stop_conditions", null, { minItems: 1 });
+  checkString(errors, v, "capability_success_condition", null, { minLength: 8 });
+  checkNonEmptyStringArray(errors, v, "non_goals", { minItems: 1 });
+  checkNonEmptyStringArray(errors, v, "required_tests", { minItems: 1 });
+  checkNonEmptyStringArray(errors, v, "required_negative_tests", { minItems: 1 });
+  checkNonEmptyStringArray(errors, v, "required_no_leak_checks", { minItems: 1 });
+  checkString(errors, v, "required_completion_report", null, { minLength: 8 });
+  checkNonEmptyStringArray(errors, v, "stop_conditions", { minItems: 1 });
   checkBool(errors, v, "may_open_pr");
   checkBool(errors, v, "merge_forbidden");
   checkEnum(errors, v, "expected_next_actor", ROLES);
@@ -272,15 +338,60 @@ export function validateAuditRecord(v) {
   checkBool(errors, v, "audit_committed_in_pr");
   checkBool(errors, v, "retryable", { optional: true });
   checkEnum(errors, v, "next_actor", [...ROLES, "none"]);
-  // The PR #116 lesson, enforced structurally: an audit that reports itself
-  // as committed inside the audited PR is invalid regardless of verdict.
+  // audit_committed_in_pr is AUDITOR ATTESTATION (self-reported), not a
+  // mechanical fact — the pure validator cannot see the PR file list. The
+  // reducer additionally cross-checks the live PR (R4). Here we only enforce
+  // that the auditor did not attest to the disqualifying PR #116 condition.
   if (v.audit_committed_in_pr === true) {
-    errors.push("audit_committed_in_pr: audit committed into audited PR invalidates the audit (ADR-050 §5.3)");
+    errors.push("audit_committed_in_pr: auditor attests the audit was committed into the audited PR — invalid (ADR-050 §5.3)");
   }
   if ((v.verdict === "PATCH" || v.verdict === "REJECT") &&
       Array.isArray(v.concerns) && v.concerns.length === 0) {
     errors.push("concerns: must be non-empty for PATCH/REJECT verdicts");
   }
+  // An ACCEPT with recorded concerns is contradictory: an accepted audit has
+  // no blocking concerns. (Non-blocking notes belong in validation_summary.)
+  if (v.verdict === "ACCEPT" && Array.isArray(v.concerns) && v.concerns.length > 0) {
+    errors.push("concerns: an ACCEPT verdict must carry no concerns");
+  }
+  // Verdict/next_actor must not contradict the routing the reducer performs:
+  // ACCEPT -> operator (eligibility to the operator); PATCH -> coordinator
+  // (writes the patch packet); REJECT/CANNOT_AUDIT -> operator (blocked lane
+  // is operator-owned). A record whose declared next_actor disagrees is
+  // self-inconsistent and refused.
+  const expectedNext = {
+    ACCEPT: "operator", PATCH: "coordinator", REJECT: "operator", CANNOT_AUDIT: "operator",
+  }[v.verdict];
+  if (expectedNext !== undefined && v.next_actor !== undefined && v.next_actor !== null &&
+      v.next_actor !== expectedNext) {
+    errors.push(`next_actor: ${v.verdict} routes to ${expectedNext}, record claims ${v.next_actor}`);
+  }
+  return result(errors, v);
+}
+
+// ---------------------------------------------------------------------------
+// Live PR metadata (authoritative object supplied by the adapter workflow)
+// ---------------------------------------------------------------------------
+//
+// The single normalized description of a lane's live PR, fetched read-only by
+// the reducer/watchdog/merge-guard workflows. Any missing/partial metadata is
+// itself an error: callers must fail closed rather than proceed on a guess.
+export function validatePrMetadata(v) {
+  const errors = [];
+  if (!isPlainObject(v)) return { ok: false, errors: ["pr_metadata: not an object"] };
+  checkBool(errors, v, "fetch_ok");
+  // When the fetch failed the only meaningful field is fetch_ok:false; every
+  // other field is unknown and the record fails closed downstream.
+  if (v.fetch_ok !== true) return result(errors, v);
+  checkString(errors, v, "repository", REPO_RE);
+  checkInt(errors, v, "pr_number", { min: 1 });
+  checkEnum(errors, v, "state", ["open", "closed"]);
+  checkBool(errors, v, "draft");
+  checkBool(errors, v, "merged");
+  checkString(errors, v, "base_branch", BRANCH_RE);
+  checkString(errors, v, "base_sha", SHA_RE);
+  checkString(errors, v, "head_branch", BRANCH_RE);
+  checkString(errors, v, "head_sha", SHA_RE);
   return result(errors, v);
 }
 

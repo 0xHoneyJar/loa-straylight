@@ -8,3 +8,6 @@ export declare function validateEvent(v: unknown): ValidationResult;
 export declare function validateTaskPacket(v: unknown): ValidationResult;
 export declare function validateAuditRecord(v: unknown): ValidationResult;
 export declare function validatePolicy(v: unknown): ValidationResult;
+export declare function validatePrMetadata(v: unknown): ValidationResult;
+/** Strict UTC calendar instant → epoch millis, or null if impossible/malformed. */
+export declare function parseIsoInstant(s: unknown): number | null;
