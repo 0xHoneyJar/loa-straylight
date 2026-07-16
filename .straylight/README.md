@@ -2,8 +2,9 @@
 
 **Authority**: [ADR-050](../docs/decisions/ADR-050-autonomous-execution-control-plane.md).
 **Mode**: shadow (default and only mode in v1). **Auto-merge**: forbidden.
-**Kill switch**: set `"enabled": false` in [`automation-policy.json`](./automation-policy.json),
-or label a lane issue `cp-paused` via an `operator.paused` event.
+**Kill switch**: set `"enabled": false` in [`automation-policy.json`](./automation-policy.json)
+(global), or post an `operator.paused` event on a lane (per-lane; the
+`cp-paused` label is the derived projection of that state, not the switch).
 
 This directory is the canonical, normative protocol. Everything else
 (labels, issue text, dashboards, prompts) is derived from or points at it.

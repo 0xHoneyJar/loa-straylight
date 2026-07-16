@@ -114,16 +114,15 @@ export function reduce(lane, event, policy, context = {}) {
   }
 
   // -- 4. Actor identity allowlist (fail closed on unknown identity). --------
+  // Every role — including "system" — has its own allowlist. The CI bot
+  // identity lives ONLY under system; validatePolicy rejects any policy
+  // that puts a bot under operator (ADR-050 §3).
   if (!actorAllowed(policy, event.actor_role, event.github_actor)) {
-    // "system" events must come from an allowlisted operator identity or the
-    // repository's own workflow identity; policy lists them under operator.
-    if (!(event.actor_role === "system" && actorAllowed(policy, "operator", event.github_actor))) {
-      return refuse(
-        lane,
-        "actor-not-allowlisted",
-        `${event.github_actor} not allowlisted for role ${event.actor_role}`,
-      );
-    }
+    return refuse(
+      lane,
+      "actor-not-allowlisted",
+      `${event.github_actor} not allowlisted for role ${event.actor_role}`,
+    );
   }
 
   // -- 5. Transition legality (unknown event types die here). ----------------

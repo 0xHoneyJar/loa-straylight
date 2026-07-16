@@ -140,6 +140,31 @@ describe("identity, corridor, pause, kill switch", () => {
     if (!out.ok) expect(out.refusal).toBe("actor-not-allowlisted");
   });
 
+  it("refuses the CI bot claiming the operator role (system-only identity)", () => {
+    const lane = makeLane({ state: "operator-required", event_sequence: 5, operator_required_reason: "x" });
+    const event = makeEvent({
+      sequence: 6, actor_role: "operator", github_actor: "github-actions[bot]",
+      event_type: "operator.decision", prior_state: "operator-required",
+      requested_state: "ready-for-claude",
+    });
+    const out = reduce(lane, event, makePolicy(), ctx);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.refusal).toBe("actor-not-allowlisted");
+  });
+
+  it("rejects any policy that puts a bot identity in the operator role", () => {
+    const policy = makePolicy({
+      actor_allowlist: {
+        coordinator: ["chatgpt-login"], implementer: ["claude-login"],
+        auditor: ["codex-login"], operator: ["eileen1337", "github-actions[bot]"],
+        system: ["github-actions[bot]"],
+      },
+    });
+    const out = reduce(makeLane(), makeEvent(), policy, ctx);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.refusal).toBe("policy-invalid");
+  });
+
   it("escalates a lane whose phase left the policy corridor (out-of-mandate)", () => {
     const policy = makePolicy({ authorized_corridor: ["phase-49q"] });
     const out = reduce(makeLane(), makeEvent(), policy, ctx);

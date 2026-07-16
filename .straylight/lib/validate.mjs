@@ -301,8 +301,15 @@ export function validatePolicy(v) {
   if (!isPlainObject(v.actor_allowlist)) {
     errors.push("actor_allowlist: missing or not an object");
   } else {
-    for (const role of ["coordinator", "implementer", "auditor", "operator"]) {
+    for (const role of ["coordinator", "implementer", "auditor", "operator", "system"]) {
       checkStringArray(errors, v.actor_allowlist, role, GH_LOGIN_RE, { minItems: 1 });
+    }
+    // The mechanical CI identity must never hold operator authority: an
+    // operator-role event from a workflow-posted comment would let repo
+    // automation exercise the operator's exclusive powers (ADR-050 §3).
+    const ops = v.actor_allowlist.operator;
+    if (Array.isArray(ops) && ops.some((l) => typeof l === "string" && l.endsWith("[bot]"))) {
+      errors.push("actor_allowlist.operator: bot identities are forbidden in the operator role");
     }
   }
   // Hard v1 invariants: these fields exist so that flipping them is loud,

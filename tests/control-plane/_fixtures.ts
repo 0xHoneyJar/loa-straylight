@@ -29,7 +29,8 @@ export function makePolicy(overrides: Record<string, any> = {}) {
       coordinator: ["chatgpt-login"],
       implementer: ["claude-login"],
       auditor: ["codex-login"],
-      operator: ["eileen1337", "github-actions[bot]"],
+      operator: ["eileen1337"],
+      system: ["eileen1337", "github-actions[bot]"],
     },
     ...overrides,
   };

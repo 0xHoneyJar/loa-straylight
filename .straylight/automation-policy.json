@@ -20,10 +20,11 @@
   "lease_duration_minutes": 240,
   "stuck_lane_threshold_hours": 72,
   "actor_allowlist": {
-    "_note": "GitHub commenter identity is the only authenticated identity available in v1; actor_role is a claimed field, not a cryptographic identity (ADR-050 §6). All roles currently map to the operator's account plus github-actions for mechanical system events. Distinct bot identities are a hard precondition for ever enabling auto_merge.",
+    "_note": "GitHub commenter identity is the only authenticated identity available in v1; actor_role is a claimed field, not a cryptographic identity (ADR-050 §6). All model roles currently map to the operator's account. Distinct bot identities are a hard precondition for ever enabling auto_merge. github-actions[bot] is allowlisted for SYSTEM events only — it must never appear under operator, or workflow-posted comments could claim operator authority.",
     "coordinator": ["eileen1337"],
     "implementer": ["eileen1337"],
     "auditor": ["eileen1337"],
-    "operator": ["eileen1337", "github-actions[bot]"]
+    "operator": ["eileen1337"],
+    "system": ["eileen1337", "github-actions[bot]"]
   }
 }

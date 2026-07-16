@@ -162,9 +162,11 @@ operator mandate:
   processing — the reducer refuses every event, the watchdog takes no
   action, and the merge guard reports `ineligible`. One field, one file,
   one obvious switch, changed through an ordinary operator commit.
-- **Kill switch (label)**: adding the `cp-paused` label to a lane issue,
-  or an `operator.paused` event, freezes that lane for all non-operator
-  events.
+- **Kill switch (per lane)**: an `operator.paused` event freezes that
+  lane for all non-operator events. The `cp-paused` label is a derived
+  *projection* of that pause state (per §1.1, labels are never primary
+  authority) — pausing is done by posting the event, not by adding the
+  label by hand.
 - **Revocation preserves history.** Suspension and revocation never
   rewrite lane history: the event record is append-only, and a revoked
   mandate simply stops advancing lanes. Un-suspending resumes from the
