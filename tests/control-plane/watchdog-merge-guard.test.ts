@@ -115,7 +115,7 @@ describe("shadow merge guard", () => {
   // lane's base branch. Individual tests override one field to prove closure.
   const liveCtx = {
     pr_head_sha: HEAD_SHA, checks: passingChecks,
-    pr_state: "open", pr_base_ref: "main",
+    pr_state: "open", pr_draft: false, pr_base_ref: "main",
   };
 
   it("reports eligible for a fully satisfied lane — as a report only", () => {
@@ -149,9 +149,11 @@ describe("shadow merge guard", () => {
     expect(evaluate(eligibleLane, policy, { ...liveCtx, checks: { check_runs_total: 0, check_runs_failing: 0, commit_statuses_total: 2, commit_status_state: "success" } }).eligible).toBe(false);
   });
 
-  it("fails closed on a closed or retargeted PR (R3)", () => {
+  it("fails closed on a closed, draft, or retargeted PR (R3)", () => {
     expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_state: "closed" }).eligible).toBe(false);
     expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_state: undefined }).eligible).toBe(false);
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_draft: true }).eligible).toBe(false);
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_draft: undefined }).eligible).toBe(false);
     expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_base_ref: "some-other-branch" }).eligible).toBe(false);
     expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_base_ref: undefined }).eligible).toBe(false);
   });

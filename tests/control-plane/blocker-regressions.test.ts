@@ -410,18 +410,20 @@ describe("B9 — merge guard fails closed on the check-status unknowns", () => {
     });
     expect(out.eligible).toBe(false);
   });
-  it("passing check runs with no legacy statuses (and an open, on-base PR) is eligible", () => {
+  it("passing check runs with no legacy statuses (and an open, non-draft, on-base PR) is eligible", () => {
     const out = evaluate(eligibleLane, policy, {
       pr_head_sha: HEAD_SHA,
       checks: { check_runs_total: 2, check_runs_failing: 0, commit_statuses_total: 0, commit_status_state: "pending" },
-      pr_state: "open", pr_base_ref: "main",
+      pr_state: "open", pr_draft: false, pr_base_ref: "main",
     });
     expect(out.eligible).toBe(true);
   });
-  it("a closed or retargeted PR fails the guard closed (R3 regression)", () => {
+  it("a closed, draft, or retargeted PR fails the guard closed (R3 regression)", () => {
     const liveChecks = { check_runs_total: 2, check_runs_failing: 0, commit_statuses_total: 0, commit_status_state: "pending" };
-    expect(evaluate(eligibleLane, policy, { pr_head_sha: HEAD_SHA, checks: liveChecks, pr_state: "closed", pr_base_ref: "main" }).eligible).toBe(false);
-    expect(evaluate(eligibleLane, policy, { pr_head_sha: HEAD_SHA, checks: liveChecks, pr_state: "open", pr_base_ref: "release-x" }).eligible).toBe(false);
+    const base = { pr_head_sha: HEAD_SHA, checks: liveChecks, pr_state: "open", pr_draft: false, pr_base_ref: "main" };
+    expect(evaluate(eligibleLane, policy, { ...base, pr_state: "closed" }).eligible).toBe(false);
+    expect(evaluate(eligibleLane, policy, { ...base, pr_draft: true }).eligible).toBe(false);
+    expect(evaluate(eligibleLane, policy, { ...base, pr_base_ref: "release-x" }).eligible).toBe(false);
     expect(evaluate(eligibleLane, policy, { pr_head_sha: HEAD_SHA, checks: liveChecks }).eligible).toBe(false); // no liveness info → closed
   });
 });

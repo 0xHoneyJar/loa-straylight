@@ -112,6 +112,11 @@ export function makeTaskPacket(overrides: Record<string, any> = {}) {
 }
 
 export function makeAuditRecord(overrides: Record<string, any> = {}) {
+  // next_actor must agree with the verdict (validateAuditRecord enforces:
+  // ACCEPT/REJECT/CANNOT_AUDIT -> operator, PATCH -> coordinator). Derive it
+  // from the (possibly overridden) verdict unless the caller sets it.
+  const verdict = overrides.verdict ?? "ACCEPT";
+  const nextForVerdict = verdict === "PATCH" ? "coordinator" : "operator";
   return {
     schema: "straylight.audit.v1",
     lane_id: "lane-phase-49p",
@@ -126,7 +131,7 @@ export function makeAuditRecord(overrides: Record<string, any> = {}) {
     concerns: [],
     validation_summary: "npm test green; docs-only diff",
     audit_committed_in_pr: false,
-    next_actor: "operator",
+    next_actor: nextForVerdict,
     ...overrides,
   };
 }
@@ -136,6 +141,7 @@ export function makeLease(overrides: Record<string, any> = {}) {
     lane_id: "lane-phase-49p",
     actor_role: "implementer",
     lease_id: "lease-claude-1",
+    holder_login: "claude-login",
     grant_sequence: 3,
     acquired_at: NOW,
     expires_at: LEASE_EXPIRY,
@@ -165,7 +171,7 @@ export function laneCodexWorking(overrides: Record<string, any> = {}) {
     attempt: 1,
     pr_number: 120,
     pr_head_sha: HEAD_SHA,
-    lease: makeLease({ actor_role: "auditor", lease_id: "lease-codex-1", grant_sequence: 5, expected_state: "codex-working" }),
+    lease: makeLease({ actor_role: "auditor", lease_id: "lease-codex-1", holder_login: "codex-login", grant_sequence: 5, expected_state: "codex-working" }),
     ...overrides,
   });
 }
