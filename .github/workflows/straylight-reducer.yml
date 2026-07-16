@@ -100,33 +100,55 @@ jobs:
           # is ever expanded by the shell.
           gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" > /tmp/issue.json
           gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate > /tmp/comments.json
+          # created_at + updated_at both captured: an edited protocol comment
+          # (updated_at > created_at) is routed to operator-required (R5).
           jq -n \
             --slurpfile issue /tmp/issue.json \
             --slurpfile comments /tmp/comments.json \
             '{
               issue_body: $issue[0].body,
-              comments: ($comments | add // [] | map({id: .id, user: .user.login, body: .body, created_at: .created_at}))
+              comments: ($comments | add // [] | map({id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}))
             }' > /tmp/reducer-input.json
 
-      - name: Attach current PR head (fail closed if absent)
+      - name: Attach authoritative live PR metadata (fail closed if absent)
         if: steps.killswitch.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # Best-effort: if the lane names a PR, give the reducer its live
-          # head SHA so exact-SHA audit binding can be checked. Absence is
-          # safe — the reducer fails closed without it.
+          # If the lane names a PR, attach the normalized authoritative live PR
+          # metadata object so the reducer can bind an ACCEPT to live truth
+          # (R1). A failed/partial fetch yields {fetch_ok:false}, on which the
+          # reducer fails closed at the audit frontier. pr_head_sha is kept for
+          # the non-frontier / legacy fallback path.
           PR=$(node .straylight/bin/reduce-issue.mjs --input /tmp/reducer-input.json 2>/dev/null \
                | jq -r '.lane.pr_number // empty' || true)
           if [[ "$PR" =~ ^[0-9]+$ ]]; then
-            HEAD=$(gh api "repos/${REPO}/pulls/${PR}" -q '.head.sha' 2>/dev/null || true)
-            if [[ "$HEAD" =~ ^[0-9a-f]{40}$ ]]; then
-              jq --arg head "$HEAD" '.context = {pr_head_sha: $head}' \
-                /tmp/reducer-input.json > /tmp/reducer-input2.json
-              mv /tmp/reducer-input2.json /tmp/reducer-input.json
+            if gh api "repos/${REPO}/pulls/${PR}" > /tmp/pr.json 2>/dev/null; then
+              jq -n --arg repo "$REPO" --slurpfile pr /tmp/pr.json '
+                ($pr[0]) as $p
+                | {
+                    fetch_ok: true,
+                    repository: $repo,
+                    pr_number: $p.number,
+                    state: $p.state,
+                    draft: ($p.draft // false),
+                    merged: ($p.merged // false),
+                    base_branch: $p.base.ref,
+                    base_sha: $p.base.sha,
+                    head_branch: $p.head.ref,
+                    head_sha: $p.head.sha
+                  }' > /tmp/pr-meta.json
+            else
+              echo '{"fetch_ok": false}' > /tmp/pr-meta.json
             fi
+            HEAD=$(jq -r '.head_sha // empty' /tmp/pr-meta.json)
+            jq --slurpfile meta /tmp/pr-meta.json --arg head "$HEAD" '
+              .context = ({pr_metadata: $meta[0]}
+                          + (if ($head | test("^[0-9a-f]{40}$")) then {pr_head_sha: $head} else {} end))' \
+              /tmp/reducer-input.json > /tmp/reducer-input2.json
+            mv /tmp/reducer-input2.json /tmp/reducer-input.json
           fi
 
       - name: Reduce lane

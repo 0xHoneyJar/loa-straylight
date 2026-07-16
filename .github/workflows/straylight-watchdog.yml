@@ -74,7 +74,7 @@ jobs:
             gh api "repos/${REPO}/issues/${N}/comments" --paginate > /tmp/comments.json
             jq -n --slurpfile issue /tmp/issue.json --slurpfile comments /tmp/comments.json \
               '{issue_body: $issue[0].body,
-                comments: ($comments | add // [] | map({id: .id, user: .user.login, body: .body, created_at: .created_at}))}' \
+                comments: ($comments | add // [] | map({id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}))}' \
               > /tmp/reduce-input.json
             node .straylight/bin/reduce-issue.mjs --input /tmp/reduce-input.json > /tmp/lane.json || continue
             [[ "$(jq -r '.ok' /tmp/lane.json)" == "true" ]] || continue

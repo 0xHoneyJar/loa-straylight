@@ -61,7 +61,7 @@ jobs:
           gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate > /tmp/comments.json
           jq -n --slurpfile issue /tmp/issue.json --slurpfile comments /tmp/comments.json \
             '{issue_body: $issue[0].body,
-              comments: ($comments | add // [] | map({id: .id, user: .user.login, body: .body, created_at: .created_at}))}' \
+              comments: ($comments | add // [] | map({id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}))}' \
             > /tmp/reduce-input.json
           node .straylight/bin/reduce-issue.mjs --input /tmp/reduce-input.json > /tmp/lane-result.json
           jq '.lane' /tmp/lane-result.json > /tmp/lane.json
@@ -76,6 +76,7 @@ jobs:
           HEAD=""
           PR_STATE=""
           PR_BASE=""
+          PR_DRAFT=""
           # RAW evidence only: emit observed counts and let the pure module
           # decide (it fails closed on any unknown). No "no checks configured
           # => passing" fail-open branch: zero check runs is ineligible.
@@ -85,6 +86,7 @@ jobs:
             # or retargeted PR must fail the guard closed (not stay eligible).
             PR_STATE=$(gh api "repos/${REPO}/pulls/${PRNUM}" -q '.state' 2>/dev/null || echo "")
             PR_BASE=$(gh api "repos/${REPO}/pulls/${PRNUM}" -q '.base.ref' 2>/dev/null || echo "")
+            PR_DRAFT=$(gh api "repos/${REPO}/pulls/${PRNUM}" -q '.draft' 2>/dev/null || echo "")
             HEAD=$(gh api "repos/${REPO}/pulls/${PRNUM}" -q '.head.sha' 2>/dev/null || true)
             if [[ "$HEAD" =~ ^[0-9a-f]{40}$ ]]; then
               # Modern check runs on the head.
@@ -107,12 +109,13 @@ jobs:
             fi
           fi
           jq -n --slurpfile lane /tmp/lane.json --arg head "$HEAD" --argjson checks "$CHECKS_JSON" \
-            --arg prstate "$PR_STATE" --arg prbase "$PR_BASE" \
+            --arg prstate "$PR_STATE" --arg prbase "$PR_BASE" --arg prdraft "$PR_DRAFT" \
             '{lane: $lane[0],
               context: ((if $checks != null then {checks: $checks} else {} end)
                         + (if $head != "" then {pr_head_sha: $head} else {} end)
                         + (if $prstate != "" then {pr_state: $prstate} else {} end)
-                        + (if $prbase != "" then {pr_base_ref: $prbase} else {} end))}' \
+                        + (if $prbase != "" then {pr_base_ref: $prbase} else {} end)
+                        + (if $prdraft == "true" then {pr_draft: true} elif $prdraft == "false" then {pr_draft: false} else {} end))}' \
             > /tmp/guard-input.json
 
       - name: Evaluate shadow eligibility
