@@ -78,6 +78,23 @@ describe("schema/validator contract sync", () => {
     }
   });
 
+  it("every schema maxLength is enforced by the executable validator (B6 class fix)", () => {
+    // Prevent the reason-field divergence class: any published maxLength must
+    // be mirrored by a `maxLength: <n>` bound in validate.mjs.
+    const validateSrc = readFileSync(".straylight/lib/validate.mjs", "utf8");
+    for (const file of [
+      "lane-v1.schema.json", "event-v1.schema.json",
+      "task-packet-v1.schema.json", "audit-v1.schema.json",
+    ]) {
+      const schema = JSON.parse(readFileSync(join(ROOT, "schemas", file), "utf8"));
+      for (const [field, def] of Object.entries<any>(schema.properties ?? {})) {
+        if (typeof def?.maxLength === "number") {
+          expect(validateSrc, `${file}.${field} maxLength ${def.maxLength}`).toContain(`maxLength: ${def.maxLength}`);
+        }
+      }
+    }
+  });
+
   it("v1 schema consts match the validator invariants", () => {
     const lane = JSON.parse(readFileSync(join(ROOT, "schemas", "lane-v1.schema.json"), "utf8"));
     expect(lane.properties.mode.const).toBe("shadow");

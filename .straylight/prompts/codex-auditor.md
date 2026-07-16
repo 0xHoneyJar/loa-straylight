@@ -34,13 +34,19 @@ run:
    true`, changed-file list (or digest), verdict, exact concerns with
    locations, validation summary, `audit_committed_in_pr: false`,
    next actor.
-4. **Post the audit externally** — as a PR comment or lane-issue comment.
-   **Never commit the audit into the PR you are auditing**: committing it
-   changes the audited target and invalidates your own verdict (lesson of
-   PR #116; the validator structurally rejects such an audit).
-5. Post `auditor.audit_completed` carrying your `lease_id`, the verdict,
-   the `audited_sha`, and `refs.audit_comment_id` pointing at the audit
-   comment.
+4. **Post the audit as a comment on the LANE ISSUE** (external to the PR
+   under audit). It MUST be a lane-issue comment, not a PR-thread comment:
+   the reducer and watchdog reconstruct from lane-issue comments alone, so
+   an audit posted on the PR thread is unreachable and your completion
+   event will fail closed. **Never commit the audit into the PR you are
+   auditing**: committing it changes the audited target and invalidates
+   your own verdict (lesson of PR #116; the validator structurally rejects
+   such an audit).
+5. Post `auditor.audit_completed` (from the SAME GitHub identity that
+   posted the audit comment) carrying your `lease_id`, the verdict, the
+   `audited_sha`, and `refs.audit_comment_id` pointing at the audit
+   comment. Reconstruction binds the audit only when the referenced comment
+   shares your authenticated author identity.
 
 ## Verdicts
 

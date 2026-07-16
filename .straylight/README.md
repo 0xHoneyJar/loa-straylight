@@ -101,7 +101,7 @@ Failure/recovery states: `patch-required`, `blocked`, `operator-required`,
 | `lane.activated` | coordinator/operator | planning | ready-for-coordinator |
 | `coordinator.task_packet_posted` | coordinator | ready-for-coordinator | ready-for-claude |
 | `coordinator.patch_packet_posted` | coordinator | patch-required | ready-for-claude (or operator-required past the patch-cycle max) |
-| `coordinator.escalated` | coordinator | most non-working states | operator-required |
+| `coordinator.escalated` | coordinator | coordinator-turn states only (planning, ready-for-coordinator, patch-required) | operator-required |
 | `implementer.lease_acquired` | implementer | ready-for-claude | claude-working |
 | `implementer.completed` | implementer | claude-working | ready-for-codex |
 | `implementer.lease_released` / `.blocked` / `.escalated` | implementer | claude-working | ready-for-claude / blocked / operator-required |
@@ -136,6 +136,14 @@ Universal fail-closed rules enforced by the reducer:
   allowlist for the claimed role is refused;
 - an event whose claimed `github_actor` differs from the authenticated
   commenter is refused (`actor-identity-mismatch`);
+- an event from a model role (coordinator/implementer/auditor) that is not
+  the lane's current turn owner (derived from the lane state) is refused
+  (`not-next-actor`); operator and system keep their escape hatches;
+- a reused `event_id` within a lane is refused (`duplicate-event-id`) so the
+  append-only record stays uniquely addressable;
+- a lease whose `expires_at` exceeds the observed grant time plus
+  `lease_duration_minutes` is refused (`lease-expiry-unbounded`) so no lease
+  can outlive the watchdog's ability to reap it;
 - a lane whose phase is outside `authorized_corridor` escalates to
   `operator-required`;
 - exceeding `maximum_patch_cycles` escalates to `operator-required`;
@@ -178,11 +186,21 @@ reducer enforces this at `implementer.lease_acquired`. A packet whose
 
 Codex posts an audit record (`straylight:audit:v1`, schema:
 [`schemas/audit-v1.schema.json`](./schemas/audit-v1.schema.json))
-**externally** — as a PR comment or lane event comment. It binds to an
-exact `audited_head_sha` and confirms the complete base-to-head diff was
-reviewed. An `ACCEPT` is invalid when: the PR head changed; the base
+**externally to the PR under audit — as a comment on the LANE ISSUE**
+(never committed into the audited branch). The audit record MUST live in
+the lane-issue comment stream so it is reconstructible from the lane issue
+alone (the reducer/watchdog fetch only issue comments); an audit posted as
+a PR-thread comment is unreachable and its completion event fails closed.
+The `auditor.audit_completed` event references it via
+`refs.audit_comment_id`, and reconstruction binds that reference only when
+the referenced comment was authored by the SAME auditor that posts the
+completion event (`audit-comment-author-mismatch` otherwise). It binds to
+an exact `audited_head_sha` and confirms the complete base-to-head diff
+was reviewed. An `ACCEPT` is invalid when: the live PR head changed (the
+live head is authoritative over any implementer-recorded head); the base
 changed; the lane differs; the exact SHA is missing; the auditor identity
-is not allowlisted; the verdict payload is malformed; or —
+is not allowlisted; the referenced audit comment is authored by someone
+else; the verdict payload is malformed; or —
 
 > **the audit was committed into the audited PR.** An audit report must
 > not be committed into the pull request it audits because doing so
@@ -212,7 +230,7 @@ control-plane workflow holds `contents: write`.
 |---|---|---|---|
 | `straylight-reducer.yml` | `issues`, `issue_comment` on `cp-lane` issues; manual | fetch issue + comments, run `reduce-issue.mjs`, sync derived labels, post reducer result | evaluate comment content as shell; call model APIs; write repo contents |
 | `straylight-watchdog.yml` | cron (off-minute) + manual | reconstruct all lanes, run `watchdog-scan.mjs`, post deduped recovery events / escalations | duplicate a recovery event (dedupe keys); merge |
-| `straylight-merge-guard.yml` | manual + PR events on lane PRs | reconstruct lane, run `merge-guard-check.mjs`, post shadow eligibility comment | merge (no merge API call exists in the workflow or CLI) |
+| `straylight-merge-guard.yml` | manual `workflow_dispatch` (lane issue number) | reconstruct lane, run `merge-guard-check.mjs`, post shadow eligibility comment | merge (no merge API call exists in the workflow or CLI) |
 | `straylight-bootstrap.yml` | manual `workflow_dispatch` | idempotently create the single Phase 49P shadow lane issue | implement 49P, open its PR, call a model API, merge |
 
 All workflows: least-privilege permissions (`contents: read` +

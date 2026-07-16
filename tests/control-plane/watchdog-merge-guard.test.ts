@@ -105,8 +105,21 @@ describe("shadow merge guard", () => {
     pr_number: 120, pr_head_sha: HEAD_SHA, audited_sha: HEAD_SHA, verdict: "ACCEPT",
   });
 
+  // Raw check evidence that satisfies the fail-closed gate: >=1 check run,
+  // 0 failing, no legacy statuses required.
+  const passingChecks = {
+    check_runs_total: 1, check_runs_failing: 0,
+    commit_statuses_total: 0, commit_status_state: "pending",
+  };
+  // A fully-live context: passing checks, matching head, open PR on the
+  // lane's base branch. Individual tests override one field to prove closure.
+  const liveCtx = {
+    pr_head_sha: HEAD_SHA, checks: passingChecks,
+    pr_state: "open", pr_base_ref: "main",
+  };
+
   it("reports eligible for a fully satisfied lane — as a report only", () => {
-    const out = evaluate(eligibleLane, policy, { pr_head_sha: HEAD_SHA, required_checks_passed: true });
+    const out = evaluate(eligibleLane, policy, liveCtx);
     expect(out.eligible).toBe(true);
     expect(out.shadow).toBe(true);
     expect(out.action).toBe("report-only");
@@ -114,16 +127,37 @@ describe("shadow merge guard", () => {
   });
 
   it("reports ineligible on head mismatch, missing verdict, wrong state, pause, or failing checks", () => {
-    expect(evaluate(eligibleLane, policy, { pr_head_sha: OTHER_SHA, required_checks_passed: true }).eligible).toBe(false);
-    expect(evaluate({ ...eligibleLane, verdict: "PATCH" }, policy, { pr_head_sha: HEAD_SHA, required_checks_passed: true }).eligible).toBe(false);
-    expect(evaluate({ ...eligibleLane, state: "codex-working", next_actor: "auditor" }, policy, { pr_head_sha: HEAD_SHA, required_checks_passed: true }).eligible).toBe(false);
-    expect(evaluate({ ...eligibleLane, operator_pause: true }, policy, { pr_head_sha: HEAD_SHA, required_checks_passed: true }).eligible).toBe(false);
-    expect(evaluate(eligibleLane, policy, { pr_head_sha: HEAD_SHA, required_checks_passed: false }).eligible).toBe(false);
-    expect(evaluate(eligibleLane, policy, { required_checks_passed: true }).eligible).toBe(false); // unknown head fails closed
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_head_sha: OTHER_SHA }).eligible).toBe(false);
+    expect(evaluate({ ...eligibleLane, verdict: "PATCH" }, policy, liveCtx).eligible).toBe(false);
+    expect(evaluate({ ...eligibleLane, state: "codex-working", next_actor: "auditor" }, policy, liveCtx).eligible).toBe(false);
+    expect(evaluate({ ...eligibleLane, operator_pause: true }, policy, liveCtx).eligible).toBe(false);
+    // Failing check run → ineligible.
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, checks: { ...passingChecks, check_runs_failing: 1 } }).eligible).toBe(false);
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_head_sha: undefined }).eligible).toBe(false); // unknown head fails closed
+  });
+
+  it("fails closed on the check-status unknowns that used to fail open (B9)", () => {
+    // Zero check runs was previously reported as passing by the workflow.
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, checks: { check_runs_total: 0, check_runs_failing: 0, commit_statuses_total: 0, commit_status_state: "pending" } }).eligible).toBe(false);
+    // A failing legacy combined commit status is now visible and blocks.
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, checks: { check_runs_total: 3, check_runs_failing: 0, commit_statuses_total: 1, commit_status_state: "failure" } }).eligible).toBe(false);
+    // A pre-cooked boolean is no longer honored as evidence.
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, checks: undefined, required_checks_passed: true } as any).eligible).toBe(false);
+    // Missing checks object fails closed.
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, checks: undefined }).eligible).toBe(false);
+    // A passing legacy status with 0 check runs still fails (need >=1 run).
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, checks: { check_runs_total: 0, check_runs_failing: 0, commit_statuses_total: 2, commit_status_state: "success" } }).eligible).toBe(false);
+  });
+
+  it("fails closed on a closed or retargeted PR (R3)", () => {
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_state: "closed" }).eligible).toBe(false);
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_state: undefined }).eligible).toBe(false);
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_base_ref: "some-other-branch" }).eligible).toBe(false);
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_base_ref: undefined }).eligible).toBe(false);
   });
 
   it("reports ineligible when the kill switch is off", () => {
-    const out = evaluate(eligibleLane, makePolicy({ enabled: false }), { pr_head_sha: HEAD_SHA, required_checks_passed: true });
+    const out = evaluate(eligibleLane, makePolicy({ enabled: false }), liveCtx);
     expect(out.eligible).toBe(false);
     expect(out.reasons.join(" ")).toContain("kill switch");
   });
@@ -132,7 +166,7 @@ describe("shadow merge guard", () => {
     // 1. The pure module exposes only evaluate(); its result action is the
     //    constant "report-only" in every case.
     const results = [
-      evaluate(eligibleLane, policy, { pr_head_sha: HEAD_SHA, required_checks_passed: true }),
+      evaluate(eligibleLane, policy, { pr_head_sha: HEAD_SHA, checks: passingChecks }),
       evaluate(eligibleLane, policy, {}),
       evaluate(null, policy, {}),
       evaluate(eligibleLane, null, {}),

@@ -295,11 +295,16 @@ the protocol, policy, prompts, or workflows.
 | Tests | `tests/control-plane/` | Positive + fail-closed negative coverage |
 
 Workflow permission ceiling (normative): shadow-mode control-plane
-workflows may hold at most `contents: read`, `issues: write`,
-`pull-requests: write`. **None may hold `contents: write`.** Third-party
+workflows may hold at most `contents: read`, `issues: write`, and
+pull-requests read access (`pull-requests: read`). **No control-plane
+workflow may hold write access to repository contents or to pull
+requests.** The deployed workflows hold exactly this and no more; the
+ceiling equals the argued-safe privilege rather than sitting a level above
+it (write access to pull requests would let a compromised step retarget,
+close, or edit a lane PR even though it still could not merge). Third-party
 actions are pinned to immutable commit SHAs. `pull_request_target` is
-forbidden. Issue-comment content is untrusted input and is never
-evaluated as shell.
+forbidden. Issue-comment content is untrusted input and is never evaluated
+as shell.
 
 ### 7.1 Bootstrap
 
