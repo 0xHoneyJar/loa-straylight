@@ -1,0 +1,144 @@
+# Straylight Control Plane v1 — Phase 49P shadow-lane bootstrap.
+#
+# Authority: docs/decisions/ADR-050-autonomous-execution-control-plane.md §7.1
+#
+# Manual, idempotent: creates AT MOST ONE Phase 49P lane issue (searched by
+# the cp-lane label + lane marker before creating). It does NOT implement
+# Phase 49P, does NOT open an implementation PR, does NOT invoke any model
+# API, and does NOT merge anything. Run it once after the control-plane PR
+# merges; re-running is a no-op.
+
+name: Straylight CP Bootstrap (Phase 49P lane)
+
+on:
+  workflow_dispatch: {}
+
+# contents:read — read base SHA + protocol code. issues:write — create the
+# lane issue and its labels.
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: straylight-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          submodules: recursive
+
+      - name: Setup Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: Kill switch check
+        run: |
+          set -euo pipefail
+          if [[ "$(jq -r '.enabled' .straylight/automation-policy.json)" != "true" ]]; then
+            echo "Automation disabled (kill switch). Refusing to bootstrap."
+            exit 1
+          fi
+
+      - name: Idempotency check — existing Phase 49P lane
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # A lane exists if any cp-lane issue's body carries the lane marker
+          # with lane_id lane-phase-49p (open OR closed — a closed lane is a
+          # completed/superseded lane, not permission to duplicate it).
+          FOUND=$(gh api "repos/${REPO}/issues?labels=cp-lane&state=all&per_page=100" \
+            -q '[.[] | select(.body // "" | contains("\"lane_id\": \"lane-phase-49p\""))] | length')
+          echo "found=${FOUND}" >> "$GITHUB_OUTPUT"
+          if [[ "$FOUND" != "0" ]]; then
+            echo "Phase 49P lane already exists (${FOUND} match(es)); bootstrap is a no-op."
+          fi
+
+      - name: Ensure cp-lane label exists
+        if: steps.existing.outputs.found == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${REPO}/labels/cp-lane" >/dev/null 2>&1 || \
+            gh api -X POST "repos/${REPO}/labels" \
+              --input <(jq -n '{name: "cp-lane", color: "1d76db", description: "Straylight control-plane lane (ADR-050)"}')
+
+      - name: Create Phase 49P shadow lane issue
+        if: steps.existing.outputs.found == '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          BASE_SHA=$(git rev-parse HEAD)
+          jq -n --arg base "$BASE_SHA" --arg repo "$REPO" '{
+            schema: "straylight.lane.v1",
+            lane_id: "lane-phase-49p",
+            phase: "phase-49p",
+            authorized_corridor: ["phase-49p", "phase-49q", "phase-50a", "phase-50b"],
+            repository: $repo,
+            base_branch: "main",
+            base_sha: $base,
+            tier: "tier-1",
+            authority_bearing: false,
+            state: "planning",
+            next_actor: "coordinator",
+            working_branch: null,
+            pr_number: null,
+            pr_head_sha: null,
+            audited_sha: null,
+            verdict: null,
+            attempt: 0,
+            patch_cycle: 0,
+            mode: "shadow",
+            auto_merge_allowed: false,
+            operator_pause: false,
+            operator_required_reason: null,
+            lease: null,
+            event_sequence: 0,
+            last_transition: null
+          }' > /tmp/lane.json
+          # Genesis must satisfy the same validator the reducer uses.
+          jq -n --slurpfile lane /tmp/lane.json \
+            '{issue_body: ("<!-- straylight:lane:v1 -->\n```json\n" + ($lane[0] | tojson) + "\n```"), comments: []}' \
+            > /tmp/genesis-check.json
+          node .straylight/bin/reduce-issue.mjs --input /tmp/genesis-check.json > /tmp/genesis-result.json
+          [[ "$(jq -r '.ok' /tmp/genesis-result.json)" == "true" ]] || {
+            echo "genesis lane failed validation; refusing to create issue"
+            cat /tmp/genesis-result.json
+            exit 1
+          }
+          {
+            echo "# Control-plane lane: Phase 49P — sibling evidence intake (shadow)"
+            echo ""
+            echo "Coordinated under [ADR-050](https://github.com/${REPO}/blob/main/docs/decisions/ADR-050-autonomous-execution-control-plane.md)."
+            echo "Protocol: [.straylight/README.md](https://github.com/${REPO}/blob/main/.straylight/README.md)."
+            echo ""
+            echo "This issue is the durable lane record. The genesis lane payload is below;"
+            echo "all subsequent protocol actions are append-only event comments. Labels are"
+            echo "derived state. **Shadow mode: nothing merges automatically.**"
+            echo ""
+            echo "This lane COORDINATES Phase 49P (ADR-049 §10 step 3 — PR A, sibling"
+            echo "evidence intake). Creating this issue does not implement Phase 49P,"
+            echo "does not open its PR, and does not advance any ADR-022E gate."
+            echo ""
+            echo "<!-- straylight:lane:v1 -->"
+            echo '```json'
+            jq . /tmp/lane.json
+            echo '```'
+          } > /tmp/issue-body.md
+          gh api -X POST "repos/${REPO}/issues" \
+            --input <(jq -n --rawfile body /tmp/issue-body.md \
+              '{title: "CP lane: Phase 49P — sibling evidence intake (shadow)", body: $body, labels: ["cp-lane"]}')
+          echo "Phase 49P shadow lane created."

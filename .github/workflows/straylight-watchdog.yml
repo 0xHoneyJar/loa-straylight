@@ -1,0 +1,161 @@
+# Straylight Control Plane v1 — watchdog (shadow mode).
+#
+# Authority: docs/decisions/ADR-050-autonomous-execution-control-plane.md
+#
+# Recovery sweep: finds expired leases, stuck lanes, ready-for-codex lanes
+# without an audit, and audited lanes whose PR head moved; posts deduped
+# recovery events. Runs on an OFF-MINUTE cron (:17) to avoid the top-of-
+# the-hour thundering herd, plus manual dispatch. Never merges, never
+# calls a model API, never holds contents:write.
+
+name: Straylight CP Watchdog
+
+on:
+  schedule:
+    - cron: "17 */4 * * *"
+  workflow_dispatch: {}
+
+# contents:read — checkout of protocol code. issues:write — recovery events.
+permissions:
+  contents: read
+  issues: write
+
+# One watchdog at a time, ever: two sweeps must not race the same lane.
+concurrency:
+  group: straylight-watchdog
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          submodules: recursive
+
+      - name: Setup Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: Kill switch check
+        id: killswitch
+        run: |
+          set -euo pipefail
+          if [[ "$(jq -r '.enabled' .straylight/automation-policy.json)" != "true" ]]; then
+            echo "Automation disabled (kill switch). Watchdog exiting."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Reconstruct all lanes and scan
+        if: steps.killswitch.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo '{"lanes": [], "context": {"pr_heads": {}, "last_activity": {}}}' > /tmp/scan-input.json
+          mapfile -t ISSUES < <(gh api "repos/${REPO}/issues?labels=cp-lane&state=open&per_page=100" -q '.[].number')
+          : > /tmp/lane-issues.tsv
+          for N in "${ISSUES[@]:-}"; do
+            [[ -z "$N" ]] && continue
+            gh api "repos/${REPO}/issues/${N}" > /tmp/issue.json
+            gh api "repos/${REPO}/issues/${N}/comments" --paginate > /tmp/comments.json
+            jq -n --slurpfile issue /tmp/issue.json --slurpfile comments /tmp/comments.json \
+              '{issue_body: $issue[0].body,
+                comments: ($comments | add // [] | map({id: .id, user: .user.login, body: .body, created_at: .created_at}))}' \
+              > /tmp/reduce-input.json
+            node .straylight/bin/reduce-issue.mjs --input /tmp/reduce-input.json > /tmp/lane.json || continue
+            [[ "$(jq -r '.ok' /tmp/lane.json)" == "true" ]] || continue
+            LAST=$(jq -r '[.comments[].id] | max // 0' /tmp/reduce-input.json)
+            LAST_TS=$(gh api "repos/${REPO}/issues/${N}" -q '.updated_at')
+            LANE_ID=$(jq -r '.lane.lane_id' /tmp/lane.json)
+            PRNUM=$(jq -r '.lane.pr_number // empty' /tmp/lane.json)
+            HEAD=""
+            if [[ "$PRNUM" =~ ^[0-9]+$ ]]; then
+              HEAD=$(gh api "repos/${REPO}/pulls/${PRNUM}" -q '.head.sha' 2>/dev/null || true)
+            fi
+            printf '%s\t%s\n' "$LANE_ID" "$N" >> /tmp/lane-issues.tsv
+            jq --slurpfile lane /tmp/lane.json \
+               --arg laneid "$LANE_ID" --arg ts "$LAST_TS" --arg pr "$PRNUM" --arg head "$HEAD" \
+               '.lanes += [$lane[0].lane]
+                | .context.last_activity[$laneid] = $ts
+                | (if ($pr != "" and $head != "") then .context.pr_heads[$pr] = $head else . end)' \
+               /tmp/scan-input.json > /tmp/scan-input2.json
+            mv /tmp/scan-input2.json /tmp/scan-input.json
+          done
+          jq --arg now "$NOW" '.context.now = $now' /tmp/scan-input.json > /tmp/scan-input2.json
+          mv /tmp/scan-input2.json /tmp/scan-input.json
+          node .straylight/bin/watchdog-scan.mjs --input /tmp/scan-input.json > /tmp/scan-result.json
+          cat /tmp/scan-result.json
+
+      - name: Post deduped recovery events
+        if: steps.killswitch.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          COUNT=$(jq -r '.actions | length' /tmp/scan-result.json)
+          echo "watchdog proposes ${COUNT} action(s)"
+          for i in $(seq 0 $((COUNT - 1)) 2>/dev/null || true); do
+            jq -c ".actions[$i]" /tmp/scan-result.json > /tmp/action.json
+            LANE_ID=$(jq -r '.lane_id' /tmp/action.json)
+            DEDUPE=$(jq -r '.dedupe_key' /tmp/action.json)
+            TYPE=$(jq -r '.type' /tmp/action.json)
+            ISSUE=$(awk -F'\t' -v id="$LANE_ID" '$1 == id {print $2}' /tmp/lane-issues.tsv | head -1)
+            [[ -n "$ISSUE" ]] || { echo "no issue for ${LANE_ID}; skipping"; continue; }
+            # Idempotency: never post the same recovery twice.
+            if gh api "repos/${REPO}/issues/${ISSUE}/comments" --paginate -q '.[].body' \
+                | grep -qF "dedupe:${DEDUPE}"; then
+              echo "already posted ${DEDUPE}; skipping"
+              continue
+            fi
+            if [[ "$TYPE" == "post-event" ]]; then
+              jq -n --slurpfile a /tmp/action.json --arg now "$NOW" --arg dedupe "$DEDUPE" '
+                {
+                  schema: "straylight.event.v1",
+                  event_id: ("evt-" + ($dedupe | gsub("[^a-z0-9-]"; "-") | ascii_downcase | .[0:60])),
+                  lane_id: $a[0].lane_id,
+                  sequence: $a[0].sequence,
+                  actor_role: "system",
+                  github_actor: "github-actions[bot]",
+                  event_type: $a[0].event_type,
+                  prior_state: $a[0].prior_state,
+                  reason: $a[0].detail,
+                  occurred_at: $now
+                }
+                + (if $a[0].requested_state then {requested_state: $a[0].requested_state} else {} end)
+              ' > /tmp/event.json
+              {
+                echo "## Straylight watchdog recovery (shadow mode)"
+                echo ""
+                echo "dedupe:${DEDUPE}"
+                echo ""
+                echo "<!-- straylight:event:v1 -->"
+                echo '```json'
+                cat /tmp/event.json
+                echo '```'
+              } > /tmp/comment.md
+            else
+              {
+                echo "## Straylight watchdog finding (shadow mode)"
+                echo ""
+                echo "dedupe:${DEDUPE}"
+                echo ""
+                echo "<!-- straylight:watchdog-result:v1 -->"
+                echo '```json'
+                jq --arg now "$NOW" '. + {observed_at: $now}' /tmp/action.json
+                echo '```'
+              } > /tmp/comment.md
+            fi
+            gh api -X POST "repos/${REPO}/issues/${ISSUE}/comments" \
+              --input <(jq -n --rawfile body /tmp/comment.md '{body: $body}')
+            echo "posted ${DEDUPE} on issue #${ISSUE}"
+          done

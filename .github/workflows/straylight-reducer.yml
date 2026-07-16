@@ -1,0 +1,170 @@
+# Straylight Control Plane v1 — reducer (shadow mode).
+#
+# Authority: docs/decisions/ADR-050-autonomous-execution-control-plane.md
+# Protocol:  .straylight/README.md
+#
+# Mechanical only: fetches the lane issue + comments via the GitHub API,
+# runs the pure reducer, syncs derived cp-* labels, and posts a
+# machine-readable reducer result. Makes NO semantic decisions, calls NO
+# model API, and holds NO contents:write.
+#
+# Security posture:
+#   - permissions: contents:read + issues:write only (documented below);
+#   - issue/comment bodies are UNTRUSTED: they travel API -> jq -> file ->
+#     Node JSON.parse; they are never interpolated into shell commands;
+#   - first-party actions pinned to immutable commit SHAs;
+#   - triggers avoid the privileged PR-target event class entirely;
+#   - concurrency per issue so two reducer runs cannot race one lane.
+
+name: Straylight CP Reducer
+
+on:
+  issues:
+    types: [opened, labeled]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Lane issue number to reduce"
+        required: true
+
+# contents:read  — checkout of .straylight/ protocol code (and .loa submodule
+#                  for repo consistency; no Loa script is invoked here).
+# issues:write   — sync derived cp-* labels + post the reducer result comment.
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: straylight-reducer-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: false
+
+jobs:
+  reduce:
+    # Only lanes: cp-lane label (or explicit manual dispatch). Bots' own
+    # result comments carry no straylight:event marker, so reducing on them
+    # is a no-op, but skip github-actions comments outright to avoid loops.
+    if: >
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'cp-lane')) ||
+      (github.event_name == 'issue_comment' &&
+       contains(github.event.issue.labels.*.name, 'cp-lane') &&
+       github.event.comment.user.login != 'github-actions[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # Repo convention (issue #669): keep recursive submodule checkout
+          # so .claude symlinks into .loa never dangle on runners.
+          submodules: recursive
+
+      - name: Setup Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: Fetch lane content (untrusted, to file)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Bodies go straight from the API into JSON files. No body content
+          # is ever expanded by the shell.
+          gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" > /tmp/issue.json
+          gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate > /tmp/comments.json
+          jq -n \
+            --slurpfile issue /tmp/issue.json \
+            --slurpfile comments /tmp/comments.json \
+            '{
+              issue_body: $issue[0].body,
+              comments: ($comments | add // [] | map({id: .id, user: .user.login, body: .body, created_at: .created_at}))
+            }' > /tmp/reducer-input.json
+
+      - name: Attach current PR head (fail closed if absent)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # Best-effort: if the lane names a PR, give the reducer its live
+          # head SHA so exact-SHA audit binding can be checked. Absence is
+          # safe — the reducer fails closed without it.
+          PR=$(node .straylight/bin/reduce-issue.mjs --input /tmp/reducer-input.json 2>/dev/null \
+               | jq -r '.lane.pr_number // empty' || true)
+          if [[ "$PR" =~ ^[0-9]+$ ]]; then
+            HEAD=$(gh api "repos/${REPO}/pulls/${PR}" -q '.head.sha' 2>/dev/null || true)
+            if [[ "$HEAD" =~ ^[0-9a-f]{40}$ ]]; then
+              jq --arg head "$HEAD" '.context = {pr_head_sha: $head}' \
+                /tmp/reducer-input.json > /tmp/reducer-input2.json
+              mv /tmp/reducer-input2.json /tmp/reducer-input.json
+            fi
+          fi
+
+      - name: Reduce lane
+        id: reduce
+        run: |
+          set -euo pipefail
+          node .straylight/bin/reduce-issue.mjs --input /tmp/reducer-input.json > /tmp/reducer-result.json || true
+          cat /tmp/reducer-result.json
+
+      - name: Sync derived labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          OK=$(jq -r '.ok' /tmp/reducer-result.json)
+          [[ "$OK" == "true" ]] || { echo "reduction failed closed; labels untouched"; exit 0; }
+          # Desired cp-* labels come from the pure deriveLabels projection.
+          mapfile -t WANT < <(jq -r '.labels[]' /tmp/reducer-result.json)
+          mapfile -t HAVE < <(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/labels" \
+            -q '.[].name' | grep -E '^cp-' || true)
+          for l in "${HAVE[@]:-}"; do
+            [[ -z "$l" || "$l" == "cp-lane" ]] && continue
+            printf '%s\n' "${WANT[@]}" | grep -qxF -- "$l" || \
+              gh api -X DELETE "repos/${REPO}/issues/${ISSUE_NUMBER}/labels/$(jq -rn --arg v "$l" '$v|@uri')" || true
+          done
+          for l in "${WANT[@]:-}"; do
+            [[ -z "$l" ]] && continue
+            printf '%s\n' "${HAVE[@]:-}" | grep -qxF -- "$l" || \
+              gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/labels" \
+                --input <(jq -n --arg l "$l" '{labels: [$l]}') || true
+          done
+
+      - name: Post reducer result (idempotent per event_sequence)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          SEQ=$(jq -r '.lane.event_sequence // "invalid"' /tmp/reducer-result.json)
+          STATE=$(jq -r '.lane.state // "invalid"' /tmp/reducer-result.json)
+          DEDUPE="reducer-result:${SEQ}:${STATE}"
+          # Idempotency: if a result for this exact sequence+state was already
+          # posted, do not post another.
+          if gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate \
+              -q '.[].body' | grep -qF "dedupe:${DEDUPE}"; then
+            echo "result already posted for ${DEDUPE}; skipping"
+            exit 0
+          fi
+          {
+            echo "## Straylight reducer result (shadow mode)"
+            echo ""
+            echo "State: \`${STATE}\` · next actor: \`$(jq -r '.lane.next_actor // "n/a"' /tmp/reducer-result.json)\` · sequence: \`${SEQ}\`"
+            echo ""
+            echo "<!-- straylight:reducer-result:v1 -->"
+            echo '```json'
+            jq --arg d "dedupe:${DEDUPE}" '{dedupe: $d, ok, labels, lane: (.lane | {lane_id, state, next_actor, event_sequence, pr_number, pr_head_sha, audited_sha, verdict, patch_cycle, operator_pause}), dispositions}' /tmp/reducer-result.json
+            echo '```'
+            echo ""
+            echo "_Mechanical reduction only. No semantic decision. Nothing merges. Kill switch: \`.straylight/automation-policy.json\` → \`enabled: false\`._"
+          } > /tmp/result-comment.md
+          gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+            --input <(jq -n --rawfile body /tmp/result-comment.md '{body: $body}')

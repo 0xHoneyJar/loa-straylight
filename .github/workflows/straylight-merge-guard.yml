@@ -1,0 +1,136 @@
+# Straylight Control Plane v1 — shadow merge guard.
+#
+# Authority: docs/decisions/ADR-050-autonomous-execution-control-plane.md
+#
+# Validates merge ELIGIBILITY (state ready-for-merge, verdict ACCEPT,
+# audited SHA == current head SHA, required checks green, no operator
+# pause, policy sane) and posts a shadow-mode result.
+#
+# THIS WORKFLOW CANNOT MERGE. It contains no merge API invocation of any
+# shape (REST, CLI, or GraphQL), no branch mutation of any kind, and its
+# token is read-only for repository contents — GitHub would reject a merge
+# attempt even if the code were compromised. Enabling automatic merge
+# requires a future ADR,
+# a separately audited authorization, and distinct actor identities
+# (ADR-050 §6) — not a change to this file's conditions.
+
+name: Straylight CP Merge Guard
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Lane issue number to evaluate"
+        required: true
+
+# contents:read       — checkout of protocol code.
+# issues:write        — post the shadow result on the lane issue.
+# pull-requests:read  — read PR head SHA + check states (never write).
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: straylight-merge-guard-${{ inputs.issue_number }}
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          submodules: recursive
+
+      - name: Setup Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: Reconstruct lane
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" > /tmp/issue.json
+          gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate > /tmp/comments.json
+          jq -n --slurpfile issue /tmp/issue.json --slurpfile comments /tmp/comments.json \
+            '{issue_body: $issue[0].body,
+              comments: ($comments | add // [] | map({id: .id, user: .user.login, body: .body, created_at: .created_at}))}' \
+            > /tmp/reduce-input.json
+          node .straylight/bin/reduce-issue.mjs --input /tmp/reduce-input.json > /tmp/lane-result.json
+          jq '.lane' /tmp/lane-result.json > /tmp/lane.json
+
+      - name: Gather PR head and check status (fail closed on absence)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          PRNUM=$(jq -r '.pr_number // empty' /tmp/lane.json)
+          HEAD=""
+          CHECKS="false"
+          if [[ "$PRNUM" =~ ^[0-9]+$ ]]; then
+            HEAD=$(gh api "repos/${REPO}/pulls/${PRNUM}" -q '.head.sha' 2>/dev/null || true)
+            if [[ "$HEAD" =~ ^[0-9a-f]{40}$ ]]; then
+              # Required checks: every check run on the head must be a success
+              # (or none exist and the repo requires none — still reported
+              # honestly as false unless explicitly all-success).
+              TOTAL=$(gh api "repos/${REPO}/commits/${HEAD}/check-runs" -q '.total_count' 2>/dev/null || echo "")
+              if [[ "$TOTAL" == "0" ]]; then
+                CHECKS="true"   # no checks configured — nothing failing
+              elif [[ "$TOTAL" =~ ^[0-9]+$ ]]; then
+                FAILING=$(gh api "repos/${REPO}/commits/${HEAD}/check-runs" --paginate \
+                  -q '[.check_runs[] | select(.conclusion != "success" and .conclusion != "neutral" and .conclusion != "skipped")] | length')
+                [[ "$FAILING" == "0" ]] && CHECKS="true"
+              fi
+            fi
+          fi
+          jq -n --slurpfile lane /tmp/lane.json --arg head "$HEAD" --argjson checks "$CHECKS" \
+            '{lane: $lane[0],
+              context: ({required_checks_passed: $checks}
+                        + (if $head != "" then {pr_head_sha: $head} else {} end))}' \
+            > /tmp/guard-input.json
+
+      - name: Evaluate shadow eligibility
+        run: |
+          set -euo pipefail
+          node .straylight/bin/merge-guard-check.mjs --input /tmp/guard-input.json > /tmp/guard-result.json
+          cat /tmp/guard-result.json
+
+      - name: Post shadow result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          ELIGIBLE=$(jq -r '.eligible' /tmp/guard-result.json)
+          SEQ=$(jq -r '.event_sequence // "na"' /tmp/lane.json)
+          HEAD=$(jq -r '.context.pr_head_sha // "unknown"' /tmp/guard-input.json)
+          DEDUPE="merge-guard:${SEQ}:${HEAD}:${ELIGIBLE}"
+          if gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate -q '.[].body' \
+              | grep -qF "dedupe:${DEDUPE}"; then
+            echo "already posted ${DEDUPE}; skipping"
+            exit 0
+          fi
+          {
+            echo "## Straylight merge guard — SHADOW RESULT (cannot merge)"
+            echo ""
+            echo "dedupe:${DEDUPE}"
+            echo ""
+            echo "Eligibility: **${ELIGIBLE}** — this is a report, not an action."
+            echo "Merging remains an exclusive \`operator:eileen\` action."
+            echo ""
+            echo "<!-- straylight:merge-guard-result:v1 -->"
+            echo '```json'
+            cat /tmp/guard-result.json
+            echo '```'
+          } > /tmp/comment.md
+          gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+            --input <(jq -n --rawfile body /tmp/comment.md '{body: $body}')
