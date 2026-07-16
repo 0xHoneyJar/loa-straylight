@@ -46,8 +46,15 @@ through which:
 - **Issues identify lanes.** One GitHub issue = one lane.
 - **Pull requests identify implementation targets.** A lane binds to at
   most one open implementation PR at a time.
-- **Structured comments form the append-only event record.** Events are
-  never edited or deleted; corrections are new events.
+- **Structured comments form an append-oriented event record.** The protocol
+  convention is that events are appended, not edited or deleted; corrections
+  are new events. This is a convention, not a cryptographic guarantee —
+  GitHub comments are editable and deletable. v1 mitigates rather than
+  prevents mutation: the reducer input carries each comment's `created_at`
+  and `updated_at`, and any protocol comment whose `updated_at` is after its
+  `created_at` is routed to `operator-required` on reconstruction. Deletion
+  and comment-history forgery remain documented shadow-mode limitations (§6),
+  bounded by the actor allowlist and by the fact that nothing merges.
 - **Labels are reduced/derived state, never primary authority.** Any label
   can be reconstructed by re-reducing the event record; a label that
   disagrees with the reduction is wrong.
@@ -239,20 +246,34 @@ losing history.
 
 ### 5.3 Exact-SHA audit and the PR #116 lesson
 
-An audit verdict binds to an exact `audited_head_sha`. An `ACCEPT` is
-invalid when the PR head changed, the base changed, the lane differs, the
-SHA is missing, the auditor identity is not allowlisted, or the payload
-is malformed. And, encoding the lesson from PR #116:
+An audit verdict binds to an exact `audited_head_sha`, cross-checked
+against the **authoritative live PR metadata** the adapter supplies at the
+audit frontier (repository, PR number, open/merged state, base branch/SHA,
+head branch/SHA). An `ACCEPT` is invalid when the live PR head moved, the
+base changed or was retargeted, the PR is closed, merged, or still a
+**draft** (a draft PR is not ready to merge, so eligibility cannot be
+recorded against it), the repository or PR number differs, the lane
+differs, the SHA is missing, the auditor identity is not allowlisted, or
+the payload is malformed. The canonical
+location of the audit record is a **comment on the lane issue** (the only
+stream reconstruction reads), bound to its author and a canonical content
+digest so a later edit breaks the binding. And, encoding the lesson from
+PR #116:
 
 > **An audit report must not be committed into the pull request it
 > audits, because doing so changes the audited target.** An audit that
 > appears as a commit inside the audited PR invalidates itself: the head
-> SHA the verdict binds to no longer equals the head SHA of the PR.
-> Audits are posted externally (PR comment / lane event), never as
-> repository content inside the audited branch.
+> SHA the verdict binds to no longer equals the live head SHA of the PR.
+> Audits live as lane-issue comments, never as repository content inside
+> the audited branch.
 
-The reducer enforces this mechanically (`audit_committed_in_pr` context
-check) in addition to the prompt-level instruction.
+Two layers enforce this. (1) MECHANICAL: the reducer binds the ACCEPT to
+the *live* head SHA fetched read-only from the PR; an audit committed into
+the branch moves the head, so the audited SHA no longer matches and the
+ACCEPT is refused (`audit-stale-head`). (2) ATTESTATION: `audit_committed_in_pr`
+is the auditor's self-report; the validator rejects a `true` attestation.
+The mechanical layer is the real guarantee — the field is a declared
+attestation, not a claim of file-list inspection.
 
 ---
 

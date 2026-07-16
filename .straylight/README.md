@@ -13,7 +13,7 @@ This directory is the canonical, normative protocol. Everything else
 
 GitHub is the durable blackboard. **One issue = one lane.** The issue body
 carries the genesis lane record; every subsequent protocol action is an
-**append-only event** posted as an issue comment. A pure reducer
+**append-oriented event** posted as an issue comment. A pure reducer
 ([`lib/reducer.mjs`](./lib/reducer.mjs)) replays the comment stream over
 the genesis record to derive the current state — labels are projections,
 never authority. Actors (ChatGPT coordinator, Claude implementer, Codex
@@ -21,6 +21,14 @@ auditor) hold **leases** while working, bind their outputs to **exact
 SHAs**, and anything malformed, stale, unknown, out-of-corridor, or
 posted by a non-allowlisted identity is refused: the lane simply does not
 advance. Nothing in v1 can merge.
+
+"Append-oriented" is a protocol convention, not a cryptographic guarantee:
+GitHub comments are editable and deletable. v1 mitigates rather than
+prevents mutation — reconstruction carries each comment's `created_at` and
+`updated_at`, and any protocol comment edited after posting (`updated_at`
+after `created_at`) is routed to `operator-required`. Deletion and
+edit-history forgery remain documented shadow-mode limitations, bounded by
+the actor allowlist and by the fact that nothing merges.
 
 ## Directory layout
 
@@ -187,27 +195,35 @@ reducer enforces this at `implementer.lease_acquired`. A packet whose
 Codex posts an audit record (`straylight:audit:v1`, schema:
 [`schemas/audit-v1.schema.json`](./schemas/audit-v1.schema.json))
 **externally to the PR under audit — as a comment on the LANE ISSUE**
-(never committed into the audited branch). The audit record MUST live in
-the lane-issue comment stream so it is reconstructible from the lane issue
-alone (the reducer/watchdog fetch only issue comments); an audit posted as
-a PR-thread comment is unreachable and its completion event fails closed.
-The `auditor.audit_completed` event references it via
-`refs.audit_comment_id`, and reconstruction binds that reference only when
-the referenced comment was authored by the SAME auditor that posts the
-completion event (`audit-comment-author-mismatch` otherwise). It binds to
-an exact `audited_head_sha` and confirms the complete base-to-head diff
-was reviewed. An `ACCEPT` is invalid when: the live PR head changed (the
-live head is authoritative over any implementer-recorded head); the base
-changed; the lane differs; the exact SHA is missing; the auditor identity
-is not allowlisted; the referenced audit comment is authored by someone
-else; the verdict payload is malformed; or —
+(never committed into the audited branch). **Canonical location: a comment
+on the LANE ISSUE** — the only stream the reducer/watchdog reconstruct
+from; an audit posted as a PR-thread comment is unreachable and its
+completion event fails closed. The `auditor.audit_completed` event
+references it via `refs.audit_comment_id`, and reconstruction binds that
+reference only when the referenced comment (a) is EARLIER than the
+completion event (no forward reference), (b) was authored by the SAME
+auditor that posts the completion event (`artifact-author-mismatch`
+otherwise), and (c) was not edited after posting; the bound record is
+pinned by a canonical content digest so a later edit breaks the binding.
+It binds to an exact `audited_head_sha` and confirms the complete
+base-to-head diff was reviewed. An `ACCEPT` is invalid when, checked
+against the authoritative live PR metadata: the live head moved; the base
+changed or the PR was retargeted; the PR is closed, merged, or still a
+draft (a draft PR is not ready to merge); the repository or PR number
+differs; the lane differs; the exact SHA is missing; the auditor identity
+is not allowlisted; the referenced audit comment is a forward reference,
+authored by someone else, or edited; the verdict payload is malformed; the
+verdict/next_actor disagree; an `ACCEPT` carries concerns; or —
 
 > **the audit was committed into the audited PR.** An audit report must
 > not be committed into the pull request it audits because doing so
 > changes the audited target (the head SHA the verdict binds to no longer
-> exists as the PR head). This is the recorded lesson of PR #116, and it
-> is enforced structurally: `audit_committed_in_pr` must be `false` or
-> the record is invalid.
+> exists as the live PR head). This is the recorded lesson of PR #116.
+> The MECHANICAL guarantee is the live-head binding above (a committed
+> audit moves the head, so `audited_head_sha` no longer matches and the
+> ACCEPT is refused). `audit_committed_in_pr` is the auditor's
+> ATTESTATION: the validator rejects a `true` value, but the field is a
+> self-report, not a file-list inspection.
 
 If the head moves after an `ACCEPT`, the watchdog posts
 `system.head_moved` and the lane returns to `ready-for-codex` with the
