@@ -133,6 +133,34 @@ export function reduce(lane, event, policy, context = {}) {
       `${event.event_type} by ${event.actor_role} not allowed from ${lane.state}`,
     );
   }
+
+  // -- 5.5. Next-actor turn discipline. --------------------------------------
+  // A model role (coordinator/implementer/auditor) may only act when it is
+  // the lane's next actor. Every non-escalation transition already satisfies
+  // this by construction of the event table; the one gap the table leaves
+  // open is coordinator.escalated, which is legal from states owned by the
+  // implementer (ready-for-claude) and operator (ready-for-merge) — letting a
+  // coordinator yank a lane out from under whoever's turn it actually is
+  // (e.g. escalating a ready-for-merge lane the operator is about to merge).
+  // The coordinator prompt already scopes the coordinator to coordinator-turn
+  // lanes; this enforces it mechanically. The turn owner is DERIVED from the
+  // lane state (nextActorFor) — not read from the stored next_actor
+  // projection, which is derived state (ADR-050 §1.1) and must never be
+  // trusted as authority. operator and system are the deliberate escape
+  // hatches (the operator is the supreme authority; the watchdog must recover
+  // any lane), so they bypass the turn check.
+  const turnOwner = nextActorFor(lane.state);
+  if (
+    event.actor_role !== "operator" &&
+    event.actor_role !== "system" &&
+    event.actor_role !== turnOwner
+  ) {
+    return refuse(
+      lane,
+      "not-next-actor",
+      `${event.actor_role} may not act; lane turn belongs to ${turnOwner}`,
+    );
+  }
   const spec = EVENT_TYPES[event.event_type];
 
   // -- 6. Lease discipline. ---------------------------------------------------
@@ -188,12 +216,36 @@ export function reduce(lane, event, policy, context = {}) {
       if (!event.lease_id || !event.lease_expires_at) {
         return refuse(lane, "lease-fields-missing", "lease_id and lease_expires_at required");
       }
+      // A lease grant is time-bearing: without a trusted observed time we
+      // cannot bound its expiry, so fail closed rather than store an
+      // actor-chosen, unbounded window.
+      const grantAt = observedAt(context);
+      if (grantAt === null) {
+        return refuse(lane, "time-missing", "lease grant requires event_observed_at or now");
+      }
       if (lane.lease) {
-        const at = observedAt(context);
-        // Unknown time → fail closed: assume the existing lease is active.
-        if (at === null || Date.parse(lane.lease.expires_at) > at) {
+        // Unknown time already handled above; the existing lease is active
+        // until its recorded expiry.
+        if (Date.parse(lane.lease.expires_at) > grantAt) {
           return refuse(lane, "lease-already-held", `active lease ${lane.lease.lease_id}`);
         }
+      }
+      // The expiry is actor-supplied but must not exceed observed grant time
+      // + the policy lease duration. An unbounded (e.g. year-2099) expiry
+      // would park the lane forever: the watchdog only reaps a lease once
+      // its recorded expiry passes, so an unbounded lease is never reaped
+      // and the lane never recovers. Fail closed on any over-long window.
+      const maxExpiry = grantAt + policy.lease_duration_minutes * 60000;
+      const claimedExpiry = Date.parse(event.lease_expires_at);
+      if (Number.isNaN(claimedExpiry)) {
+        return refuse(lane, "lease-expiry-invalid", "lease_expires_at is not a valid time");
+      }
+      if (claimedExpiry > maxExpiry) {
+        return refuse(
+          lane,
+          "lease-expiry-unbounded",
+          `lease_expires_at ${event.lease_expires_at} exceeds observed grant + ${policy.lease_duration_minutes}m`,
+        );
       }
       const role = event.event_type === "implementer.lease_acquired" ? "implementer" : "auditor";
       // Claude must not begin implementation without a valid current task
@@ -287,13 +339,32 @@ export function reduce(lane, event, policy, context = {}) {
         return refuse(lane, "audit-verdict-mismatch", "event verdict must equal audit record verdict");
       }
       // Exact-SHA binding: the audit only counts if it audited the CURRENT
-      // head. The lane's event-derived head (set by implementer.completed)
-      // is authoritative here so that replaying history is deterministic;
-      // live-head divergence is detected separately by system.head_moved
-      // and the merge guard. Unknown head → fail closed.
-      const currentHead = lane.pr_head_sha ?? context.pr_head_sha ?? null;
+      // head. The LIVE PR head (context.pr_head_sha, fetched read-only by the
+      // reducer/merge-guard workflow) is AUTHORITATIVE when available — it is
+      // the ground truth against which an ACCEPT must bind. The event-derived
+      // head (lane.pr_head_sha, set from the implementer's CLAIMED head in
+      // implementer.completed) is only a fallback for deterministic replay
+      // when no live head is supplied; it must never override the live head,
+      // or an implementer could bind an ACCEPT to a stale/false SHA it chose
+      // (B1). This is replay-safe: reconstruction only supplies pr_head_sha
+      // when the caller explicitly provides it, and when it does the live
+      // head is exactly what the exact-SHA rule must check against. Unknown
+      // head → fail closed.
+      const liveHead = context.pr_head_sha ?? null;
+      const currentHead = liveHead ?? lane.pr_head_sha ?? null;
       if (!currentHead) {
         return refuse(lane, "head-unknown", "current PR head SHA unavailable; cannot bind audit");
+      }
+      // If both a live head and an event-recorded head exist and disagree,
+      // the recorded head is stale relative to live truth — the audit cannot
+      // be trusted to have reviewed the live target. Fail closed.
+      if (liveHead && lane.pr_head_sha && liveHead !== lane.pr_head_sha &&
+          audit.audited_head_sha !== liveHead) {
+        return refuse(
+          lane,
+          "audit-stale-head",
+          `audited ${audit.audited_head_sha}; live head ${liveHead} diverges from recorded ${lane.pr_head_sha}`,
+        );
       }
       if (audit.audited_head_sha !== currentHead) {
         return refuse(
@@ -395,17 +466,37 @@ export function reduce(lane, event, policy, context = {}) {
       if (Date.parse(lane.lease.expires_at) > at) {
         return refuse(lane, "lease-not-expired", `lease valid until ${lane.lease.expires_at}`);
       }
-      return advance(lane, event, "lease-expired", { lease: null });
+      // Record WHICH role lost its lease so recovery routes to the correct
+      // retry state (implementer→ready-for-claude, auditor→ready-for-codex),
+      // rather than guessing from PR presence.
+      return advance(lane, event, "lease-expired", {
+        lease: null,
+        last_lease_role: lane.lease.actor_role,
+      });
     }
 
     case "system.requeued": {
       // Watchdog recovery: return an expired lane to the safe retry state
-      // for whichever role lost its lease.
+      // for whichever role lost its lease. The target must match the role
+      // recorded at expiry — a requeue to the other role's queue is refused
+      // (a lost implementer must not be routed to the auditor and vice versa).
       const target = event.requested_state;
       if (target !== "ready-for-claude" && target !== "ready-for-codex") {
         return refuse(lane, "requeue-target-forbidden", `cannot requeue to ${target}`);
       }
-      return advance(lane, event, target, {});
+      const expectedTarget = lane.last_lease_role === "auditor"
+        ? "ready-for-codex"
+        : lane.last_lease_role === "implementer"
+          ? "ready-for-claude"
+          : null;
+      if (expectedTarget !== null && target !== expectedTarget) {
+        return refuse(
+          lane,
+          "requeue-role-mismatch",
+          `lost lease was ${lane.last_lease_role}; requeue target ${target} != ${expectedTarget}`,
+        );
+      }
+      return advance(lane, event, target, { last_lease_role: null });
     }
 
     case "system.escalated": {

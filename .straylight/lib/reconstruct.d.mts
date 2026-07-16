@@ -18,6 +18,13 @@ export interface ReconstructResult {
   lane: Record<string, any> | null;
   dispositions: Disposition[];
   labels: string[];
+  /**
+   * True when the kill switch is engaged (policy.enabled !== true) or the
+   * policy is unusable. History is replayed faithfully (freeze, not rewind);
+   * consumers must take no NEW action while frozen. Undefined only on the
+   * early error returns before replay.
+   */
+  frozen?: boolean;
 }
 export declare function reconstructLane(input: ReconstructInput): ReconstructResult;
 export declare function deriveLabels(lane: Record<string, any>): string[];
