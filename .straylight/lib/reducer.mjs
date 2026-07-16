@@ -417,16 +417,19 @@ export function reduce(lane, event, policy, context = {}) {
     }
 
     case "system.head_moved": {
-      // A changed PR head invalidates a prior ACCEPT.
-      const currentHead = context.pr_head_sha ?? null;
-      if (!currentHead) {
-        return refuse(lane, "head-unknown", "system.head_moved requires context.pr_head_sha");
+      // A changed PR head invalidates a prior ACCEPT. The event carries the
+      // NEW head SHA itself (recorded by the watchdog at observation time)
+      // so that replaying history is deterministic even after the live PR
+      // moves again or closes.
+      const newHead = event.head_sha ?? null;
+      if (!newHead) {
+        return refuse(lane, "head-missing", "system.head_moved requires event.head_sha (the observed new head)");
       }
-      if (lane.audited_sha && currentHead === lane.audited_sha) {
-        return refuse(lane, "head-not-moved", "current head equals audited SHA");
+      if (lane.audited_sha && newHead === lane.audited_sha) {
+        return refuse(lane, "head-not-moved", "observed head equals audited SHA");
       }
       return advance(lane, event, "ready-for-codex", {
-        pr_head_sha: currentHead,
+        pr_head_sha: newHead,
         verdict: null,
         audited_sha: null,
       }, [{ type: "unlabel", value: "cp-ready-for-merge" }], "prior ACCEPT invalidated by head move");

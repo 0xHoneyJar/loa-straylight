@@ -215,10 +215,18 @@ control-plane workflow holds `contents: write`.
 | `straylight-bootstrap.yml` | manual `workflow_dispatch` | idempotently create the single Phase 49P shadow lane issue | implement 49P, open its PR, call a model API, merge |
 
 All workflows: least-privilege permissions (`contents: read` +
-`issues: write` and/or `pull-requests: write`), actions pinned to
+`issues: write` and/or `pull-requests: read`), actions pinned to
 immutable commit SHAs, concurrency groups so two runs cannot move the
 same lane simultaneously, payloads passed to Node via files/stdin — never
 interpolated into shell.
+
+Known eventual-consistency wrinkle (accepted for v1): the reducer skips
+comments posted by `github-actions[bot]` to prevent trigger loops, so an
+event posted by the watchdog does not itself re-trigger label sync.
+State is never lost — every reduction replays the full comment stream —
+but derived labels may lag until the next actor comment or a manual
+reducer dispatch. Labels are projections, not authority, so this lag is
+cosmetic.
 
 ## Recovery from total local-state loss
 

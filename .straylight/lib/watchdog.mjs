@@ -52,7 +52,10 @@ export function scan(lanes, policy, context = {}) {
         lane_id: lane.lane_id,
         sequence: lane.event_sequence + 1,
         prior_state: lane.state,
-        dedupe_key: `lease-expired:${lane.lane_id}:${lane.lease.lease_id}`,
+        // event_sequence is part of the key so a recovery event refused in a
+        // race (e.g. an operator pause consumed the sequence) is re-proposed
+        // once the lane advances, instead of being deduped away forever.
+        dedupe_key: `lease-expired:${lane.lane_id}:${lane.lease.lease_id}:${lane.event_sequence}`,
         detail: `lease ${lane.lease.lease_id} expired ${lane.lease.expires_at}`,
       });
       continue; // one recovery step per lane per sweep
@@ -84,7 +87,8 @@ export function scan(lanes, policy, context = {}) {
           lane_id: lane.lane_id,
           sequence: lane.event_sequence + 1,
           prior_state: "ready-for-merge",
-          dedupe_key: `head-moved:${lane.lane_id}:${currentHead}`,
+          head_sha: currentHead, // recorded in the event for replay determinism
+          dedupe_key: `head-moved:${lane.lane_id}:${currentHead}:${lane.event_sequence}`,
           detail: `head ${currentHead} != audited ${lane.audited_sha}`,
         });
         continue;

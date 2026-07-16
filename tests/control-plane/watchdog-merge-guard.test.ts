@@ -66,7 +66,7 @@ describe("watchdog scan", () => {
     const a = scan(lanes, policy, { now: AFTER_EXPIRY });
     const b = scan(lanes, policy, { now: AFTER_EXPIRY });
     expect(a).toEqual(b);
-    expect(a.actions[0]?.dedupe_key).toBe(`lease-expired:lane-phase-49p:lease-claude-1`);
+    expect(a.actions[0]?.dedupe_key).toBe(`lease-expired:lane-phase-49p:lease-claude-1:3`);
   });
 
   it("proposes at most one recovery step per lane per sweep", () => {

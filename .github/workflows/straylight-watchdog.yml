@@ -132,6 +132,7 @@ jobs:
                   occurred_at: $now
                 }
                 + (if $a[0].requested_state then {requested_state: $a[0].requested_state} else {} end)
+                + (if $a[0].head_sha then {head_sha: $a[0].head_sha} else {} end)
               ' > /tmp/event.json
               {
                 echo "## Straylight watchdog recovery (shadow mode)"

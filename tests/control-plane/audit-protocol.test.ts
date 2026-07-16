@@ -201,8 +201,9 @@ describe("head movement after ACCEPT", () => {
     const event = makeEvent({
       sequence: 7, actor_role: "system", github_actor: "github-actions[bot]",
       event_type: "system.head_moved", prior_state: "ready-for-merge",
+      head_sha: OTHER_SHA,
     });
-    const out = reduce(lane, event, policy, { ...ctx, pr_head_sha: OTHER_SHA });
+    const out = reduce(lane, event, policy, ctx);
     expect(out.ok).toBe(true);
     if (out.ok) {
       expect(out.lane.state).toBe("ready-for-codex");
@@ -212,18 +213,25 @@ describe("head movement after ACCEPT", () => {
     }
   });
 
-  it("system.head_moved refuses when the head did not move", () => {
+  it("system.head_moved refuses when the head did not move or is missing", () => {
     const lane = laneCodexWorking({
       state: "ready-for-merge", next_actor: "operator", event_sequence: 6,
       verdict: "ACCEPT", audited_sha: HEAD_SHA, lease: null,
     });
-    const event = makeEvent({
+    const notMoved = reduce(lane, makeEvent({
       sequence: 7, actor_role: "system", github_actor: "github-actions[bot]",
       event_type: "system.head_moved", prior_state: "ready-for-merge",
-    });
-    const out = reduce(lane, event, policy, { ...ctx, pr_head_sha: HEAD_SHA });
-    expect(out.ok).toBe(false);
-    if (!out.ok) expect(out.refusal).toBe("head-not-moved");
+      head_sha: HEAD_SHA,
+    }), policy, ctx);
+    expect(notMoved.ok).toBe(false);
+    if (!notMoved.ok) expect(notMoved.refusal).toBe("head-not-moved");
+
+    const missing = reduce(lane, makeEvent({
+      sequence: 7, actor_role: "system", github_actor: "github-actions[bot]",
+      event_type: "system.head_moved", prior_state: "ready-for-merge",
+    }), policy, ctx);
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.refusal).toBe("head-missing");
   });
 
   it("operator.merged binds to the audited SHA exactly", () => {
