@@ -9,7 +9,8 @@
 # model API, and holds NO contents:write.
 #
 # Security posture:
-#   - permissions: contents:read + issues:write only (documented below);
+#   - permissions: contents:read + issues:write + pull-requests:read only
+#     (documented below);
 #   - issue/comment bodies are UNTRUSTED: they travel API -> jq -> file ->
 #     Node JSON.parse; they are never interpolated into shell commands;
 #   - first-party actions pinned to immutable commit SHAs;
@@ -29,12 +30,16 @@ on:
         description: "Lane issue number to reduce"
         required: true
 
-# contents:read  — checkout of .straylight/ protocol code (and .loa submodule
-#                  for repo consistency; no Loa script is invoked here).
-# issues:write   — sync derived cp-* labels + post the reducer result comment.
+# contents:read       — checkout of .straylight/ protocol code (and .loa
+#                       submodule for repo consistency; no Loa script runs).
+# issues:write        — sync derived cp-* labels + post the reducer result.
+# pull-requests:read  — read the lane PR's live head SHA for exact-SHA audit
+#                       binding (read-only; the reducer fails closed without
+#                       it, but head verification then cannot function).
 permissions:
   contents: read
   issues: write
+  pull-requests: read
 
 concurrency:
   group: straylight-reducer-${{ github.event.issue.number || inputs.issue_number }}

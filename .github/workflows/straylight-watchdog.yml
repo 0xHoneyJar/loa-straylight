@@ -16,9 +16,12 @@ on:
   workflow_dispatch: {}
 
 # contents:read — checkout of protocol code. issues:write — recovery events.
+# pull-requests:read — read live PR head SHAs for moved-head detection
+# (read-only; without it detection silently cannot function).
 permissions:
   contents: read
   issues: write
+  pull-requests: read
 
 # One watchdog at a time, ever: two sweeps must not race the same lane.
 concurrency:
