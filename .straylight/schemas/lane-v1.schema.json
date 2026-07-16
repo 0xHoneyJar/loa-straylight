@@ -77,7 +77,11 @@
       "description": "Control Plane v1 forbids automatic merge. The validator rejects true."
     },
     "operator_pause": { "type": "boolean" },
-    "operator_required_reason": { "type": ["string", "null"] },
+    "operator_required_reason": { "type": ["string", "null"], "maxLength": 4000 },
+    "last_lease_role": {
+      "enum": ["implementer", "auditor", null],
+      "description": "Role whose lease was last reaped by system.lease_expired; routes system.requeued to the correct retry state (implementer→ready-for-claude, auditor→ready-for-codex). Cleared on requeue."
+    },
     "lease": {
       "type": ["object", "null"],
       "required": ["lane_id", "actor_role", "lease_id", "grant_sequence", "acquired_at", "expires_at", "expected_state"],

@@ -11,7 +11,13 @@
 // never interpolates it into shell, and fails closed on ambiguity:
 // zero markers → no payload; more than one marker of the requested kind
 // in one body → reject (an attacker must not be able to smuggle a second
-// payload past a parser that "takes the first/last one").
+// payload past a parser that "takes the first/last one"). JSON bodies are
+// parsed with the strict parser (`strict-json.mjs`), which rejects
+// duplicate object keys — the built-in JSON.parse silently keeps the last
+// duplicate, letting a payload a human reads as `"verdict":"REJECT"` reduce
+// as `"verdict":"ACCEPT"`.
+
+import { parseStrict } from "./strict-json.mjs";
 
 export const MARKERS = Object.freeze({
   lane: "straylight:lane:v1",
@@ -63,12 +69,18 @@ export function extractPayload(body, marker) {
   if (Buffer.byteLength(raw, "utf8") > MAX_PAYLOAD_BYTES) {
     return { ok: false, reason: "payload-too-large" };
   }
-  let value;
-  try {
-    value = JSON.parse(raw);
-  } catch {
-    return { ok: false, reason: "malformed-json" };
+  const parsed = parseStrict(raw);
+  if (!parsed.ok) {
+    // Duplicate object keys surface as `duplicate-object-key`; everything
+    // else is generic malformed JSON. Both fail closed.
+    return {
+      ok: false,
+      reason: parsed.reason === "duplicate-object-key"
+        ? "ambiguous-duplicate-key"
+        : "malformed-json",
+    };
   }
+  const value = parsed.value;
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     return { ok: false, reason: "payload-not-object" };
   }

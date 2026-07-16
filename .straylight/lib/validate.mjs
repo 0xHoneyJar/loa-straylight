@@ -25,7 +25,7 @@ const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const GH_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(\[bot\])?$/;
 const RELATIVE_PATH_RE = /^(?!\/)(?!.*\.\.)[\x20-\x7E]{1,300}$/;
 
-function checkString(errors, obj, key, re, { optional = false } = {}) {
+function checkString(errors, obj, key, re, { optional = false, maxLength } = {}) {
   const v = obj[key];
   if (v === undefined || v === null) {
     if (!optional) errors.push(`${key}: missing`);
@@ -36,6 +36,9 @@ function checkString(errors, obj, key, re, { optional = false } = {}) {
     return;
   }
   if (re && !re.test(v)) errors.push(`${key}: malformed (${JSON.stringify(v.slice(0, 80))})`);
+  if (maxLength !== undefined && v.length > maxLength) {
+    errors.push(`${key}: exceeds maxLength ${maxLength}`);
+  }
 }
 
 function checkEnum(errors, obj, key, values, { optional = false } = {}) {
@@ -140,7 +143,8 @@ export function validateLane(v) {
   checkEnum(errors, v, "mode", ["shadow", "active"]);
   checkBool(errors, v, "auto_merge_allowed");
   checkBool(errors, v, "operator_pause");
-  checkString(errors, v, "operator_required_reason", null, { optional: true });
+  checkString(errors, v, "operator_required_reason", null, { optional: true, maxLength: 4000 });
+  checkEnum(errors, v, "last_lease_role", ["implementer", "auditor"], { optional: true });
   if (v.lease !== undefined && v.lease !== null) {
     const lease = validateLease(v.lease);
     if (!lease.ok) errors.push(...lease.errors.map((e) => `lease.${e}`));
@@ -182,7 +186,7 @@ export function validateEvent(v) {
   checkString(errors, v, "lease_expires_at", ISO_RE, { optional: true });
   checkInt(errors, v, "attempt", { min: 0, optional: true });
   checkInt(errors, v, "patch_cycle", { min: 0, optional: true });
-  checkString(errors, v, "reason", null, { optional: true });
+  checkString(errors, v, "reason", null, { optional: true, maxLength: 4000 });
   checkString(errors, v, "occurred_at", ISO_RE);
   if (v.refs !== undefined && v.refs !== null) {
     if (!isPlainObject(v.refs)) {

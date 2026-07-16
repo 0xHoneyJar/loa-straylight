@@ -45,9 +45,15 @@ export const EVENT_TYPES = Object.freeze({
   "lane.activated": { role: ["coordinator", "operator"], from: ["planning"], to: "ready-for-coordinator" },
   "coordinator.task_packet_posted": { role: ["coordinator"], from: ["ready-for-coordinator"], to: "ready-for-claude" },
   "coordinator.patch_packet_posted": { role: ["coordinator"], from: ["patch-required"], to: "ready-for-claude" },
+  // Escalation is turn-disciplined (reducer step 5.5): the coordinator may
+  // only escalate a lane it actually owns. Its owned states are exactly
+  // planning / ready-for-coordinator / patch-required (nextActorFor ===
+  // "coordinator"). Lanes owned by other roles are escalated by that role
+  // (implementer.escalated), by the watchdog (system.escalated, from="*"),
+  // or by the operator — never by a coordinator acting out of turn.
   "coordinator.escalated": {
     role: ["coordinator"],
-    from: ["planning", "ready-for-coordinator", "ready-for-claude", "ready-for-codex", "ready-for-merge", "patch-required", "blocked", "lease-expired"],
+    from: ["planning", "ready-for-coordinator", "patch-required"],
     to: "operator-required",
   },
   "implementer.lease_acquired": { role: ["implementer"], from: ["ready-for-claude"], to: "claude-working" },
