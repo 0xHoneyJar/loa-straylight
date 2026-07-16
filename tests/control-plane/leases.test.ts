@@ -113,6 +113,23 @@ describe("completion discipline", () => {
     expect(out.ok).toBe(false); // transition-forbidden: auditor release only legal from codex-working
   });
 
+  it("rejects cross-role release at the LEASE guard when the transition itself is legal", () => {
+    // codex-working with an implementer-held lease (corrupted/rare state):
+    // auditor.lease_released IS legal from codex-working, so the transition
+    // table passes and the lease guard itself must catch the role mismatch.
+    const lane = laneCodexWorking({
+      lease: makeLease({ actor_role: "implementer", lease_id: "lease-claude-9", expected_state: "claude-working" }),
+    });
+    const event = makeEvent({
+      sequence: 6, actor_role: "auditor", github_actor: "codex-login",
+      event_type: "auditor.lease_released", prior_state: "codex-working",
+      lease_id: "lease-claude-9",
+    });
+    const out = reduce(lane, event, policy, ctx);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.refusal).toBe("lease-role-mismatch");
+  });
+
   it("rejects unknown-time lease checks (fail closed without now)", () => {
     const lane = laneClaudeWorking();
     const event = makeEvent({

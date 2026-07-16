@@ -48,6 +48,45 @@ describe("committed automation policy", () => {
     // legal) — the reducer refuses events instead (covered in reducer tests).
     expect(validatePolicy({ ...policy, enabled: false }).ok).toBe(true);
   });
+
+  it("committed allowlist: single-operator posture is real — same login in all model roles, bot in system only", () => {
+    // Recorded ADR-050 §6 limitation, pinned as committed: the operator's
+    // login carries every model role (no cryptographic separation in v1),
+    // and the CI bot appears ONLY under system.
+    const al = policy.actor_allowlist;
+    for (const role of ["coordinator", "implementer", "auditor", "operator"]) {
+      expect(al[role], role).toContain("eileen1337");
+      expect(al[role].some((l: string) => l.endsWith("[bot]")), role).toBe(false);
+    }
+    expect(al.system).toContain("github-actions[bot]");
+  });
+});
+
+describe("schema/validator contract sync", () => {
+  it("every schema-required field is referenced by the executable validator", () => {
+    const validateSrc = readFileSync(".straylight/lib/validate.mjs", "utf8");
+    for (const file of [
+      "lane-v1.schema.json",
+      "event-v1.schema.json",
+      "task-packet-v1.schema.json",
+      "audit-v1.schema.json",
+    ]) {
+      const schema = JSON.parse(readFileSync(join(ROOT, "schemas", file), "utf8"));
+      for (const field of schema.required ?? []) {
+        expect(validateSrc, `${file} required field ${field}`).toContain(`"${field}"`);
+      }
+    }
+  });
+
+  it("v1 schema consts match the validator invariants", () => {
+    const lane = JSON.parse(readFileSync(join(ROOT, "schemas", "lane-v1.schema.json"), "utf8"));
+    expect(lane.properties.mode.const).toBe("shadow");
+    expect(lane.properties.auto_merge_allowed.const).toBe(false);
+    const packet = JSON.parse(readFileSync(join(ROOT, "schemas", "task-packet-v1.schema.json"), "utf8"));
+    expect(packet.properties.merge_forbidden.const).toBe(true);
+    const audit = JSON.parse(readFileSync(join(ROOT, "schemas", "audit-v1.schema.json"), "utf8"));
+    expect(audit.properties.audit_committed_in_pr.const).toBe(false);
+  });
 });
 
 describe("no-leak checks", () => {

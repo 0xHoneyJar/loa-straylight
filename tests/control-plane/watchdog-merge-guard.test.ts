@@ -148,15 +148,37 @@ describe("shadow merge guard", () => {
     //      - gh CLI:  gh pr merge
     //      - GraphQL: mergePullRequest mutation
     const MERGE_CALL = /gh pr merge|pulls\/[^\s"']*\/merge|\/merges\b|mergePullRequest|merge_method|mergeMethod/;
-    const guardSrc = readFileSync(".straylight/lib/merge-guard.mjs", "utf8");
-    const cliSrc = readFileSync(".straylight/bin/merge-guard-check.mjs", "utf8");
-    const wf = readFileSync(".github/workflows/straylight-merge-guard.yml", "utf8");
-    for (const src of [guardSrc, cliSrc]) {
-      expect(src).not.toMatch(MERGE_CALL);
-      expect(src).not.toMatch(/fetch\(|https?:\/\/api\.github\.com/); // no network at all
+    // Scan the ENTIRE control plane, not just the merge-guard trio: every
+    // pure module, every CLI adapter, and all four workflows.
+    const allCpSources = [
+      ".straylight/lib/state-machine.mjs",
+      ".straylight/lib/markers.mjs",
+      ".straylight/lib/validate.mjs",
+      ".straylight/lib/reducer.mjs",
+      ".straylight/lib/reconstruct.mjs",
+      ".straylight/lib/watchdog.mjs",
+      ".straylight/lib/merge-guard.mjs",
+      ".straylight/bin/reduce-issue.mjs",
+      ".straylight/bin/watchdog-scan.mjs",
+      ".straylight/bin/merge-guard-check.mjs",
+      ".straylight/bin/validate-protocol.mjs",
+    ];
+    const allCpWorkflows = [
+      ".github/workflows/straylight-reducer.yml",
+      ".github/workflows/straylight-watchdog.yml",
+      ".github/workflows/straylight-merge-guard.yml",
+      ".github/workflows/straylight-bootstrap.yml",
+    ];
+    for (const f of allCpSources) {
+      const src = readFileSync(f, "utf8");
+      expect(src, f).not.toMatch(MERGE_CALL);
+      expect(src, f).not.toMatch(/fetch\(|https?:\/\/api\.github\.com/); // no network at all
     }
-    expect(wf).not.toMatch(MERGE_CALL);
-    // Permissions block grants contents:read; no contents:write key exists.
+    for (const f of allCpWorkflows) {
+      expect(readFileSync(f, "utf8"), f).not.toMatch(MERGE_CALL);
+    }
+    // Merge-guard permissions block grants contents:read only.
+    const wf = readFileSync(".github/workflows/straylight-merge-guard.yml", "utf8");
     expect(wf).toMatch(/^\s+contents: read$/m);
     expect(wf).not.toMatch(/^\s+contents:\s*write\s*$/m);
   });
