@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/0xHoneyJar/loa-straylight/.straylight/schemas/event-v1.schema.json",
+  "title": "Straylight Control Plane event record (v1)",
+  "description": "One append-only lane event, embedded in a GitHub comment after the marker `<!-- straylight:event:v1 -->`. Events are never edited or deleted; corrections are new events. Executable validator: .straylight/lib/validate.mjs#validateEvent.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema",
+    "event_id",
+    "lane_id",
+    "sequence",
+    "actor_role",
+    "github_actor",
+    "event_type",
+    "prior_state",
+    "occurred_at"
+  ],
+  "properties": {
+    "schema": { "const": "straylight.event.v1" },
+    "event_id": { "type": "string", "pattern": "^evt-[a-z0-9][a-z0-9-]{1,62}$" },
+    "lane_id": { "type": "string", "pattern": "^lane-[a-z0-9][a-z0-9-]{1,62}$" },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Must equal the lane's event_sequence + 1 or the reducer refuses it (stale-sequence)."
+    },
+    "actor_role": {
+      "enum": ["coordinator", "implementer", "auditor", "operator", "system"],
+      "description": "CLAIMED role. Not a cryptographic identity — the reducer cross-checks the authenticated GitHub commenter against the per-role allowlist in automation-policy.json (ADR-050 §6)."
+    },
+    "github_actor": { "type": "string", "maxLength": 45 },
+    "event_type": { "type": "string", "pattern": "^[a-z_]+\\.[a-z_]+$" },
+    "prior_state": { "type": "string" },
+    "requested_state": { "type": "string" },
+    "base_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "head_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "audited_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "verdict": { "enum": ["ACCEPT", "PATCH", "REJECT", "CANNOT_AUDIT"] },
+    "lease_id": { "type": "string", "pattern": "^lease-[a-z0-9][a-z0-9-]{1,62}$" },
+    "lease_expires_at": { "type": "string", "format": "date-time" },
+    "attempt": { "type": "integer", "minimum": 0 },
+    "patch_cycle": { "type": "integer", "minimum": 0 },
+    "reason": { "type": "string", "maxLength": 4000 },
+    "occurred_at": { "type": "string", "format": "date-time" },
+    "refs": {
+      "type": "object",
+      "properties": {
+        "task_packet_comment_id": { "type": "integer", "minimum": 1 },
+        "pr_number": { "type": "integer", "minimum": 1 },
+        "audit_comment_id": { "type": "integer", "minimum": 1 }
+      }
+    }
+  }
+}

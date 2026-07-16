@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/0xHoneyJar/loa-straylight/.straylight/schemas/audit-v1.schema.json",
+  "title": "Straylight Control Plane audit record (v1)",
+  "description": "Codex's independent audit verdict, bound to an exact head SHA and posted EXTERNALLY (PR comment / lane event) — never committed into the audited PR, because committing it changes the audited target (lesson of PR #116, ADR-050 §5.3). Executable validator: .straylight/lib/validate.mjs#validateAuditRecord.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema",
+    "lane_id",
+    "pr_number",
+    "base_branch",
+    "base_sha",
+    "head_branch",
+    "audited_head_sha",
+    "complete_diff_reviewed",
+    "changed_files",
+    "verdict",
+    "validation_summary",
+    "audit_committed_in_pr",
+    "next_actor"
+  ],
+  "properties": {
+    "schema": { "const": "straylight.audit.v1" },
+    "lane_id": { "type": "string", "pattern": "^lane-[a-z0-9][a-z0-9-]{1,62}$" },
+    "pr_number": { "type": "integer", "minimum": 1 },
+    "base_branch": { "type": "string", "maxLength": 200 },
+    "base_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "head_branch": { "type": "string", "maxLength": 200 },
+    "audited_head_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$",
+      "description": "The exact head SHA the verdict binds to. An ACCEPT is valid only while the PR head still equals this SHA; any head move invalidates it."
+    },
+    "complete_diff_reviewed": {
+      "type": "boolean",
+      "description": "Must be true: confirmation the complete base-to-head diff was reviewed, not a sample."
+    },
+    "changed_files": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" },
+      "description": "Changed-file list, or a single-element digest entry of the form 'digest:<algo>:<hex>' over the sorted file list."
+    },
+    "verdict": { "enum": ["ACCEPT", "PATCH", "REJECT", "CANNOT_AUDIT"] },
+    "concerns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "location", "description"],
+        "properties": {
+          "severity": { "enum": ["blocker", "high", "medium", "low"] },
+          "location": { "type": "string", "description": "file:line or file-level anchor" },
+          "description": { "type": "string" }
+        }
+      },
+      "description": "Required and non-empty for PATCH/REJECT."
+    },
+    "validation_summary": { "type": "string" },
+    "audit_committed_in_pr": {
+      "const": false,
+      "description": "PR #116 lesson: an audit committed into the audited PR changes the audited target and invalidates itself. The validator rejects true."
+    },
+    "retryable": {
+      "type": "boolean",
+      "description": "Only meaningful with CANNOT_AUDIT: true routes back to ready-for-codex within the retry budget; otherwise blocked."
+    },
+    "audit_comment_ref": { "type": "string", "description": "URL or id of the externally posted audit comment." },
+    "next_actor": { "enum": ["coordinator", "implementer", "auditor", "operator", "system", "none"] }
+  }
+}

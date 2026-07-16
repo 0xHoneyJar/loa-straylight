@@ -42,7 +42,9 @@
     "freeside:surface": "vite-node scripts/export-freeside-community-surface-fixtures.ts",
     "handoffs:index": "vite-node scripts/print-cross-repo-handoff-index.ts",
     "hounfour:rc-readiness": "vite-node scripts/print-hounfour-rc-readiness.ts",
-    "hounfour:shadow-inspect": "vite-node scripts/inspect-hounfour-shadow.ts"
+    "hounfour:shadow-inspect": "vite-node scripts/inspect-hounfour-shadow.ts",
+    "control-plane:validate": "node .straylight/bin/validate-protocol.mjs",
+    "control-plane:test": "vitest run tests/control-plane"
   },
   "engines": {
     "node": ">=22"
