@@ -132,8 +132,18 @@ jobs:
             -q '.[].name' | grep -E '^cp-' || true)
           for l in "${HAVE[@]:-}"; do
             [[ -z "$l" || "$l" == "cp-lane" ]] && continue
-            printf '%s\n' "${WANT[@]}" | grep -qxF -- "$l" || \
+            if ! printf '%s\n' "${WANT[@]}" | grep -qxF -- "$l"; then
+              # Labels are derived projections, never authority. If someone
+              # hand-added cp-paused expecting it to pause the lane, warn
+              # loudly before stripping it: pausing requires an
+              # operator.paused EVENT (ADR-050 §4).
+              if [[ "$l" == "cp-paused" ]]; then
+                WARN="⚠️ The \`cp-paused\` label was added by hand but labels are derived state, not authority — it has been removed and the lane is NOT paused. To pause this lane, post an \`operator.paused\` event comment (see \`.straylight/README.md\`), or disable all automation via \`.straylight/automation-policy.json\` → \`enabled: false\`."
+                gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+                  --input <(jq -n --arg body "$WARN" '{body: $body}') || true
+              fi
               gh api -X DELETE "repos/${REPO}/issues/${ISSUE_NUMBER}/labels/$(jq -rn --arg v "$l" '$v|@uri')" || true
+            fi
           done
           for l in "${WANT[@]:-}"; do
             [[ -z "$l" ]] && continue

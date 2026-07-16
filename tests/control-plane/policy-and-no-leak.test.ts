@@ -87,6 +87,39 @@ describe("schema/validator contract sync", () => {
     const audit = JSON.parse(readFileSync(join(ROOT, "schemas", "audit-v1.schema.json"), "utf8"));
     expect(audit.properties.audit_committed_in_pr.const).toBe(false);
   });
+
+  it("published schema patterns equal the executable validator regexes", () => {
+    // The validator's regex SOURCES, verbatim. If validate.mjs changes a
+    // pattern, the published schema must change with it (and vice versa).
+    const validateSrc = readFileSync(".straylight/lib/validate.mjs", "utf8");
+    const lane = JSON.parse(readFileSync(join(ROOT, "schemas", "lane-v1.schema.json"), "utf8"));
+    const event = JSON.parse(readFileSync(join(ROOT, "schemas", "event-v1.schema.json"), "utf8"));
+    const auditS = JSON.parse(readFileSync(join(ROOT, "schemas", "audit-v1.schema.json"), "utf8"));
+    const packet = JSON.parse(readFileSync(join(ROOT, "schemas", "task-packet-v1.schema.json"), "utf8"));
+
+    const branchPattern = "^[A-Za-z0-9._/-]{1,200}$";
+    expect(validateSrc).toContain("BRANCH_RE = /^[A-Za-z0-9._/-]{1,200}$/");
+    for (const [schema, field] of [
+      [lane, "base_branch"], [lane, "working_branch"],
+      [auditS, "base_branch"], [auditS, "head_branch"],
+      [packet, "target_branch"],
+    ] as const) {
+      expect(schema.properties[field].pattern, field).toBe(branchPattern);
+    }
+
+    const loginPattern = "^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(\\[bot\\])?$";
+    expect(event.properties.github_actor.pattern).toBe(loginPattern);
+    expect(validateSrc).toContain("GH_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(\\[bot\\])?$/");
+
+    const shaPattern = "^[0-9a-f]{40}$";
+    expect(validateSrc).toContain("SHA_RE = /^[0-9a-f]{40}$/");
+    for (const [schema, field] of [
+      [lane, "base_sha"], [event, "base_sha"], [event, "head_sha"], [event, "audited_sha"],
+      [auditS, "base_sha"], [auditS, "audited_head_sha"], [packet, "base_sha"],
+    ] as const) {
+      expect(schema.properties[field].pattern, field).toBe(shaPattern);
+    }
+  });
 });
 
 describe("no-leak checks", () => {

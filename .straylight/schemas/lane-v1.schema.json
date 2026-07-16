@@ -34,7 +34,7 @@
       "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,62}$" }
     },
     "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
-    "base_branch": { "type": "string", "maxLength": 200 },
+    "base_branch": { "type": "string", "pattern": "^[A-Za-z0-9._/-]{1,200}$" },
     "base_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
     "tier": { "enum": ["tier-0", "tier-1", "tier-2", "tier-3"] },
     "authority_bearing": { "type": "boolean" },
@@ -56,7 +56,7 @@
       ]
     },
     "next_actor": { "enum": ["coordinator", "implementer", "auditor", "operator", "system", "none"] },
-    "working_branch": { "type": ["string", "null"], "maxLength": 200 },
+    "working_branch": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9._/-]{1,200}$" },
     "pr_number": { "type": ["integer", "null"], "minimum": 1 },
     "pr_head_sha": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
     "audited_sha": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },

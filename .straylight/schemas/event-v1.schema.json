@@ -29,7 +29,10 @@
       "enum": ["coordinator", "implementer", "auditor", "operator", "system"],
       "description": "CLAIMED role. Not a cryptographic identity — the reducer cross-checks the authenticated GitHub commenter against the per-role allowlist in automation-policy.json (ADR-050 §6)."
     },
-    "github_actor": { "type": "string", "maxLength": 45 },
+    "github_actor": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(\\[bot\\])?$"
+    },
     "event_type": { "type": "string", "pattern": "^[a-z_]+\\.[a-z_]+$" },
     "prior_state": { "type": "string" },
     "requested_state": { "type": "string" },

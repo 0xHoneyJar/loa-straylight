@@ -36,7 +36,7 @@
     },
     "base_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
     "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
-    "target_branch": { "type": "string", "maxLength": 200 },
+    "target_branch": { "type": "string", "pattern": "^[A-Za-z0-9._/-]{1,200}$" },
     "allowed_paths": {
       "type": "array",
       "minItems": 1,

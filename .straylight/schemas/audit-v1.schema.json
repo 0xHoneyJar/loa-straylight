@@ -24,9 +24,9 @@
     "schema": { "const": "straylight.audit.v1" },
     "lane_id": { "type": "string", "pattern": "^lane-[a-z0-9][a-z0-9-]{1,62}$" },
     "pr_number": { "type": "integer", "minimum": 1 },
-    "base_branch": { "type": "string", "maxLength": 200 },
+    "base_branch": { "type": "string", "pattern": "^[A-Za-z0-9._/-]{1,200}$" },
     "base_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-    "head_branch": { "type": "string", "maxLength": 200 },
+    "head_branch": { "type": "string", "pattern": "^[A-Za-z0-9._/-]{1,200}$" },
     "audited_head_sha": {
       "type": "string",
       "pattern": "^[0-9a-f]{40}$",

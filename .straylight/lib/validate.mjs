@@ -3,8 +3,11 @@
 // Deliberately dependency-free: a tiny explicit validator per record type
 // instead of a JSON-Schema engine, so no new runtime dependency is needed.
 // The JSON Schema files under .straylight/schemas/ are the published
-// contract; these validators implement the same constraints and the test
-// suite pins them against the schema fixtures.
+// contract; these validators implement the same constraints. The
+// schema/validator sync is pinned by tests/control-plane/
+// policy-and-no-leak.test.ts ("schema/validator contract sync"): every
+// schema-required field, every v1 const invariant, and the shared
+// pattern constants below are cross-checked against the schema files.
 //
 // Every function returns { ok: true, value } or { ok: false, errors: [...] }.
 // Unknown/missing/mistyped fields are errors, never warnings.
