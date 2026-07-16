@@ -71,7 +71,25 @@ jobs:
         with:
           node-version: "22"
 
+      # Kill switch (ADR-050 §4): while automation is disabled the reducer
+      # takes NO action — it posts no result and syncs no labels, so the
+      # published projection is FROZEN exactly as it was. (The pure reducer
+      # already refuses every event; reconstruct replays history faithfully
+      # and returns frozen:true. This gate ensures the workflow does not even
+      # publish that frozen projection as if it were live activity.)
+      - name: Kill switch check
+        id: killswitch
+        run: |
+          set -euo pipefail
+          if [[ "$(jq -r '.enabled' .straylight/automation-policy.json)" != "true" ]]; then
+            echo "Automation disabled (kill switch). Reducer taking no action; projection frozen."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Fetch lane content (untrusted, to file)
+        if: steps.killswitch.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
@@ -91,6 +109,7 @@ jobs:
             }' > /tmp/reducer-input.json
 
       - name: Attach current PR head (fail closed if absent)
+        if: steps.killswitch.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -112,12 +131,14 @@ jobs:
 
       - name: Reduce lane
         id: reduce
+        if: steps.killswitch.outputs.enabled == 'true'
         run: |
           set -euo pipefail
           node .straylight/bin/reduce-issue.mjs --input /tmp/reducer-input.json > /tmp/reducer-result.json || true
           cat /tmp/reducer-result.json
 
       - name: Sync derived labels
+        if: steps.killswitch.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
@@ -153,6 +174,7 @@ jobs:
           done
 
       - name: Post reducer result (idempotent per event_sequence)
+        if: steps.killswitch.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
@@ -163,9 +185,14 @@ jobs:
           STATE=$(jq -r '.lane.state // "invalid"' /tmp/reducer-result.json)
           DEDUPE="reducer-result:${SEQ}:${STATE}"
           # Idempotency: if a result for this exact sequence+state was already
-          # posted, do not post another.
+          # posted, do not post another. Only a genuine bot-authored
+          # reducer-result comment counts — restrict the scan to
+          # github-actions[bot] authorship AND the reducer-result marker so a
+          # third party cannot suppress result posting by planting the dedupe
+          # string in an ordinary comment (B8 uniform hardening).
           if gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate \
-              -q '.[].body' | grep -qF "dedupe:${DEDUPE}"; then
+              --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | test("<!-- straylight:reducer-result:v1 -->")) | .body' \
+              | grep -qF "dedupe:${DEDUPE}"; then
             echo "result already posted for ${DEDUPE}; skipping"
             exit 0
           fi

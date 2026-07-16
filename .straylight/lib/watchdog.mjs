@@ -63,7 +63,16 @@ export function scan(lanes, policy, context = {}) {
 
     // 2. lease-expired lanes → propose requeue to the safe retry state.
     if (lane.state === "lease-expired") {
-      const target = lane.pr_number != null && lane.pr_head_sha ? "ready-for-codex" : "ready-for-claude";
+      // Route by WHICH role lost its lease (recorded at expiry), not by PR
+      // presence: an implementer whose lease expired mid-patch already has a
+      // PR, but must return to ready-for-claude, not the auditor's queue.
+      // Fall back to the PR-presence heuristic only when the role is absent
+      // (lanes expired before this field existed).
+      const target = lane.last_lease_role === "auditor"
+        ? "ready-for-codex"
+        : lane.last_lease_role === "implementer"
+          ? "ready-for-claude"
+          : (lane.pr_number != null && lane.pr_head_sha ? "ready-for-codex" : "ready-for-claude");
       actions.push({
         type: "post-event",
         event_type: "system.requeued",
@@ -90,6 +99,24 @@ export function scan(lanes, policy, context = {}) {
           head_sha: currentHead, // recorded in the event for replay determinism
           dedupe_key: `head-moved:${lane.lane_id}:${currentHead}:${lane.event_sequence}`,
           detail: `head ${currentHead} != audited ${lane.audited_sha}`,
+        });
+        continue;
+      }
+      // Fail closed on an UNVERIFIABLE head: if the adapter could not resolve
+      // this PR's live head (fetch failed / rate-limited), we must NOT leave a
+      // stale ACCEPT silently eligible. Surface a finding so the operator sees
+      // that eligibility is unconfirmed. (Absence of the PR number from BOTH
+      // pr_heads and pr_head_unresolved means the adapter did not attempt it —
+      // e.g. no PR recorded — which is not a head-verification failure.)
+      const unresolved = Array.isArray(context.pr_head_unresolved)
+        ? context.pr_head_unresolved.map(String)
+        : [];
+      if (!currentHead && lane.pr_number != null && unresolved.includes(String(lane.pr_number))) {
+        actions.push({
+          type: "flag-unverifiable-head",
+          lane_id: lane.lane_id,
+          dedupe_key: `head-unverifiable:${lane.lane_id}:${lane.audited_sha}:${lane.event_sequence}`,
+          detail: `ready-for-merge but PR #${lane.pr_number} head could not be resolved; ACCEPT eligibility is UNCONFIRMED (fail closed)`,
         });
         continue;
       }

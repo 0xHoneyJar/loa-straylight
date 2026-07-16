@@ -31,6 +31,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          # Pin to main, NOT the dispatched ref: bootstrap must run the
+          # protocol validator and resolve the lane base from main, never
+          # from an attacker-selectable dispatch ref (B10 hardening). The
+          # base SHA is additionally re-resolved from origin/main below.
+          ref: main
           submodules: recursive
 
       - name: Setup Node 22
@@ -56,8 +61,13 @@ jobs:
           # A lane exists if any cp-lane issue's body carries the lane marker
           # with lane_id lane-phase-49p (open OR closed — a closed lane is a
           # completed/superseded lane, not permission to duplicate it).
-          FOUND=$(gh api "repos/${REPO}/issues?labels=cp-lane&state=all&per_page=100" \
-            -q '[.[] | select(.body // "" | contains("\"lane_id\": \"lane-phase-49p\""))] | length')
+          # --paginate + count matching numbers across ALL pages: an
+          # un-paginated check could miss an existing lane on page 2 and
+          # create a duplicate (R4). --jq emits one issue number per match
+          # per page; count the lines.
+          FOUND=$(gh api --paginate "repos/${REPO}/issues?labels=cp-lane&state=all&per_page=100" \
+            --jq '.[] | select(.body // "" | contains("\"lane_id\": \"lane-phase-49p\"")) | .number' \
+            | grep -c . || true)
           echo "found=${FOUND}" >> "$GITHUB_OUTPUT"
           if [[ "$FOUND" != "0" ]]; then
             echo "Phase 49P lane already exists (${FOUND} match(es)); bootstrap is a no-op."
@@ -81,7 +91,17 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          BASE_SHA=$(git rev-parse HEAD)
+          # Resolve the base SHA from origin/main explicitly — NOT from the
+          # dispatched checkout ref. workflow_dispatch can run against any ref,
+          # and `git rev-parse HEAD` would then anchor the lane to that
+          # arbitrary ref while the record still claims base_branch:"main". A
+          # read-only fetch (allowed under contents:read) pins base to the
+          # actual main tip. `set -euo pipefail` fails the step closed if the
+          # fetch or rev-parse fails, so a lane is never created against an
+          # unverifiable base.
+          git fetch --no-tags --depth=1 origin main
+          BASE_SHA=$(git rev-parse FETCH_HEAD)
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "could not resolve origin/main tip"; exit 1; }
           jq -n --arg base "$BASE_SHA" --arg repo "$REPO" '{
             schema: "straylight.lane.v1",
             lane_id: "lane-phase-49p",

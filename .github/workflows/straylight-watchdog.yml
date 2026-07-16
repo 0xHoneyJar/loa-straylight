@@ -62,8 +62,11 @@ jobs:
         run: |
           set -euo pipefail
           NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          echo '{"lanes": [], "context": {"pr_heads": {}, "last_activity": {}}}' > /tmp/scan-input.json
-          mapfile -t ISSUES < <(gh api "repos/${REPO}/issues?labels=cp-lane&state=open&per_page=100" -q '.[].number')
+          echo '{"lanes": [], "context": {"pr_heads": {}, "pr_head_unresolved": [], "last_activity": {}}}' > /tmp/scan-input.json
+          # --paginate: never silently drop lanes past page 1. With >100 open
+          # cp-lane issues, an un-paginated fetch would leave later lanes
+          # unrecovered forever (R4).
+          mapfile -t ISSUES < <(gh api --paginate "repos/${REPO}/issues?labels=cp-lane&state=open&per_page=100" -q '.[].number')
           : > /tmp/lane-issues.tsv
           for N in "${ISSUES[@]:-}"; do
             [[ -z "$N" ]] && continue
@@ -84,11 +87,16 @@ jobs:
               HEAD=$(gh api "repos/${REPO}/pulls/${PRNUM}" -q '.head.sha' 2>/dev/null || true)
             fi
             printf '%s\t%s\n' "$LANE_ID" "$N" >> /tmp/lane-issues.tsv
+            # A PR that was named but whose head did NOT resolve is recorded
+            # as unresolved so the scanner can fail closed on a ready-for-merge
+            # lane whose eligibility can no longer be verified (B8).
             jq --slurpfile lane /tmp/lane.json \
                --arg laneid "$LANE_ID" --arg ts "$LAST_TS" --arg pr "$PRNUM" --arg head "$HEAD" \
                '.lanes += [$lane[0].lane]
                 | .context.last_activity[$laneid] = $ts
-                | (if ($pr != "" and $head != "") then .context.pr_heads[$pr] = $head else . end)' \
+                | (if ($pr != "" and $head != "") then .context.pr_heads[$pr] = $head
+                   elif ($pr != "" and $head == "") then .context.pr_head_unresolved += [$pr]
+                   else . end)' \
                /tmp/scan-input.json > /tmp/scan-input2.json
             mv /tmp/scan-input2.json /tmp/scan-input.json
           done
@@ -114,8 +122,15 @@ jobs:
             TYPE=$(jq -r '.type' /tmp/action.json)
             ISSUE=$(awk -F'\t' -v id="$LANE_ID" '$1 == id {print $2}' /tmp/lane-issues.tsv | head -1)
             [[ -n "$ISSUE" ]] || { echo "no issue for ${LANE_ID}; skipping"; continue; }
-            # Idempotency: never post the same recovery twice.
-            if gh api "repos/${REPO}/issues/${ISSUE}/comments" --paginate -q '.[].body' \
+            # Idempotency: never post the same recovery twice — but only a
+            # genuine bot-authored recovery/result comment counts as "already
+            # posted". Scanning ALL comment bodies let any actor suppress a
+            # real recovery forever by posting a comment containing the dedupe
+            # string. Restrict to github-actions[bot] authorship AND require a
+            # straylight machine marker so a stray bot comment cannot suppress
+            # either (defense in depth).
+            if gh api "repos/${REPO}/issues/${ISSUE}/comments" --paginate \
+                --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | test("<!-- straylight:(event|watchdog-result):v1 -->")) | .body' \
                 | grep -qF "dedupe:${DEDUPE}"; then
               echo "already posted ${DEDUPE}; skipping"
               continue
