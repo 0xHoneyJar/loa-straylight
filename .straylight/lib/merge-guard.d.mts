@@ -7,10 +7,16 @@ export interface MergeGuardResult {
   note: string;
 }
 export interface MergeGuardChecks {
-  /** Total modern check runs observed on the head SHA. */
+  /** total_count reported by the check-runs API for the head SHA. */
   check_runs_total: number;
-  /** Check runs whose conclusion is not success/neutral/skipped. */
-  check_runs_failing: number;
+  /**
+   * EVERY check run's conclusion, aggregated across ALL pages
+   * ("success" | "neutral" | "skipped" | "failure" | "cancelled" |
+   * "timed_out" | "action_required" | "stale" | "null" for in-progress).
+   * A list whose length differs from check_runs_total means a page was
+   * dropped and the guard fails closed.
+   */
+  check_run_conclusions: string[];
   /** Total legacy combined commit statuses on the head SHA. */
   commit_statuses_total: number;
   /** Combined legacy status state: "success" | "pending" | "failure" | "error". */
@@ -24,8 +30,10 @@ export declare function evaluate(
     checks?: MergeGuardChecks;
     /** Live PR state ("open" | "closed"); anything but "open" fails closed. */
     pr_state?: string;
-    /** Live PR draft flag; anything but false fails closed (draft not mergeable). */
+    /** Live PR draft flag; anything but the OBSERVED boolean false fails closed (unknown is never defaulted). */
     pr_draft?: boolean;
+    /** Live PR merged flag; anything but the OBSERVED boolean false fails closed (unknown is never defaulted). */
+    pr_merged?: boolean;
     /** Live PR base branch; must equal lane.base_branch or fails closed (retarget). */
     pr_base_ref?: string;
   }

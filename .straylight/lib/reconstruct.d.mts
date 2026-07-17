@@ -3,6 +3,11 @@ export interface ReconstructInput {
   issue_body: string;
   comments: Array<{ id: number; user: string; body: string; created_at?: string; updated_at?: string }>;
   policy: Record<string, any>;
+  /**
+   * DETERMINISM: reconstruction is a pure function of the durable content.
+   * No transient live signal enters the replay; live PR facts reach the
+   * protocol only as durable fields of system.eligibility_confirmed events.
+   */
   context?: Record<string, any>;
 }
 export interface Disposition {

@@ -15,7 +15,7 @@
 //                // GitHub-recorded last-edit time. All supplied by the
 //                // adapter — never taken from the payload itself.
 //   policy:      parsed automation-policy.json
-//   context:     { now, pr_head_sha?, pr_metadata?, pr_heads? }
+//   context:     { now }
 // }
 //
 // Returns {
@@ -23,21 +23,25 @@
 //   labels: [...], frozen, refusal?, detail?
 // }
 //
-// Idempotent by construction: same input → same output. Refused events
-// never advance the lane, so replaying an already-processed comment stream
-// converges to the same state.
+// DETERMINISM: reconstruction is a pure function of the durable content
+// alone. No transient live signal (PR metadata, live head SHA) enters the
+// replay; live PR facts reach the protocol only as durable fields of
+// system.eligibility_confirmed events, re-validated by the reducer on every
+// replay. Same input → same output, on every run, forever.
 //
 // Referenced-artifact binding (R2/R4): an event may reference a task packet
 // or audit record only by an EARLIER comment (comment_id < event_comment_id)
 // — a later comment can never retroactively validate an earlier event. The
-// selected artifact is bound by its source author and a canonical content
-// digest, so editing the source comment breaks the binding.
+// referencing event DECLARES the canonical content digest of its artifact
+// (refs.task_packet_digest / refs.audit_digest), and the reducer re-compares
+// that durable digest against the bound comment's current content on every
+// replay — so mutating the artifact comment after the event was posted
+// breaks the binding mechanically, independent of GitHub edit metadata.
 
 import { MARKERS, extractPayload, hasMarker } from "./markers.mjs";
-import { validateLane } from "./validate.mjs";
+import { validateLane, parseIsoInstant } from "./validate.mjs";
 import { reduce } from "./reducer.mjs";
 import { nextActorFor } from "./state-machine.mjs";
-import { payloadDigest } from "./canonical.mjs";
 
 export function reconstructLane(input) {
   const { issue_body, comments, policy, context = {} } = input ?? {};
@@ -77,35 +81,7 @@ export function reconstructLane(input) {
 
   const ordered = [...(Array.isArray(comments) ? comments : [])].sort((a, b) => a.id - b.id);
 
-  // The transient live PR metadata (context.pr_metadata / pr_head_sha) is
-  // authoritative ONLY at the live audit frontier: the comment carrying the
-  // LAST event that actually ADVANCED the lane. It must NOT enter the replay
-  // of HISTORICAL events, or reconstruction stops being a pure function of
-  // durable content (a head move after a legitimate ACCEPT would re-judge the
-  // already-applied historical audit and rewind the projection).
-  //
-  // The frontier is the last-APPLIED event's comment, found by a first
-  // metadata-free replay pass — NOT merely "the newest comment bearing an
-  // event marker". Otherwise a trailing junk/refused/foreign comment (even a
-  // stranger's wrong-lane event) would shift the frontier off a genuine
-  // just-arrived audit, silently downgrading its binding from live metadata
-  // to the recorded-head fallback. Two passes keep the frontier immune to
-  // trailing noise while staying deterministic.
-  const dryRun = replayStream(lane, ordered, replayPolicy, {}, null);
-  const frontierCommentId = dryRun.lastAppliedCommentId;
-
-  const live = replayStream(lane, ordered, replayPolicy, context, frontierCommentId);
-  return { ok: true, lane: live.lane, dispositions: live.dispositions, labels: deriveLabels(live.lane), frozen };
-}
-
-// Replay the ordered comment stream over `startLane`. When `frontierCommentId`
-// is non-null, the live context (pr_metadata / pr_head_sha) is passed through
-// ONLY for that comment; every other comment is replayed with those transient
-// signals stripped. Returns { lane, dispositions, lastAppliedCommentId }.
-function replayStream(startLane, ordered, replayPolicy, context, frontierCommentId) {
-  let lane = startLane;
   const dispositions = [];
-  let lastAppliedCommentId = null;
   // The lane's CURRENT task packet, tracked as coordinator packet events are
   // applied, so later implementer events validate against it.
   let currentPacketCommentId = null;
@@ -114,25 +90,35 @@ function replayStream(startLane, ordered, replayPolicy, context, frontierComment
   const usedLeaseIds = new Set();
 
   for (const comment of ordered) {
-    if (!hasMarker(comment.body, MARKERS.event)) continue; // prose comment
+    const isProtocolComment =
+      hasMarker(comment.body, MARKERS.event) ||
+      hasMarker(comment.body, MARKERS.taskPacket) ||
+      hasMarker(comment.body, MARKERS.audit);
+    if (!isProtocolComment) continue; // prose / workflow-result comment
 
     // Comment-mutation posture (R5): the event record is append-oriented, but
-    // GitHub comments are editable/deletable. An EDITED protocol comment
-    // (updated_at strictly after created_at) is routed to operator-required
-    // rather than silently trusted — a v1 shadow-mode limitation, honestly
+    // GitHub comments are editable/deletable. An EDITED protocol comment —
+    // an event, a task packet, or an audit record (updated_at strictly after
+    // created_at) — is routed to operator-required rather than silently
+    // trusted or silently unbound. A v1 shadow-mode limitation, honestly
     // enforced instead of asserted.
     if (isEdited(comment)) {
       dispositions.push({
         comment_id: comment.id,
         status: "refused",
         refusal: "protocol-comment-edited",
-        detail: `comment edited after posting (created ${comment.created_at}, updated ${comment.updated_at})`,
+        detail: `protocol comment edited after posting (created ${comment.created_at}, updated ${comment.updated_at})`,
       });
       if (lane.state !== "operator-required" && !isTerminalState(lane.state)) {
         lane = toOperatorRequired(lane, `protocol-comment-edited: comment ${comment.id} was edited after posting`);
       }
       continue;
     }
+
+    // Artifact-only comments (task packet / audit record without an event
+    // marker) carry no event to reduce; they are bound by reference from
+    // their event. The edit check above has already run for them.
+    if (!hasMarker(comment.body, MARKERS.event)) continue;
 
     const payload = extractPayload(comment.body, MARKERS.event);
     if (!payload.ok) {
@@ -175,18 +161,12 @@ function replayStream(startLane, ordered, replayPolicy, context, frontierComment
     // The authenticated comment author binds the lease holder + holder checks.
     ctx.comment_author = typeof comment.user === "string" ? comment.user : null;
     ctx.used_lease_ids = usedLeaseIds;
-    // Live PR authority applies at the frontier only. Every non-frontier
-    // event has the transient signals stripped so the reducer binds to the
-    // deterministic event-recorded head.
-    if (comment.id !== frontierCommentId) {
-      delete ctx.pr_head_sha;
-      delete ctx.pr_metadata;
-    }
     // Task-packet binding (R2): only a coordinator packet-posting event may
     // NAME a packet comment, and only an EARLIER one. Every other event uses
     // the coordinator-approved packet tracked in currentPacketCommentId. The
-    // packet is bound by source author + canonical digest, so editing the
-    // packet comment after it was referenced breaks the binding.
+    // packet content is pinned by the digest declared in the durable packet
+    // event (checked by the reducer), so editing the packet comment after it
+    // was referenced breaks the binding.
     const isCoordinatorPacketEvent =
       event.event_type === "coordinator.task_packet_posted" ||
       event.event_type === "coordinator.patch_packet_posted";
@@ -207,16 +187,16 @@ function replayStream(startLane, ordered, replayPolicy, context, frontierComment
       });
       if (bound.ok) {
         ctx.task_packet = bound.value;
-        ctx.task_packet_digest = bound.digest;
         ctx.task_packet_source = { comment_id: packetRef, author: bound.author };
       } else {
         ctx.task_packet_bind_error = bound.reason;
       }
     }
     // Audit binding (R4): the referenced audit comment must be an EARLIER
-    // comment authored by the SAME auditor posting the completion event,
-    // bound by canonical digest. A future/foreign/edited audit comment
-    // leaves audit_record unset → reducer refuses.
+    // comment authored by the SAME auditor posting the completion event; the
+    // completion event's declared refs.audit_digest pins the content (the
+    // reducer re-compares it on every replay). A future/foreign/edited audit
+    // comment leaves audit_record unset → reducer refuses.
     if (event.refs?.audit_comment_id != null) {
       const bound = bindArtifact(ordered, event.refs.audit_comment_id, comment, MARKERS.audit, {
         requireEarlier: true,
@@ -224,7 +204,6 @@ function replayStream(startLane, ordered, replayPolicy, context, frontierComment
       });
       if (bound.ok) {
         ctx.audit_record = bound.value;
-        ctx.audit_digest = bound.digest;
         ctx.audit_source = { comment_id: event.refs.audit_comment_id, author: bound.author };
       } else {
         ctx.audit_bind_error = bound.reason;
@@ -234,7 +213,6 @@ function replayStream(startLane, ordered, replayPolicy, context, frontierComment
     const decision = reduce(lane, event, replayPolicy, ctx);
     if (decision.ok) {
       lane = decision.lane;
-      lastAppliedCommentId = comment.id;
       if (typeof event.event_id === "string") seenEventIds.add(event.event_id);
       if (event.event_type.endsWith("lease_acquired") && typeof event.lease_id === "string") {
         usedLeaseIds.add(event.lease_id);
@@ -260,17 +238,22 @@ function replayStream(startLane, ordered, replayPolicy, context, frontierComment
     }
   }
 
-  return { lane, dispositions, lastAppliedCommentId };
+  return { ok: true, lane, dispositions, labels: deriveLabels(lane), frozen };
 }
 
 // A protocol comment is "edited" when the adapter reports an updated_at
-// strictly after created_at. Both are GitHub-recorded; a missing updated_at
-// (older adapter) is treated as not-edited.
+// strictly after created_at, compared as PARSED INSTANTS (never lexically).
+// Both are GitHub-recorded; a missing updated_at (older adapter) is treated
+// as not-edited. A PRESENT but unparseable timestamp fails closed as edited:
+// we cannot prove the comment was not mutated.
 function isEdited(comment) {
   const c = comment?.created_at;
   const u = comment?.updated_at;
   if (typeof c !== "string" || typeof u !== "string") return false;
-  return Date.parse(u) > Date.parse(c);
+  const cMs = parseIsoInstant(c);
+  const uMs = parseIsoInstant(u);
+  if (cMs === null || uMs === null) return true; // unparseable → fail closed
+  return uMs > cMs;
 }
 
 function isTerminalState(state) {
@@ -288,9 +271,10 @@ function toOperatorRequired(lane, reason) {
 
 // Bind a referenced artifact (task packet / audit record) from the durable
 // stream, enforcing: EARLIER-than-referencing-comment (no forward reference),
-// optional same-author-as-referencing-comment, and returning a canonical
-// content digest so a later edit of the source comment breaks the binding.
-// Returns { ok, value, digest, author } or { ok: false, reason }.
+// optional same-author-as-referencing-comment, and not-edited. Content
+// pinning is the reducer's job: it compares the digest DECLARED in the
+// durable referencing event against the bound content on every replay.
+// Returns { ok, value, author } or { ok: false, reason }.
 function bindArtifact(ordered, refId, referencingComment, marker, { requireEarlier = false, requireSameAuthor = false } = {}) {
   const src = ordered.find((c) => c.id === refId);
   if (!src) return { ok: false, reason: "artifact-comment-not-found" };
@@ -307,7 +291,7 @@ function bindArtifact(ordered, refId, referencingComment, marker, { requireEarli
   }
   const parsed = extractPayload(src.body, marker);
   if (!parsed.ok) return { ok: false, reason: parsed.reason };
-  return { ok: true, value: parsed.value, digest: payloadDigest(parsed.value), author: src.user };
+  return { ok: true, value: parsed.value, author: src.user };
 }
 
 // Labels are DERIVED state (ADR-050 §1.1) — reconstruct them, never trust

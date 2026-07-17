@@ -31,6 +31,7 @@ import {
   validatePrMetadata,
   parseIsoInstant,
 } from "./validate.mjs";
+import { payloadDigest } from "./canonical.mjs";
 
 function refuse(lane, code, detail, escalate = false) {
   return { ok: false, refusal: code, detail, lane, escalate };
@@ -60,18 +61,20 @@ function actorAllowed(policy, role, githubActor) {
 //                       checks so replaying history is deterministic: an
 //                       event valid when posted stays valid on every replay,
 //                       and a late event stays refused. Falls back to `now`.
-//   pr_head_sha         current head SHA of the lane PR, if known (legacy;
-//                       superseded by pr_metadata for authoritative binding)
-//   pr_metadata         normalized live PR object (repository, pr_number,
-//                       state, draft, merged, base_branch, base_sha,
-//                       head_branch, head_sha, fetch_ok) — AUTHORITATIVE at
-//                       the audit frontier. Missing/partial → fail closed.
 //   comment_author      authenticated GitHub login of the event's comment,
 //                       used to bind a lease to its real holder (R3)
 //   used_lease_ids      Set/array of lease IDs already consumed earlier in
 //                       lane history (reused IDs are refused, R3)
 //   task_packet         parsed task-packet payload backing an implementer event
 //   audit_record        parsed audit payload backing auditor.audit_completed
+//
+// DETERMINISM INVARIANT: reduce() consults NO transient live signal. Live PR
+// metadata enters the protocol only as a DURABLE field of a
+// system.eligibility_confirmed event (checked by the reducer workflow,
+// embedded in the event payload, re-validated here on every replay). An
+// ACCEPT audit therefore parks the lane in eligibility-pending; nothing but
+// that durable confirmation can produce ready-for-merge, so a replay with no
+// metadata in context reaches exactly the same states as the live run.
 export function reduce(lane, event, policy, context = {}) {
   // -- 0. Structural validation: malformed anything → no advance. -----------
   const pol = validatePolicy(policy ?? null);
@@ -205,6 +208,15 @@ export function reduce(lane, event, policy, context = {}) {
       if (packet.repository !== lane.repository) {
         return refuse(lane, "task-packet-wrong-repository", `packet repo ${packet.repository} != lane repo ${lane.repository}`);
       }
+      // Working-branch discipline: the INITIAL coordinator packet ESTABLISHES
+      // the lane's working branch (its target_branch becomes
+      // lane.working_branch); every later packet must name that exact branch.
+      // A packet may never name the lane's base branch as its target — the
+      // implementer works on a working branch and merges only via the
+      // operator.
+      if (packet.target_branch === lane.base_branch) {
+        return refuse(lane, "task-packet-targets-base-branch", `packet target ${packet.target_branch} is the lane base branch; a working branch is required`);
+      }
       if (lane.working_branch != null && packet.target_branch !== lane.working_branch) {
         return refuse(lane, "task-packet-wrong-target-branch", `packet target ${packet.target_branch} != lane working_branch ${lane.working_branch}`);
       }
@@ -212,9 +224,27 @@ export function reduce(lane, event, policy, context = {}) {
       if (packet.expected_next_actor !== "auditor") {
         return refuse(lane, "task-packet-wrong-next-actor", `packet expected_next_actor ${packet.expected_next_actor} != auditor`);
       }
+      // Digest pinning (durable): the packet event must DECLARE the canonical
+      // content digest of the packet it posts, and the declared digest must
+      // equal the digest of the bound packet on every replay. The digest
+      // lives in the durable event payload, so mutating the packet comment
+      // after the event was posted is detected mechanically — independent of
+      // GitHub edit metadata.
+      const declaredPacketDigest = event.refs?.task_packet_digest;
+      if (typeof declaredPacketDigest !== "string") {
+        return refuse(lane, "task-packet-digest-missing", "packet event must declare refs.task_packet_digest");
+      }
+      if (declaredPacketDigest !== payloadDigest(packet)) {
+        return refuse(lane, "task-packet-digest-mismatch", "bound packet content does not match the digest declared in the event");
+      }
       if (event.event_type === "coordinator.patch_packet_posted") {
         if (packet.packet_kind !== "patch") {
           return refuse(lane, "task-packet-kind-mismatch", "patch event requires packet_kind=patch");
+        }
+        // A patch packet REFINES existing work on the established working
+        // branch; a lane with no established branch has nothing to patch.
+        if (lane.working_branch == null) {
+          return refuse(lane, "task-packet-no-working-branch", "patch packet requires an established lane working_branch");
         }
         const nextCycle = lane.patch_cycle + 1;
         // The patch packet must declare the cycle it belongs to (the cycle it
@@ -244,7 +274,10 @@ export function reduce(lane, event, policy, context = {}) {
       if (packet.patch_cycle !== lane.patch_cycle) {
         return refuse(lane, "task-packet-wrong-patch-cycle", `initial packet cycle ${packet.patch_cycle} != lane ${lane.patch_cycle}`);
       }
-      return advance(lane, event, "ready-for-claude");
+      // The initial packet ESTABLISHES the lane working branch.
+      return advance(lane, event, "ready-for-claude", {
+        working_branch: lane.working_branch ?? packet.target_branch,
+      });
     }
 
     case "implementer.lease_acquired":
@@ -312,6 +345,13 @@ export function reduce(lane, event, policy, context = {}) {
             context.task_packet.base_sha !== lane.base_sha) {
           return refuse(lane, "task-packet-stale-base", "task packet not bound to current lane base SHA");
         }
+        // The packet the implementer starts from must target the lane's
+        // established working branch (the initial packet set it when applied).
+        if (lane.working_branch == null ||
+            context.task_packet.target_branch !== lane.working_branch) {
+          return refuse(lane, "task-packet-wrong-target-branch",
+            `packet target ${context.task_packet.target_branch} != lane working_branch ${lane.working_branch}`);
+        }
       }
       const lease = {
         lane_id: lane.lane_id,
@@ -343,11 +383,22 @@ export function reduce(lane, event, policy, context = {}) {
       if (!event.refs?.pr_number && !lane.pr_number) {
         return refuse(lane, "pr-missing", "implementer.completed requires a PR reference");
       }
+      // Branch discipline: implementation happens ON the lane working branch
+      // established by the initial packet. The completion event must declare
+      // the branch it pushed (head_branch) and it must be that branch.
+      if (typeof event.head_branch !== "string" || event.head_branch.length === 0) {
+        return refuse(lane, "head-branch-missing", "implementer.completed requires head_branch (the pushed working branch)");
+      }
+      if (lane.working_branch == null) {
+        return refuse(lane, "no-working-branch", "lane has no established working branch; initial packet must establish it first");
+      }
+      if (event.head_branch !== lane.working_branch) {
+        return refuse(lane, "wrong-working-branch", `implementer pushed ${event.head_branch}, lane working branch is ${lane.working_branch}`);
+      }
       return advance(lane, event, "ready-for-codex", {
         lease: null,
         pr_number: event.refs?.pr_number ?? lane.pr_number,
         pr_head_sha: event.head_sha,
-        working_branch: lane.working_branch ?? null,
         verdict: null,
         audited_sha: null,
         audit_retry: 0,
@@ -389,100 +440,49 @@ export function reduce(lane, event, policy, context = {}) {
       if (audit.base_sha !== lane.base_sha) {
         return refuse(lane, "audit-base-mismatch", "audited base differs from lane base");
       }
+      if (audit.base_branch !== lane.base_branch) {
+        return refuse(lane, "audit-base-branch-mismatch", `audit base branch ${audit.base_branch} != lane base_branch ${lane.base_branch}`);
+      }
+      // Branch discipline: the audit must bind to the lane's established
+      // working branch (set by the initial coordinator packet).
+      if (lane.working_branch == null) {
+        return refuse(lane, "no-working-branch", "lane has no established working branch; cannot bind an audit");
+      }
+      if (audit.head_branch !== lane.working_branch) {
+        return refuse(lane, "audit-head-branch-mismatch", `audit head branch ${audit.head_branch} != lane working_branch ${lane.working_branch}`);
+      }
       if (!event.audited_sha || event.audited_sha !== audit.audited_head_sha) {
         return refuse(lane, "audit-sha-mismatch", "event audited_sha must equal audit record audited_head_sha");
       }
       if (event.verdict !== audit.verdict) {
         return refuse(lane, "audit-verdict-mismatch", "event verdict must equal audit record verdict");
       }
-      // -- Live PR target authority (R1). ------------------------------------
-      // At the audit FRONTIER the adapter supplies context.pr_metadata: the
-      // normalized live PR object. When PRESENT it is AUTHORITATIVE and every
-      // field must correspond with the lane and the audit record; a closed,
-      // merged, draft, retargeted, wrong-repo, wrong-number, wrong-branch, or
-      // head-moved PR must NOT record eligibility. A partial/malformed object,
-      // or one whose fetch_ok is false, fails closed. This binds at the audit
-      // transition itself — not only later in the merge guard — so a stale
-      // ACCEPT is never stored.
-      //
-      // reconstruct supplies pr_metadata only for the frontier event, so
-      // historical replay stays deterministic (non-frontier events take the
-      // recorded-head branch below). When pr_metadata is WHOLLY ABSENT (an
-      // adapter that supplies no live PR object at all, or historical replay),
-      // this falls back to the event-recorded head — deterministic but NOT the
-      // full live-liveness check. That is acceptable in v1 because it is
-      // shadow-only and the merge guard independently fails closed on a
-      // non-open / unverifiable PR before any human acts; the shipped reducer
-      // workflow always attaches pr_metadata (fetch_ok:false on failure), so
-      // the live check runs whenever a PR is named.
-      const meta = context.pr_metadata ?? null;
-      let currentHead;
-      if (meta !== null) {
-        const mv = validatePrMetadata(meta);
-        if (!mv.ok) {
-          return refuse(lane, "pr-metadata-invalid", mv.errors.join("; "));
-        }
-        if (meta.fetch_ok !== true) {
-          return refuse(lane, "pr-metadata-unavailable", "live PR metadata fetch failed; cannot bind audit (fail closed)");
-        }
-        if (meta.repository !== lane.repository) {
-          return refuse(lane, "pr-wrong-repository", `live PR repo ${meta.repository} != lane repo ${lane.repository}`);
-        }
-        if (meta.pr_number !== lane.pr_number) {
-          return refuse(lane, "pr-wrong-number", `live PR #${meta.pr_number} != lane PR #${lane.pr_number}`);
-        }
-        if (meta.state !== "open") {
-          return refuse(lane, "pr-not-open", `live PR state is ${meta.state}, not open`);
-        }
-        if (meta.merged === true) {
-          return refuse(lane, "pr-already-merged", "live PR is already merged; audit cannot record eligibility");
-        }
-        // Draft policy (documented): a draft PR is by definition not ready to
-        // merge, so an ACCEPT must not record eligibility against it. Fail
-        // closed — the PR must be marked ready-for-review first.
-        if (meta.draft === true) {
-          return refuse(lane, "pr-draft", "live PR is a draft; mark it ready-for-review before an audit can record eligibility");
-        }
-        if (meta.base_branch !== lane.base_branch) {
-          return refuse(lane, "pr-retargeted-branch", `live PR base ${meta.base_branch} != lane base_branch ${lane.base_branch}`);
-        }
-        if (meta.base_sha !== lane.base_sha) {
-          return refuse(lane, "pr-base-sha-mismatch", `live PR base sha ${meta.base_sha} != lane base_sha ${lane.base_sha}`);
-        }
-        if (audit.base_branch !== meta.base_branch) {
-          return refuse(lane, "audit-base-branch-mismatch", `audit base branch ${audit.base_branch} != live ${meta.base_branch}`);
-        }
-        if (audit.head_branch !== meta.head_branch) {
-          return refuse(lane, "audit-head-branch-mismatch", `audit head branch ${audit.head_branch} != live ${meta.head_branch}`);
-        }
-        if (audit.audited_head_sha !== meta.head_sha) {
-          return refuse(lane, "audit-stale-head", `audited ${audit.audited_head_sha} but live head is ${meta.head_sha}`);
-        }
-        currentHead = meta.head_sha;
-      } else {
-        // No metadata (historical replay, or a legacy pr_head_sha-only path):
-        // fall back to the live head SHA if supplied, else the event-recorded
-        // head, for deterministic replay. Unknown head → fail closed.
-        const liveHead = context.pr_head_sha ?? null;
-        currentHead = liveHead ?? lane.pr_head_sha ?? null;
-        if (!currentHead) {
-          return refuse(lane, "head-unknown", "current PR head SHA unavailable; cannot bind audit");
-        }
-        if (liveHead && lane.pr_head_sha && liveHead !== lane.pr_head_sha &&
-            audit.audited_head_sha !== liveHead) {
-          return refuse(
-            lane,
-            "audit-stale-head",
-            `audited ${audit.audited_head_sha}; live head ${liveHead} diverges from recorded ${lane.pr_head_sha}`,
-          );
-        }
-        if (audit.audited_head_sha !== currentHead) {
-          return refuse(
-            lane,
-            "audit-stale-head",
-            `audited ${audit.audited_head_sha} but current head is ${currentHead}`,
-          );
-        }
+      // Digest pinning (durable): the completion event must DECLARE the
+      // canonical content digest of the audit record it references, and the
+      // declared digest must match the bound record on every replay. The
+      // digest lives in the durable event payload, so a post-hoc mutation of
+      // the audit comment is detected mechanically.
+      const declaredAuditDigest = event.refs?.audit_digest;
+      if (typeof declaredAuditDigest !== "string") {
+        return refuse(lane, "audit-digest-missing", "audit completion event must declare refs.audit_digest");
+      }
+      if (declaredAuditDigest !== payloadDigest(audit)) {
+        return refuse(lane, "audit-digest-mismatch", "bound audit content does not match the digest declared in the event");
+      }
+      // Deterministic head binding: the audit must bind to the head the
+      // implementer durably recorded (implementer.completed.head_sha). This
+      // is a pure function of lane history, so replay is deterministic. The
+      // LIVE PR check happens at system.eligibility_confirmed, whose checked
+      // metadata is embedded durably in that event.
+      if (!lane.pr_head_sha) {
+        return refuse(lane, "head-unknown", "lane has no recorded PR head SHA; cannot bind audit");
+      }
+      if (audit.audited_head_sha !== lane.pr_head_sha) {
+        return refuse(
+          lane,
+          "audit-stale-head",
+          `audited ${audit.audited_head_sha} but recorded head is ${lane.pr_head_sha}`,
+        );
       }
       if (audit.complete_diff_reviewed !== true) {
         return refuse(lane, "audit-incomplete-diff", "complete base-to-head diff not confirmed");
@@ -490,9 +490,12 @@ export function reduce(lane, event, policy, context = {}) {
       const common = { lease: null, audited_sha: audit.audited_head_sha, verdict: audit.verdict };
       switch (audit.verdict) {
         case "ACCEPT":
-          return advance(lane, event, "ready-for-merge", common,
-            [{ type: "label", value: "cp-ready-for-merge" }],
-            "shadow merge eligibility recorded; merge remains operator-only");
+          // NOT ready-for-merge. An ACCEPT parks the lane in
+          // eligibility-pending; only a durable system.eligibility_confirmed
+          // event carrying successfully-checked live PR metadata advances it.
+          // Metadata-free replay therefore can never mint ready-for-merge.
+          return advance(lane, event, "eligibility-pending", common, [],
+            "ACCEPT recorded; awaiting durable live-PR-metadata confirmation (system.eligibility_confirmed)");
         case "PATCH":
           return advance(lane, event, "patch-required", common);
         case "REJECT":
@@ -501,6 +504,10 @@ export function reduce(lane, event, policy, context = {}) {
             operator_required_reason: event.reason ?? "audit REJECT",
           });
         case "CANNOT_AUDIT": {
+          // validateAuditRecord has already required `retryable` to be a
+          // boolean for CANNOT_AUDIT, so routing here is total: retryable
+          // within budget → requeue to ready-for-codex; terminal (retryable
+          // false, or budget exhausted) → blocked (operator-owned).
           const retries = lane.audit_retry ?? 0;
           if (audit.retryable === true && retries < 3) {
             return advance(lane, event, "ready-for-codex",
@@ -509,12 +516,72 @@ export function reduce(lane, event, policy, context = {}) {
           }
           return advance(lane, event, "blocked", {
             ...common,
-            operator_required_reason: event.reason ?? "audit CANNOT_AUDIT",
+            operator_required_reason: event.reason ??
+              (audit.retryable === true
+                ? "audit CANNOT_AUDIT (retry budget exhausted)"
+                : "audit CANNOT_AUDIT (not retryable)"),
           });
         }
         default:
           return refuse(lane, "verdict-unknown", `verdict ${audit.verdict}`);
       }
+    }
+
+    case "system.eligibility_confirmed": {
+      // The ONLY path from eligibility-pending to ready-for-merge. The event
+      // must EMBED the complete authoritative live PR metadata the posting
+      // workflow checked (validateEvent has validated its shape); the check
+      // is re-run against the lane on every replay, so the durable record
+      // itself proves the live check happened and corresponded. Absence of
+      // metadata, a failed fetch, or any non-corresponding field fails
+      // closed and the lane stays pending.
+      const meta = event.pr_metadata ?? null;
+      if (meta === null) {
+        return refuse(lane, "pr-metadata-missing", "eligibility confirmation requires embedded live PR metadata");
+      }
+      const mv = validatePrMetadata(meta);
+      if (!mv.ok) {
+        return refuse(lane, "pr-metadata-invalid", mv.errors.join("; "));
+      }
+      if (meta.fetch_ok !== true) {
+        return refuse(lane, "pr-metadata-unavailable", "embedded metadata records a failed fetch; cannot confirm eligibility (fail closed)");
+      }
+      if (lane.verdict !== "ACCEPT" || !lane.audited_sha) {
+        return refuse(lane, "no-accept-recorded", "eligibility confirmation requires a recorded ACCEPT with an audited SHA");
+      }
+      if (meta.repository !== lane.repository) {
+        return refuse(lane, "pr-wrong-repository", `live PR repo ${meta.repository} != lane repo ${lane.repository}`);
+      }
+      if (lane.pr_number == null || meta.pr_number !== lane.pr_number) {
+        return refuse(lane, "pr-wrong-number", `live PR #${meta.pr_number} != lane PR #${lane.pr_number}`);
+      }
+      if (meta.state !== "open") {
+        return refuse(lane, "pr-not-open", `live PR state is ${meta.state}, not open`);
+      }
+      // merged/draft must be OBSERVED false — validatePrMetadata guarantees
+      // they are booleans when fetch_ok is true (an adapter that lost the
+      // fields cannot default them; the record fails validation instead).
+      if (meta.merged !== false) {
+        return refuse(lane, "pr-already-merged", "live PR is merged; eligibility cannot be confirmed");
+      }
+      if (meta.draft !== false) {
+        return refuse(lane, "pr-draft", "live PR is a draft; mark it ready-for-review before eligibility can be confirmed");
+      }
+      if (meta.base_branch !== lane.base_branch) {
+        return refuse(lane, "pr-retargeted-branch", `live PR base ${meta.base_branch} != lane base_branch ${lane.base_branch}`);
+      }
+      if (meta.base_sha !== lane.base_sha) {
+        return refuse(lane, "pr-base-sha-mismatch", `live PR base sha ${meta.base_sha} != lane base_sha ${lane.base_sha}`);
+      }
+      if (lane.working_branch == null || meta.head_branch !== lane.working_branch) {
+        return refuse(lane, "pr-wrong-head-branch", `live PR head branch ${meta.head_branch} != lane working_branch ${lane.working_branch}`);
+      }
+      if (meta.head_sha !== lane.audited_sha) {
+        return refuse(lane, "audit-stale-head", `live head ${meta.head_sha} != audited ${lane.audited_sha}`);
+      }
+      return advance(lane, event, "ready-for-merge", {},
+        [{ type: "label", value: "cp-ready-for-merge" }],
+        "shadow merge eligibility confirmed against durably-recorded live PR metadata; merge remains operator-only");
     }
 
     case "coordinator.escalated": {
@@ -574,7 +641,14 @@ export function reduce(lane, event, policy, context = {}) {
       if (at === null) {
         return refuse(lane, "time-missing", "lease expiry check requires event_observed_at or now");
       }
-      if (Date.parse(lane.lease.expires_at) > at) {
+      // Strict parsed-instant comparison (never lexical, never lenient
+      // Date.parse): an unparseable recorded expiry fails closed as
+      // NOT-expired-yet-unreapable → surfaced via refusal, not guessed.
+      const recordedExpiry = parseIsoInstant(lane.lease.expires_at);
+      if (recordedExpiry === null) {
+        return refuse(lane, "lease-expiry-invalid", "recorded lease expiry is not a valid UTC calendar instant");
+      }
+      if (recordedExpiry > at) {
         return refuse(lane, "lease-not-expired", `lease valid until ${lane.lease.expires_at}`);
       }
       // Record WHICH role lost its lease so recovery routes to the correct

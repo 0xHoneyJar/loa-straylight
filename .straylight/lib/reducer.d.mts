@@ -17,24 +17,23 @@ export interface PrMetadata {
 export interface ReduceContext {
   now?: string;
   event_observed_at?: string;
-  /** Legacy live head SHA; superseded by pr_metadata for authoritative binding. */
-  pr_head_sha?: string;
-  /** Authoritative live PR object at the audit frontier (R1). */
-  pr_metadata?: PrMetadata | Record<string, any>;
   /** Authenticated GitHub login of the event's comment (binds lease holder). */
   comment_author?: string;
   /** Lease ids already consumed earlier in lane history (reuse is refused). */
   used_lease_ids?: Set<string> | string[];
   task_packet?: Record<string, any>;
-  task_packet_digest?: string;
   task_packet_source?: { comment_id: number; author: string };
   audit_record?: Record<string, any>;
-  audit_digest?: string;
   audit_source?: { comment_id: number; author: string };
 }
 export type ReduceDecision =
   | { ok: true; lane: Lane; effects: Array<{ type: string; value: string }>; note: string }
   | { ok: false; refusal: string; detail: string; lane: Lane; escalate: boolean };
+/**
+ * DETERMINISM INVARIANT: reduce() consults no transient live signal. Live PR
+ * facts enter the protocol only as the durable pr_metadata field of a
+ * system.eligibility_confirmed event, re-validated on every replay.
+ */
 export declare function reduce(
   lane: Lane,
   event: CpEvent,

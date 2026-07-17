@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/0xHoneyJar/loa-straylight/.straylight/schemas/audit-v1.schema.json",
   "title": "Straylight Control Plane audit record (v1)",
-  "description": "Codex's independent audit verdict, bound to an exact head SHA. CANONICAL LOCATION: a comment on the LANE ISSUE (the only stream the reducer/watchdog reconstruct from). It is never committed into the audited PR, because committing it changes the audited target (lesson of PR #116, ADR-050 §5.3). Executable validator: .straylight/lib/validate.mjs#validateAuditRecord.",
+  "description": "Codex's independent audit verdict, bound to an exact head SHA. CANONICAL LOCATION: a comment on the LANE ISSUE (the only stream the reducer/watchdog reconstruct from). It is never committed into the audited PR, because committing it changes the audited target (lesson of PR #116, ADR-050 \u00a75.3). Executable validator: .straylight/lib/validate.mjs#validateAuditRecord.",
   "type": "object",
   "additionalProperties": true,
   "required": [
@@ -21,12 +21,30 @@
     "next_actor"
   ],
   "properties": {
-    "schema": { "const": "straylight.audit.v1" },
-    "lane_id": { "type": "string", "pattern": "^lane-[a-z0-9][a-z0-9-]{1,62}$" },
-    "pr_number": { "type": "integer", "minimum": 1 },
-    "base_branch": { "type": "string", "pattern": "^[A-Za-z0-9._/-]{1,200}$" },
-    "base_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-    "head_branch": { "type": "string", "pattern": "^[A-Za-z0-9._/-]{1,200}$" },
+    "schema": {
+      "const": "straylight.audit.v1"
+    },
+    "lane_id": {
+      "type": "string",
+      "pattern": "^lane-[a-z0-9][a-z0-9-]{1,62}$"
+    },
+    "pr_number": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "base_branch": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._/-]{1,200}$"
+    },
+    "base_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "head_branch": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._/-]{1,200}$",
+      "description": "Must equal the lane's established working_branch (set by the initial coordinator packet) or the reducer refuses (audit-head-branch-mismatch)."
+    },
     "audited_head_sha": {
       "type": "string",
       "pattern": "^[0-9a-f]{40}$",
@@ -39,33 +57,73 @@
     "changed_files": {
       "type": "array",
       "minItems": 1,
-      "items": { "type": "string" },
-      "description": "Changed-file list, or a single-element digest entry of the form 'digest:<algo>:<hex>' over the sorted file list."
+      "items": {
+        "type": "string"
+      },
+      "description": "Changed-file list as reviewed by the auditor. Informational content of the audit record \u2014 no separate per-file verification is performed on it; its integrity is guaranteed by the audit record's own content digest (refs.audit_digest on the completion event, recomputed on every replay)."
     },
-    "verdict": { "enum": ["ACCEPT", "PATCH", "REJECT", "CANNOT_AUDIT"] },
+    "verdict": {
+      "enum": [
+        "ACCEPT",
+        "PATCH",
+        "REJECT",
+        "CANNOT_AUDIT"
+      ]
+    },
     "concerns": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["severity", "location", "description"],
+        "required": [
+          "severity",
+          "location",
+          "description"
+        ],
         "properties": {
-          "severity": { "enum": ["blocker", "high", "medium", "low"] },
-          "location": { "type": "string", "description": "file:line or file-level anchor" },
-          "description": { "type": "string" }
+          "severity": {
+            "enum": [
+              "blocker",
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "location": {
+            "type": "string",
+            "description": "file:line or file-level anchor"
+          },
+          "description": {
+            "type": "string"
+          }
         }
       },
       "description": "Required and non-empty for PATCH/REJECT."
     },
-    "validation_summary": { "type": "string" },
+    "validation_summary": {
+      "type": "string"
+    },
     "audit_committed_in_pr": {
       "const": false,
-      "description": "AUDITOR ATTESTATION (self-reported), not a mechanical fact: the auditor asserts the audit was not committed into the audited PR (PR #116 lesson). The validator rejects a true attestation; the exact-SHA / live-head binding in the reducer is what mechanically defeats an audit that actually committed into the PR (its head SHA would no longer match). See ADR-050 §5.3."
+      "description": "AUDITOR ATTESTATION (self-reported), not a mechanical fact: the auditor asserts the audit was not committed into the audited PR (PR #116 lesson). The validator rejects a true attestation; the exact-SHA / live-head binding in the reducer is what mechanically defeats an audit that actually committed into the PR (its head SHA would no longer match). See ADR-050 \u00a75.3."
     },
     "retryable": {
       "type": "boolean",
-      "description": "Only meaningful with CANNOT_AUDIT: true routes back to ready-for-codex within the retry budget; otherwise blocked."
+      "description": "REQUIRED (boolean) for CANNOT_AUDIT and forbidden on every other verdict: true routes back to ready-for-codex within the retry budget (next_actor auditor); false, or an exhausted budget, routes to blocked (next_actor operator). The executable validator refuses a CANNOT_AUDIT without it and any other verdict with it."
     },
-    "audit_comment_ref": { "type": "string", "description": "URL or id of the lane-issue comment carrying this audit record (the canonical location)." },
-    "next_actor": { "enum": ["coordinator", "implementer", "auditor", "operator", "system", "none"] }
+    "audit_comment_ref": {
+      "type": "string",
+      "description": "URL or id of the lane-issue comment carrying this audit record (the canonical location)."
+    },
+    "next_actor": {
+      "enum": [
+        "coordinator",
+        "implementer",
+        "auditor",
+        "operator",
+        "system",
+        "none"
+      ],
+      "description": "Must agree with the verdict routing the reducer performs: ACCEPT\u2192system (eligibility-pending awaits the system's durable live-metadata confirmation), PATCH\u2192coordinator, REJECT\u2192operator, CANNOT_AUDIT\u2192auditor when retryable else operator. The executable validator refuses a contradiction."
+    }
   }
 }

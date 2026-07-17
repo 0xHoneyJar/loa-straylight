@@ -8,16 +8,24 @@
 // shadow-mode comment. Control Plane v1 has no code path that merges.
 //
 // Check-status policy (single, coherent authority): the reducer's
-// ready-for-merge state asserts ONLY that an ACCEPT audit was recorded —
-// live CI status is NOT part of event-sourced replay and never enters the
-// reducer. This module is the SOLE authority on required-check status, and
-// it evaluates RAW evidence, failing closed on every unknown:
-//   - >= 1 check run observed AND zero non-passing check runs, AND
+// ready-for-merge state asserts ONLY that an ACCEPT audit was recorded and
+// durably confirmed against live PR metadata — live CI status is NOT part
+// of event-sourced replay and never enters the reducer. This module is the
+// SOLE authority on required-check status, and it evaluates RAW evidence,
+// failing closed on every unknown:
+//   - the caller supplies EVERY check run's conclusion across ALL pages
+//     (checks.check_run_conclusions) plus the API's total_count
+//     (checks.check_runs_total); a conclusion list whose length differs
+//     from total_count means a page was dropped → fail closed;
+//   - >= 1 check run observed AND every conclusion is success/neutral/
+//     skipped (a null/pending/failed conclusion is non-passing), AND
 //   - the legacy combined commit status is "success" or absent (0 statuses).
-// A pre-cooked boolean is no longer accepted (that let the workflow fail
+// A pre-cooked boolean is never accepted (that let the workflow fail
 // OPEN by reporting "no checks configured" as "checks passed").
 
 import { validatePolicy, validateLane } from "./validate.mjs";
+
+const PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
 
 export function evaluate(lane, policy, context = {}) {
   const reasons = [];
@@ -45,15 +53,23 @@ export function evaluate(lane, policy, context = {}) {
   // PR liveness: a closed/merged/retargeted PR invalidates eligibility. Fail
   // closed on unknown — if the workflow could not report the PR's open state
   // or its base, we cannot confirm the audited target still exists as an open
-  // PR against the lane's base branch.
+  // PR against the lane's base branch. Missing draft/merged information is
+  // UNKNOWN, never defaulted to false.
   if (context.pr_state !== "open") {
     reasons.push(`PR state is ${context.pr_state ?? "unknown"}, not open (fail closed)`);
   }
   // A draft PR is not ready to merge (documented draft policy). When the
   // adapter reports draft state, a draft is ineligible; when it is unknown
-  // (undefined), fail closed the same way.
+  // (undefined), fail closed the same way. Unknown is preserved as unknown —
+  // never defaulted to false.
   if (context.pr_draft !== false) {
     reasons.push(`PR draft state is ${context.pr_draft ?? "unknown"}, not false (fail closed)`);
+  }
+  // Same posture for merged: eligibility requires the OBSERVED boolean false.
+  // (A merged PR also reports state "closed", but we do not rely on that
+  // coupling — missing merged information independently fails closed.)
+  if (context.pr_merged !== false) {
+    reasons.push(`PR merged state is ${context.pr_merged ?? "unknown"}, not false (fail closed)`);
   }
   if (typeof context.pr_base_ref !== "string") {
     reasons.push("PR base branch unavailable (fail closed)");
@@ -61,23 +77,28 @@ export function evaluate(lane, policy, context = {}) {
     reasons.push(`PR retargeted: base ${context.pr_base_ref} != lane base_branch ${lane.base_branch}`);
   }
   // Raw-evidence required-check gate (fail closed on any unknown). The
-  // caller supplies observed counts; a missing/partial `checks` object, zero
-  // check runs, any non-passing check run, or a non-success legacy commit
-  // status all yield ineligible.
+  // caller supplies the FULL per-run conclusion list gathered across every
+  // page, plus the API total; a missing/partial `checks` object, a dropped
+  // page (list shorter or longer than the total), zero check runs, any
+  // non-passing conclusion, or a non-success legacy commit status all yield
+  // ineligible.
   const c = context.checks ?? null;
+  const conclusions = Array.isArray(c?.check_run_conclusions) ? c.check_run_conclusions : null;
   const checksOk =
     c !== null &&
     typeof c === "object" &&
+    conclusions !== null &&
     Number.isInteger(c.check_runs_total) &&
-    Number.isInteger(c.check_runs_failing) &&
     Number.isInteger(c.commit_statuses_total) &&
     c.check_runs_total > 0 &&
-    c.check_runs_failing === 0 &&
+    conclusions.length === c.check_runs_total &&
+    conclusions.every((x) => typeof x === "string" && PASSING_CONCLUSIONS.has(x)) &&
     (c.commit_statuses_total === 0 || c.commit_status_state === "success");
   if (!checksOk) {
     reasons.push(
-      "required checks not confirmed passing: need >=1 check run, 0 failing, " +
-        "and legacy combined status success-or-absent (fail closed)",
+      "required checks not confirmed passing: need >=1 check run, a complete " +
+        "all-pages conclusion list matching the API total, every conclusion " +
+        "success/neutral/skipped, and legacy combined status success-or-absent (fail closed)",
     );
   }
   if (policy.auto_merge !== false) {

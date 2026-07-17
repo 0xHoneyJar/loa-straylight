@@ -12,7 +12,7 @@
 // Every function returns { ok: true, value } or { ok: false, errors: [...] }.
 // Unknown/missing/mistyped fields are errors, never warnings.
 
-import { STATES, ROLES, VERDICTS, isState, isRole } from "./state-machine.mjs";
+import { STATES, ROLES, VERDICTS, isState, isRole, nextActorFor } from "./state-machine.mjs";
 
 const LANE_ID_RE = /^lane-[a-z0-9][a-z0-9-]{1,62}$/;
 const PHASE_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
@@ -24,6 +24,7 @@ const EVENT_ID_RE = /^evt-[a-z0-9][a-z0-9-]{1,62}$/;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const GH_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(\[bot\])?$/;
 const RELATIVE_PATH_RE = /^(?!\/)(?!.*\.\.)[\x20-\x7E]{1,300}$/;
+const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 
 // Strict UTC calendar instant: the ISO shape AND a real calendar date/time.
 // A regex alone accepts 2026-13-40T25:61:99Z; this rejects impossible months,
@@ -167,6 +168,16 @@ export function validateLease(v) {
   checkTimestamp(errors, v, "acquired_at");
   checkTimestamp(errors, v, "expires_at");
   checkEnum(errors, v, "expected_state", STATES);
+  // A lease's expected_state is DERIVED from its holder role: an implementer
+  // lease exists only while the lane is claude-working, an auditor lease only
+  // while codex-working. A lease claiming any other expected state is
+  // structurally inconsistent (cross-state lease) and fails closed.
+  if (v.actor_role === "implementer" && v.expected_state !== "claude-working") {
+    errors.push("expected_state: implementer lease must expect claude-working");
+  }
+  if (v.actor_role === "auditor" && v.expected_state !== "codex-working") {
+    errors.push("expected_state: auditor lease must expect codex-working");
+  }
   if (errors.length === 0) {
     const acq = parseIsoInstant(v.acquired_at);
     const exp = parseIsoInstant(v.expires_at);
@@ -211,9 +222,31 @@ export function validateLane(v) {
   if (v.lease !== undefined && v.lease !== null) {
     const lease = validateLease(v.lease);
     if (!lease.ok) errors.push(...lease.errors.map((e) => `lease.${e}`));
+    if (isPlainObject(v.lease)) {
+      // An embedded lease must belong to THIS lane and to the lane's CURRENT
+      // working state. A lease copied from another lane (cross-lane), or one
+      // whose expected_state disagrees with where the lane actually is
+      // (cross-state), is a corrupted or forged record and fails closed.
+      if (typeof v.lease.lane_id === "string" && typeof v.lane_id === "string" &&
+          v.lease.lane_id !== v.lane_id) {
+        errors.push(`lease.lane_id: ${v.lease.lane_id} does not match lane ${v.lane_id} (cross-lane lease)`);
+      }
+      if (typeof v.lease.expected_state === "string" && typeof v.state === "string" &&
+          v.lease.expected_state !== v.state) {
+        errors.push(`lease.expected_state: ${v.lease.expected_state} does not match lane state ${v.state} (cross-state lease)`);
+      }
+    }
   }
   checkInt(errors, v, "event_sequence", { min: 0 });
   checkString(errors, v, "last_transition", null, { optional: true });
+  // next_actor is a projection of state (ADR-050 §1.1). A stored record whose
+  // next_actor disagrees with its state is corrupted or hand-edited; trusting
+  // it would let a forged record hand the turn to the wrong role.
+  if (typeof v.state === "string" && isState(v.state) &&
+      v.next_actor !== undefined && v.next_actor !== null &&
+      v.next_actor !== nextActorFor(v.state)) {
+    errors.push(`next_actor: state ${v.state} requires next_actor ${nextActorFor(v.state)}, record claims ${v.next_actor}`);
+  }
   // v1 invariant: shadow mode + no auto-merge, enforced at parse time so a
   // hand-edited lane cannot smuggle active mode past the reducer.
   if (v.mode === "active") errors.push("mode: 'active' is not permitted in control plane v1");
@@ -251,6 +284,7 @@ export function validateEvent(v) {
   checkInt(errors, v, "patch_cycle", { min: 0, optional: true });
   checkString(errors, v, "reason", null, { optional: true, maxLength: 4000 });
   checkTimestamp(errors, v, "occurred_at");
+  checkString(errors, v, "head_branch", BRANCH_RE, { optional: true });
   if (v.refs !== undefined && v.refs !== null) {
     if (!isPlainObject(v.refs)) {
       errors.push("refs: not an object");
@@ -258,7 +292,20 @@ export function validateEvent(v) {
       checkInt(errors, v.refs, "task_packet_comment_id", { min: 1, optional: true });
       checkInt(errors, v.refs, "pr_number", { min: 1, optional: true });
       checkInt(errors, v.refs, "audit_comment_id", { min: 1, optional: true });
+      // Content digests binding the referenced artifact comment (R-digest):
+      // the digest travels IN the durable event payload, so a later edit of
+      // the referenced comment is detectable even if edit metadata is lost.
+      checkString(errors, v.refs, "task_packet_digest", DIGEST_RE, { optional: true });
+      checkString(errors, v.refs, "audit_digest", DIGEST_RE, { optional: true });
     }
+  }
+  // The embedded live PR metadata of a system.eligibility_confirmed event.
+  // Optional at the structural layer (only that event type carries it); when
+  // present it must itself be a valid metadata object. The reducer requires
+  // it (fetch_ok: true) on the confirmation transition.
+  if (v.pr_metadata !== undefined && v.pr_metadata !== null) {
+    const pm = validatePrMetadata(v.pr_metadata);
+    if (!pm.ok) errors.push(...pm.errors.map((e) => `pr_metadata.${e}`));
   }
   return result(errors, v);
 }
@@ -338,6 +385,17 @@ export function validateAuditRecord(v) {
   checkBool(errors, v, "audit_committed_in_pr");
   checkBool(errors, v, "retryable", { optional: true });
   checkEnum(errors, v, "next_actor", [...ROLES, "none"]);
+  // retryable is meaningful ONLY with CANNOT_AUDIT, and there it is REQUIRED:
+  // a CANNOT_AUDIT that does not declare retryability is ambiguous about its
+  // own routing (requeue vs blocked), and a retryable flag on any other
+  // verdict is a contradiction that could mislead a reader about routing.
+  if (v.verdict === "CANNOT_AUDIT") {
+    if (typeof v.retryable !== "boolean") {
+      errors.push("retryable: required (boolean) for CANNOT_AUDIT verdicts");
+    }
+  } else if (v.retryable !== undefined && v.retryable !== null) {
+    errors.push(`retryable: only meaningful for CANNOT_AUDIT, not ${v.verdict}`);
+  }
   // audit_committed_in_pr is AUDITOR ATTESTATION (self-reported), not a
   // mechanical fact — the pure validator cannot see the PR file list. The
   // reducer additionally cross-checks the live PR (R4). Here we only enforce
@@ -355,16 +413,23 @@ export function validateAuditRecord(v) {
     errors.push("concerns: an ACCEPT verdict must carry no concerns");
   }
   // Verdict/next_actor must not contradict the routing the reducer performs:
-  // ACCEPT -> operator (eligibility to the operator); PATCH -> coordinator
-  // (writes the patch packet); REJECT/CANNOT_AUDIT -> operator (blocked lane
-  // is operator-owned). A record whose declared next_actor disagrees is
-  // self-inconsistent and refused.
+  // ACCEPT -> system (the lane parks in eligibility-pending until the system
+  // posts a live-metadata-bearing system.eligibility_confirmed event; the
+  // operator acts only after that); PATCH -> coordinator (writes the patch
+  // packet); REJECT -> operator (blocked lane is operator-owned);
+  // CANNOT_AUDIT -> auditor when retryable (requeued to ready-for-codex;
+  // the reducer may still route an exhausted retry budget to the operator),
+  // operator when terminal (blocked). A record whose declared next_actor
+  // disagrees with its own verdict+retryable is self-inconsistent and refused.
   const expectedNext = {
-    ACCEPT: "operator", PATCH: "coordinator", REJECT: "operator", CANNOT_AUDIT: "operator",
+    ACCEPT: "system",
+    PATCH: "coordinator",
+    REJECT: "operator",
+    CANNOT_AUDIT: v.retryable === true ? "auditor" : "operator",
   }[v.verdict];
   if (expectedNext !== undefined && v.next_actor !== undefined && v.next_actor !== null &&
       v.next_actor !== expectedNext) {
-    errors.push(`next_actor: ${v.verdict} routes to ${expectedNext}, record claims ${v.next_actor}`);
+    errors.push(`next_actor: ${v.verdict}${v.verdict === "CANNOT_AUDIT" ? ` (retryable ${v.retryable === true})` : ""} routes to ${expectedNext}, record claims ${v.next_actor}`);
   }
   return result(errors, v);
 }

@@ -46,6 +46,7 @@
         "claude-working",
         "ready-for-codex",
         "codex-working",
+        "eligibility-pending",
         "ready-for-merge",
         "merged",
         "patch-required",
@@ -53,10 +54,18 @@
         "operator-required",
         "lease-expired",
         "superseded"
-      ]
+      ],
+      "description": "eligibility-pending: an ACCEPT audit is recorded but not yet confirmed against live PR metadata. Only a system.eligibility_confirmed event whose payload durably embeds the successfully-checked metadata advances the lane to ready-for-merge."
     },
-    "next_actor": { "enum": ["coordinator", "implementer", "auditor", "operator", "system", "none"] },
-    "working_branch": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9._/-]{1,200}$" },
+    "next_actor": {
+      "enum": ["coordinator", "implementer", "auditor", "operator", "system", "none"],
+      "description": "Projection of state, never independent authority: the executable validator rejects any record whose next_actor differs from the value derived from its state."
+    },
+    "working_branch": {
+      "type": ["string", "null"],
+      "pattern": "^[A-Za-z0-9._/-]{1,200}$",
+      "description": "Established by the INITIAL coordinator task packet (its target_branch). Every later packet, implementer completion (head_branch), audit (head_branch), and confirmed live PR head branch must match it exactly."
+    },
     "pr_number": { "type": ["integer", "null"], "minimum": 1 },
     "pr_head_sha": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
     "audited_sha": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
@@ -84,6 +93,7 @@
     },
     "lease": {
       "type": ["object", "null"],
+      "description": "Embedded-lease invariants enforced by the executable validator: lease.lane_id must equal the parent lane's lane_id (no cross-lane lease); lease.expected_state must equal the parent lane's current state (no cross-state lease); and expected_state must be the holder role's working state (implementer→claude-working, auditor→codex-working).",
       "required": ["lane_id", "actor_role", "lease_id", "holder_login", "grant_sequence", "acquired_at", "expires_at", "expected_state"],
       "properties": {
         "lane_id": { "type": "string", "pattern": "^lane-[a-z0-9][a-z0-9-]{1,62}$" },
@@ -97,7 +107,7 @@
         "grant_sequence": { "type": "integer", "minimum": 1 },
         "acquired_at": { "type": "string", "format": "date-time", "description": "Trusted GitHub comment created_at at grant time, not the actor-supplied occurred_at." },
         "expires_at": { "type": "string", "format": "date-time" },
-        "expected_state": { "type": "string" }
+        "expected_state": { "enum": ["claude-working", "codex-working"] }
       }
     },
     "event_sequence": { "type": "integer", "minimum": 0 },

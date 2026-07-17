@@ -8,13 +8,28 @@
 // deterministic dedupe key so an adapter can refuse to post the same
 // recovery event twice.
 //
+// Every recovery action that becomes an event also carries a
+// deterministic, collision-resistant `event_id`: the sha256 digest of the
+// FULL dedupe key (which embeds the complete lane_id and recovery key).
+// Hashing — not truncation — guarantees two distinct long lane IDs or
+// recovery keys can never yield the same event_id.
+//
+// All time comparisons parse timestamps into instants via the strict
+// calendar parser (parseIsoInstant); no lexical string comparison is used
+// anywhere. An unparseable time never satisfies a recovery condition —
+// instead it surfaces as an explicit fail-closed finding.
+//
 // The watchdog only proposes system/escalation events; the reducer
 // remains the sole authority on whether they advance the lane.
 
-import { validatePolicy, validateLane } from "./validate.mjs";
+import { createHash } from "node:crypto";
+import { validatePolicy, validateLane, parseIsoInstant } from "./validate.mjs";
 
-function hoursBetween(aIso, bIso) {
-  return (Date.parse(bIso) - Date.parse(aIso)) / 3_600_000;
+// Deterministic, collision-resistant event id for a recovery action:
+// sha256 over the full dedupe key (complete lane id + recovery key + seq).
+// 48 hex chars (192 bits) fits the evt- pattern's 63-char budget.
+export function recoveryEventId(dedupeKey) {
+  return "evt-" + createHash("sha256").update(String(dedupeKey), "utf8").digest("hex").slice(0, 48);
 }
 
 export function scan(lanes, policy, context = {}) {
@@ -23,9 +38,9 @@ export function scan(lanes, policy, context = {}) {
   if (policy.enabled !== true) {
     return { ok: false, refusal: "automation-disabled", detail: "kill switch active", actions: [] };
   }
-  const now = context.now;
-  if (typeof now !== "string" || now.length === 0) {
-    return { ok: false, refusal: "now-missing", detail: "watchdog requires context.now", actions: [] };
+  const nowMs = parseIsoInstant(typeof context.now === "string" ? context.now : null);
+  if (nowMs === null) {
+    return { ok: false, refusal: "now-missing", detail: "watchdog requires a valid UTC instant in context.now", actions: [] };
   }
 
   const actions = [];
@@ -44,18 +59,21 @@ export function scan(lanes, policy, context = {}) {
     }
     if (lane.operator_pause === true) continue;
 
-    // 1. Expired leases → propose system.lease_expired.
-    if (lane.lease && lane.lease.expires_at <= now) {
+    // 1. Expired leases → propose system.lease_expired. Parsed-instant
+    //    comparison: validateLane guarantees expires_at parses.
+    if (lane.lease && parseIsoInstant(lane.lease.expires_at) <= nowMs) {
+      const dedupe = `lease-expired:${lane.lane_id}:${lane.lease.lease_id}:${lane.event_sequence}`;
       actions.push({
         type: "post-event",
         event_type: "system.lease_expired",
+        event_id: recoveryEventId(dedupe),
         lane_id: lane.lane_id,
         sequence: lane.event_sequence + 1,
         prior_state: lane.state,
         // event_sequence is part of the key so a recovery event refused in a
         // race (e.g. an operator pause consumed the sequence) is re-proposed
         // once the lane advances, instead of being deduped away forever.
-        dedupe_key: `lease-expired:${lane.lane_id}:${lane.lease.lease_id}:${lane.event_sequence}`,
+        dedupe_key: dedupe,
         detail: `lease ${lane.lease.lease_id} expired ${lane.lease.expires_at}`,
       });
       continue; // one recovery step per lane per sweep
@@ -73,31 +91,36 @@ export function scan(lanes, policy, context = {}) {
         : lane.last_lease_role === "implementer"
           ? "ready-for-claude"
           : (lane.pr_number != null && lane.pr_head_sha ? "ready-for-codex" : "ready-for-claude");
+      const dedupe = `requeue:${lane.lane_id}:${lane.event_sequence}`;
       actions.push({
         type: "post-event",
         event_type: "system.requeued",
+        event_id: recoveryEventId(dedupe),
         lane_id: lane.lane_id,
         sequence: lane.event_sequence + 1,
         prior_state: "lease-expired",
         requested_state: target,
-        dedupe_key: `requeue:${lane.lane_id}:${lane.event_sequence}`,
+        dedupe_key: dedupe,
         detail: `requeue to ${target}`,
       });
       continue;
     }
 
-    // 3. ready-for-merge lanes whose PR head moved → invalidate ACCEPT.
-    if (lane.state === "ready-for-merge" && lane.audited_sha) {
+    // 3. eligibility-pending / ready-for-merge lanes whose PR head moved →
+    //    invalidate the recorded ACCEPT (pending or confirmed alike).
+    if ((lane.state === "ready-for-merge" || lane.state === "eligibility-pending") && lane.audited_sha) {
       const currentHead = context.pr_heads?.[String(lane.pr_number)] ?? null;
       if (currentHead && currentHead !== lane.audited_sha) {
+        const dedupe = `head-moved:${lane.lane_id}:${currentHead}:${lane.event_sequence}`;
         actions.push({
           type: "post-event",
           event_type: "system.head_moved",
+          event_id: recoveryEventId(dedupe),
           lane_id: lane.lane_id,
           sequence: lane.event_sequence + 1,
-          prior_state: "ready-for-merge",
+          prior_state: lane.state,
           head_sha: currentHead, // recorded in the event for replay determinism
-          dedupe_key: `head-moved:${lane.lane_id}:${currentHead}:${lane.event_sequence}`,
+          dedupe_key: dedupe,
           detail: `head ${currentHead} != audited ${lane.audited_sha}`,
         });
         continue;
@@ -116,25 +139,40 @@ export function scan(lanes, policy, context = {}) {
           type: "flag-unverifiable-head",
           lane_id: lane.lane_id,
           dedupe_key: `head-unverifiable:${lane.lane_id}:${lane.audited_sha}:${lane.event_sequence}`,
-          detail: `ready-for-merge but PR #${lane.pr_number} head could not be resolved; ACCEPT eligibility is UNCONFIRMED (fail closed)`,
+          detail: `${lane.state} but PR #${lane.pr_number} head could not be resolved; ACCEPT eligibility is UNCONFIRMED (fail closed)`,
         });
         continue;
       }
     }
 
     // 4. Lanes stuck beyond the configured threshold → escalation finding.
-    //    (ready-for-codex without an audit event is the canonical case.)
-    const stuckStates = ["ready-for-coordinator", "ready-for-claude", "ready-for-codex", "patch-required"];
+    //    (ready-for-codex without an audit event is the canonical case;
+    //    eligibility-pending without a confirmation is its sibling.)
+    const stuckStates = ["ready-for-coordinator", "ready-for-claude", "ready-for-codex", "eligibility-pending", "patch-required"];
     if (stuckStates.includes(lane.state) && context.last_activity?.[lane.lane_id]) {
-      const idleHours = hoursBetween(context.last_activity[lane.lane_id], now);
+      const lastMs = parseIsoInstant(context.last_activity[lane.lane_id]);
+      if (lastMs === null) {
+        // A timestamp we cannot parse means we cannot prove the lane is NOT
+        // stuck. Fail closed by surfacing it, never by silently skipping.
+        actions.push({
+          type: "flag-unverifiable-activity",
+          lane_id: lane.lane_id,
+          dedupe_key: `activity-unverifiable:${lane.lane_id}:${lane.event_sequence}`,
+          detail: `last-activity timestamp unparseable (${String(context.last_activity[lane.lane_id]).slice(0, 40)}); stuck-lane check cannot run (fail closed)`,
+        });
+        continue;
+      }
+      const idleHours = (nowMs - lastMs) / 3_600_000;
       if (idleHours >= policy.stuck_lane_threshold_hours) {
+        const dedupe = `stuck:${lane.lane_id}:${lane.event_sequence}`;
         actions.push({
           type: "post-event",
           event_type: "system.escalated",
+          event_id: recoveryEventId(dedupe),
           lane_id: lane.lane_id,
           sequence: lane.event_sequence + 1,
           prior_state: lane.state,
-          dedupe_key: `stuck:${lane.lane_id}:${lane.event_sequence}`,
+          dedupe_key: dedupe,
           detail: `idle ${Math.floor(idleHours)}h in ${lane.state} (threshold ${policy.stuck_lane_threshold_hours}h)`,
         });
       }

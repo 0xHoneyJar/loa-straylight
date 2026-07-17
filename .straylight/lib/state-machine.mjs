@@ -13,6 +13,7 @@ export const STATES = Object.freeze([
   "claude-working",
   "ready-for-codex",
   "codex-working",
+  "eligibility-pending",
   "ready-for-merge",
   "merged",
   "patch-required",
@@ -64,18 +65,28 @@ export const EVENT_TYPES = Object.freeze({
   "auditor.lease_acquired": { role: ["auditor"], from: ["ready-for-codex"], to: "codex-working" },
   "auditor.audit_completed": { role: ["auditor"], from: ["codex-working"], to: null },
   "auditor.lease_released": { role: ["auditor"], from: ["codex-working"], to: "ready-for-codex" },
+  // An ACCEPT audit parks the lane in eligibility-pending. Only this SYSTEM
+  // event — posted by the reducer workflow and carrying the complete
+  // authoritative live PR metadata it checked, embedded durably in the event
+  // payload itself — advances it to ready-for-merge. Metadata-free replay of
+  // an audit alone can therefore never produce ready-for-merge: the durable
+  // record either contains a confirmation whose embedded metadata still
+  // corresponds field-by-field with the lane, or eligibility stays pending.
+  "system.eligibility_confirmed": { role: ["system"], from: ["eligibility-pending"], to: "ready-for-merge" },
   "operator.paused": { role: ["operator"], from: "*", to: null },
   "operator.resumed": { role: ["operator"], from: "*", to: null },
   "operator.decision": { role: ["operator"], from: ["operator-required", "blocked"], to: null },
   "operator.merged": { role: ["operator"], from: ["ready-for-merge"], to: "merged" },
   "operator.superseded": {
     role: ["operator"],
-    from: ["planning", "ready-for-coordinator", "ready-for-claude", "claude-working", "ready-for-codex", "codex-working", "ready-for-merge", "patch-required", "blocked", "operator-required", "lease-expired"],
+    from: ["planning", "ready-for-coordinator", "ready-for-claude", "claude-working", "ready-for-codex", "codex-working", "eligibility-pending", "ready-for-merge", "patch-required", "blocked", "operator-required", "lease-expired"],
     to: "superseded",
   },
   "system.lease_expired": { role: ["system"], from: ["claude-working", "codex-working"], to: "lease-expired" },
   "system.requeued": { role: ["system"], from: ["lease-expired"], to: null },
-  "system.head_moved": { role: ["system"], from: ["ready-for-merge"], to: null },
+  // A moved head invalidates recorded eligibility whether it is still
+  // pending confirmation or already confirmed.
+  "system.head_moved": { role: ["system"], from: ["eligibility-pending", "ready-for-merge"], to: null },
   "system.escalated": { role: ["system"], from: "*", to: "operator-required" },
 });
 
@@ -98,6 +109,7 @@ export const NEXT_ACTOR = Object.freeze({
   "claude-working": "implementer",
   "ready-for-codex": "auditor",
   "codex-working": "auditor",
+  "eligibility-pending": "system",
   "ready-for-merge": "operator",
   merged: "none",
   "patch-required": "coordinator",
