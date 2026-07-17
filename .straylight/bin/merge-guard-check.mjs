@@ -4,8 +4,12 @@
 // Usage:
 //   node .straylight/bin/merge-guard-check.mjs --input <file.json> [--policy <policy.json>]
 //
-// input.json = { lane: <reduced lane>, context: { pr_head_sha?, pr_state?,
-//   pr_draft?, pr_merged?, pr_base_ref?, checks? } }
+// input.json = { lane: <reduced lane>, context: { pr_metadata?, checks? } }
+// pr_metadata = the COMPLETE normalized live PR record (validatePrMetadata
+//   shape): { fetch_ok, repository, pr_number, state, draft, merged,
+//   base_branch, base_sha, head_branch, head_sha } — the pure module fails
+//   closed unless every field corresponds exactly with the lane and the
+//   audited target; loose single-field context is never accepted.
 // checks = { check_runs_total, check_run_conclusions[] (ALL pages),
 //   commit_statuses_total, commit_status_state } — raw evidence only; the
 // pure module fails closed on anything missing, partial, or unknown.

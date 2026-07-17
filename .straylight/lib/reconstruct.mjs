@@ -70,11 +70,32 @@ export function reconstructLane(input) {
     return { ok: false, refusal: "genesis-invalid", detail: gv.errors.join("; "), lane: null, dispositions: [], labels: [] };
   }
   let lane = genesis.value;
-  if (lane.state !== "planning" || lane.event_sequence !== 0) {
+  // The genesis record must be TRULY initial: every in-flight/derived field
+  // at its starting value. A genesis that preseeds any of them smuggles
+  // state past the events that are supposed to establish it — e.g. a
+  // preselected working_branch would ratify a branch no coordinator packet
+  // ever named (the initial packet must both find working_branch null and
+  // establish it from its own target_branch), and a preseeded pr_number
+  // would let a completion event omit its PR reference.
+  const genesisViolations = [];
+  if (lane.state !== "planning") genesisViolations.push("state must be planning");
+  if (lane.event_sequence !== 0) genesisViolations.push("event_sequence must be 0");
+  if (lane.working_branch != null) genesisViolations.push("working_branch must be null (established only by the initial coordinator packet)");
+  if (lane.pr_number != null) genesisViolations.push("pr_number must be null");
+  if (lane.pr_head_sha != null) genesisViolations.push("pr_head_sha must be null");
+  if (lane.audited_sha != null) genesisViolations.push("audited_sha must be null");
+  if (lane.verdict != null) genesisViolations.push("verdict must be null");
+  if (lane.lease != null) genesisViolations.push("lease must be null");
+  if (lane.attempt !== 0) genesisViolations.push("attempt must be 0");
+  if (lane.patch_cycle !== 0) genesisViolations.push("patch_cycle must be 0");
+  if ((lane.audit_retry ?? 0) !== 0) genesisViolations.push("audit_retry must be 0 or absent");
+  if (lane.last_lease_role != null) genesisViolations.push("last_lease_role must be null or absent");
+  if (lane.operator_pause !== false) genesisViolations.push("operator_pause must be false (pausing requires an operator.paused event)");
+  if (genesisViolations.length > 0) {
     return {
       ok: false,
       refusal: "genesis-not-initial",
-      detail: "genesis lane must start in state=planning with event_sequence=0",
+      detail: `genesis lane must be initial: ${genesisViolations.join("; ")}`,
       lane: null, dispositions: [], labels: [],
     };
   }
@@ -228,12 +249,9 @@ export function reconstructLane(input) {
     } else {
       dispositions.push({ comment_id: comment.id, status: "refused", refusal: decision.refusal, detail: decision.detail });
       if (decision.escalate && lane.state !== "operator-required") {
-        lane = {
-          ...lane,
-          state: "operator-required",
-          next_actor: nextActorFor("operator-required"),
-          operator_required_reason: `${decision.refusal}: ${decision.detail}`,
-        };
+        // Same lease-clearing escalation as the edited-comment path: the
+        // resulting lane must be valid and operator-recoverable.
+        lane = toOperatorRequired(lane, `${decision.refusal}: ${decision.detail}`);
       }
     }
   }
@@ -260,12 +278,20 @@ function isTerminalState(state) {
   return state === "merged" || state === "superseded";
 }
 
+// Route a lane to operator-required, CLEARING any active lease. A lease's
+// expected_state is its holder's working state; carrying it into
+// operator-required would embed a cross-state lease that validateLane
+// refuses — the "escalated" lane would be structurally invalid and the
+// operator could never recover it with an event. Escalation hands the lane
+// to the operator, so the worker's claim on it ends here; the holder must
+// re-acquire after the operator routes the lane back to a ready state.
 function toOperatorRequired(lane, reason) {
   return {
     ...lane,
     state: "operator-required",
     next_actor: nextActorFor("operator-required"),
     operator_required_reason: reason,
+    lease: null,
   };
 }
 

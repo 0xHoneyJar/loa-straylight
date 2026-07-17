@@ -254,9 +254,17 @@ export function reduce(lane, event, policy, context = {}) {
           return refuse(lane, "task-packet-wrong-patch-cycle", `patch packet cycle ${packet.patch_cycle} != expected ${nextCycle}`);
         }
         if (nextCycle > policy.maximum_patch_cycles) {
+          // Every escalation to operator-required clears the lease (checkLease
+          // already refuses coordinator events under an active lease, so this
+          // is belt-and-braces): a lease carried into operator-required would
+          // be a cross-state lease and the lane would fail validation —
+          // unrecoverable by the operator.
           return advance(
             lane, event, "operator-required",
-            { operator_required_reason: `patch cycle ${nextCycle} exceeds maximum ${policy.maximum_patch_cycles}` },
+            {
+              operator_required_reason: `patch cycle ${nextCycle} exceeds maximum ${policy.maximum_patch_cycles}`,
+              lease: null,
+            },
             [{ type: "label", value: "cp-operator-required" }],
             "patch-cycle maximum exceeded",
           );
@@ -274,9 +282,22 @@ export function reduce(lane, event, policy, context = {}) {
       if (packet.patch_cycle !== lane.patch_cycle) {
         return refuse(lane, "task-packet-wrong-patch-cycle", `initial packet cycle ${packet.patch_cycle} != lane ${lane.patch_cycle}`);
       }
-      // The initial packet ESTABLISHES the lane working branch.
+      // The initial packet ESTABLISHES the lane working branch — a one-time,
+      // coordinator-owned act on a lane that has none. It never inherits or
+      // ratifies a pre-existing branch: a lane whose working_branch is
+      // already set (reconstruction refuses genesis preseeding; an operator
+      // reroute preserves an established branch) refuses a new INITIAL
+      // packet outright. The branch comes unconditionally from THIS packet's
+      // target_branch or not at all.
+      if (lane.working_branch != null) {
+        return refuse(
+          lane,
+          "working-branch-already-established",
+          `lane working_branch ${lane.working_branch} is already established; an initial packet applies only to a lane with none`,
+        );
+      }
       return advance(lane, event, "ready-for-claude", {
-        working_branch: lane.working_branch ?? packet.target_branch,
+        working_branch: packet.target_branch,
       });
     }
 
@@ -585,8 +606,13 @@ export function reduce(lane, event, policy, context = {}) {
     }
 
     case "coordinator.escalated": {
+      // Clear any lease on escalation (none should exist in coordinator-turn
+      // states — checkLease refuses coordinator events under an active lease
+      // — but a lane that escalates must ALWAYS leave operator-required
+      // valid and recoverable, so this is enforced unconditionally).
       return advance(lane, event, "operator-required", {
         operator_required_reason: event.reason ?? "coordinator escalation",
+        lease: null,
       });
     }
 
@@ -610,9 +636,19 @@ export function reduce(lane, event, policy, context = {}) {
       if (!OPERATOR_DECISION_TARGETS.includes(event.requested_state)) {
         return refuse(lane, "decision-target-forbidden", `operator cannot route to ${event.requested_state} via decision`);
       }
+      // Routing a lane back to coordination (planning/ready-for-coordinator)
+      // RESETS branch establishment: the next initial packet must find
+      // working_branch null and establish it from its own target_branch —
+      // it never inherits or ratifies a branch from a previous life of the
+      // lane. Retry targets (ready-for-claude/ready-for-codex) keep the
+      // established branch: their packets/audits must still bind to it.
+      const rectifiesCoordination =
+        event.requested_state === "planning" ||
+        event.requested_state === "ready-for-coordinator";
       return advance(lane, event, event.requested_state, {
         operator_required_reason: null,
         lease: null,
+        ...(rectifiesCoordination ? { working_branch: null } : {}),
       });
     }
 

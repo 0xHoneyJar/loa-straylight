@@ -21,7 +21,6 @@ const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BRANCH_RE = /^[A-Za-z0-9._/-]{1,200}$/;
 const LEASE_ID_RE = /^lease-[a-z0-9][a-z0-9-]{1,62}$/;
 const EVENT_ID_RE = /^evt-[a-z0-9][a-z0-9-]{1,62}$/;
-const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/;
 const GH_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(\[bot\])?$/;
 const RELATIVE_PATH_RE = /^(?!\/)(?!.*\.\.)[\x20-\x7E]{1,300}$/;
 const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
@@ -30,9 +29,17 @@ const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 // A regex alone accepts 2026-13-40T25:61:99Z; this rejects impossible months,
 // days (leap-year aware), hours, minutes, and seconds, and requires the `Z`
 // zone (no other offset is permitted in v1). Returns epoch millis or null.
+//
+// PRECISION BOUND: at most THREE fractional-second digits (milliseconds).
+// The protocol compares instants as integer epoch millis; a finer fraction
+// (.0001Z vs .0004Z) cannot be represented at that resolution and rounding
+// would collapse distinct instants into the same value — silently breaking
+// strict ordering. Sub-millisecond precision is therefore REJECTED
+// everywhere (fail closed), not rounded. The fraction is decoded by exact
+// digit-padding ("1"→100ms, "12"→120ms, "123"→123ms) — no float rounding.
 export function parseIsoInstant(s) {
   if (typeof s !== "string") return null;
-  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d+)?Z$/.exec(s);
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{1,3})?Z$/.exec(s);
   if (!m) return null;
   const year = +m[1], month = +m[2], day = +m[3], hour = +m[4], min = +m[5], sec = +m[6];
   if (month < 1 || month > 12) return null;
@@ -40,8 +47,8 @@ export function parseIsoInstant(s) {
   const isLeap = (year % 4 === 0 && year % 100 !== 0) || year % 400 === 0;
   const daysInMonth = [31, isLeap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   if (day < 1 || day > daysInMonth[month - 1]) return null;
-  const frac = m[7] ? Number(m[7]) : 0; // fractional seconds
-  const t = Date.UTC(year, month - 1, day, hour, min, sec) + Math.round(frac * 1000);
+  const millis = m[7] ? Number(m[7].slice(1).padEnd(3, "0")) : 0; // exact integer millis
+  const t = Date.UTC(year, month - 1, day, hour, min, sec) + millis;
   return Number.isNaN(t) ? null : t;
 }
 
@@ -246,6 +253,17 @@ export function validateLane(v) {
       v.next_actor !== undefined && v.next_actor !== null &&
       v.next_actor !== nextActorFor(v.state)) {
     errors.push(`next_actor: state ${v.state} requires next_actor ${nextActorFor(v.state)}, record claims ${v.next_actor}`);
+  }
+  // working_branch is ESTABLISHED by the initial coordinator packet, which
+  // requires it to be null when it applies. In the pre-packet coordination
+  // states (planning — the genesis shape — and ready-for-coordinator, which
+  // lane.activated and operator re-coordination reach with the branch
+  // cleared) a record that already carries a working branch is preseeded or
+  // corrupted: it would let a hand-written record preselect the branch the
+  // packet is supposed to establish.
+  if ((v.state === "planning" || v.state === "ready-for-coordinator") &&
+      v.working_branch !== undefined && v.working_branch !== null) {
+    errors.push(`working_branch: must be null in state ${v.state} (established only by the initial coordinator packet)`);
   }
   // v1 invariant: shadow mode + no auto-merge, enforced at parse time so a
   // hand-edited lane cannot smuggle active mode past the reducer.

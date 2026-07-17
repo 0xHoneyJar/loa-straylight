@@ -9,5 +9,9 @@ export declare function validateTaskPacket(v: unknown): ValidationResult;
 export declare function validateAuditRecord(v: unknown): ValidationResult;
 export declare function validatePolicy(v: unknown): ValidationResult;
 export declare function validatePrMetadata(v: unknown): ValidationResult;
-/** Strict UTC calendar instant → epoch millis, or null if impossible/malformed. */
+/**
+ * Strict UTC calendar instant → epoch millis, or null if impossible/malformed.
+ * At most MILLISECOND (3-digit) fractional precision: a finer fraction is
+ * rejected (null), never rounded, so distinct instants cannot collapse.
+ */
 export declare function parseIsoInstant(s: unknown): number | null;

@@ -22,19 +22,37 @@ export interface MergeGuardChecks {
   /** Combined legacy status state: "success" | "pending" | "failure" | "error". */
   commit_status_state: string;
 }
+/**
+ * The COMPLETE normalized live PR metadata record (validatePrMetadata
+ * shape — the same record the reducer workflow embeds durably in
+ * system.eligibility_confirmed events). The guard fails closed unless the
+ * record is present, structurally valid, fetch_ok:true, and EVERY field
+ * corresponds exactly with the lane and the audited target.
+ */
+export interface MergeGuardPrMetadata {
+  fetch_ok: boolean;
+  repository?: string;
+  pr_number?: number;
+  state?: string;
+  draft?: boolean;
+  merged?: boolean;
+  base_branch?: string;
+  base_sha?: string;
+  head_branch?: string;
+  head_sha?: string;
+}
 export declare function evaluate(
   lane: Record<string, any> | null,
   policy: Record<string, any> | null,
   context?: {
-    pr_head_sha?: string;
+    /**
+     * Complete normalized live PR metadata. Absent, structurally invalid,
+     * fetch-failed, or ANY field not corresponding exactly with the lane
+     * and audited target → ineligible (fail closed). Loose single-field
+     * context (a bare pr_head_sha / pr_state / pr_draft…) is never
+     * accepted in its place.
+     */
+    pr_metadata?: MergeGuardPrMetadata;
     checks?: MergeGuardChecks;
-    /** Live PR state ("open" | "closed"); anything but "open" fails closed. */
-    pr_state?: string;
-    /** Live PR draft flag; anything but the OBSERVED boolean false fails closed (unknown is never defaulted). */
-    pr_draft?: boolean;
-    /** Live PR merged flag; anything but the OBSERVED boolean false fails closed (unknown is never defaulted). */
-    pr_merged?: boolean;
-    /** Live PR base branch; must equal lane.base_branch or fails closed (retarget). */
-    pr_base_ref?: string;
   }
 ): MergeGuardResult;

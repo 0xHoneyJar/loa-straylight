@@ -88,7 +88,9 @@
     },
     "lease_expires_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$",
+      "description": "Strict UTC calendar instant; at most millisecond (3-digit) fractional precision. Finer fractions are rejected, never rounded."
     },
     "attempt": {
       "type": "integer",
@@ -104,7 +106,9 @@
     },
     "occurred_at": {
       "type": "string",
-      "format": "date-time"
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$",
+      "description": "Strict UTC calendar instant; at most millisecond (3-digit) fractional precision. Finer fractions are rejected, never rounded."
     },
     "refs": {
       "type": "object",
