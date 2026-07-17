@@ -205,6 +205,7 @@ planning
 → claude-working
 → ready-for-codex
 → codex-working
+→ eligibility-pending
 → ready-for-merge
 → merged
 ```
@@ -217,19 +218,32 @@ patch-required   blocked   operator-required   lease-expired   superseded
 
 Required routing (normative):
 
-- Codex `ACCEPT` produces `ready-for-merge` **only** when the audited SHA
-  equals the current PR head SHA.
+- Codex `ACCEPT` produces `eligibility-pending` **only** when the audited
+  SHA equals the lane's durably-recorded PR head. `ready-for-merge` is
+  produced ONLY by a subsequent `system.eligibility_confirmed` event whose
+  payload durably embeds the complete live PR metadata the reducer
+  workflow checked (open, not merged, not draft, correct
+  repository/number/base/working-branch, live head equal to the audited
+  SHA); the embedded record is re-validated on every replay, so replaying
+  history without live metadata can never mint `ready-for-merge`.
 - Codex `PATCH` routes to `patch-required`, then a new bounded Claude
   patch packet routes back to `ready-for-claude`.
 - Codex `REJECT` routes to `blocked`.
-- Codex `CANNOT_AUDIT` routes to `blocked`, or back to `ready-for-codex`
-  when explicitly marked retryable and the retry budget is not exhausted.
-- A changed PR head invalidates any prior `ACCEPT` (lane returns to
-  `ready-for-codex`).
+- Codex `CANNOT_AUDIT` must declare `retryable` explicitly (a record
+  without it is malformed): it routes back to `ready-for-codex` when
+  `retryable: true` and the retry budget is not exhausted, else `blocked`.
+- The initial coordinator task packet ESTABLISHES the lane working branch;
+  every later packet, the implementer's completion (`head_branch`), the
+  audit (`head_branch`), and the confirmed live PR head branch must match
+  it exactly. No packet may target the lane's base branch.
+- A changed PR head invalidates any prior `ACCEPT`, pending or confirmed
+  (lane returns to `ready-for-codex`).
 - A scope or authority conflict routes to `operator-required`.
 - Exceeding the configured `maximum_patch_cycles` routes to
   `operator-required`.
-- Missing or malformed state fails closed (no advance).
+- Missing or malformed state fails closed (no advance). A lane record
+  whose stored `next_actor` disagrees with its state, or whose embedded
+  lease belongs to another lane or another state, is structurally invalid.
 - Unknown events do not advance the lane.
 - Stale sequence numbers do not advance the lane.
 - Events for another lane do not affect the current lane.
@@ -246,19 +260,28 @@ losing history.
 
 ### 5.3 Exact-SHA audit and the PR #116 lesson
 
-An audit verdict binds to an exact `audited_head_sha`, cross-checked
-against the **authoritative live PR metadata** the adapter supplies at the
-audit frontier (repository, PR number, open/merged state, base branch/SHA,
-head branch/SHA). An `ACCEPT` is invalid when the live PR head moved, the
-base changed or was retargeted, the PR is closed, merged, or still a
-**draft** (a draft PR is not ready to merge, so eligibility cannot be
-recorded against it), the repository or PR number differs, the lane
-differs, the SHA is missing, the auditor identity is not allowlisted, or
-the payload is malformed. The canonical
-location of the audit record is a **comment on the lane issue** (the only
-stream reconstruction reads), bound to its author and a canonical content
-digest so a later edit breaks the binding. And, encoding the lesson from
-PR #116:
+An audit verdict binds to an exact `audited_head_sha`, checked against the
+lane's durably-recorded head, and an `ACCEPT` parks the lane in
+`eligibility-pending`. Merge eligibility (`ready-for-merge`) is recorded
+ONLY by a `system.eligibility_confirmed` event whose payload **embeds the
+complete authoritative live PR metadata** the reducer workflow fetched at
+confirmation time (repository, PR number, open/merged/draft state, base
+branch/SHA, head branch/SHA, `fetch_ok`). The confirmation is refused —
+at first application and on every replay of the durable record — when the
+live head moved off the audited SHA, the base changed or was retargeted,
+the PR is closed, merged, or still a **draft** (a draft PR is not ready to
+merge, so eligibility cannot be recorded against it), the repository or
+PR number differs, the head branch is not the lane's established working
+branch, the fetch failed, or any field is missing — missing draft/merged
+information is UNKNOWN and fails closed; it is never converted to false.
+An audit is likewise invalid when the lane differs, the SHA is missing,
+the auditor identity is not allowlisted, or the payload is malformed. The
+canonical location of the audit record is a **comment on the lane issue**
+(the only stream reconstruction reads), bound to its author, to
+edit-metadata freshness, and to the canonical content digest DECLARED in
+the durable completion event (`refs.audit_digest`, recomputed on every
+replay) so a later mutation of the record breaks the binding even without
+edit metadata. And, encoding the lesson from PR #116:
 
 > **An audit report must not be committed into the pull request it
 > audits, because doing so changes the audited target.** An audit that
@@ -267,13 +290,14 @@ PR #116:
 > Audits live as lane-issue comments, never as repository content inside
 > the audited branch.
 
-Two layers enforce this. (1) MECHANICAL: the reducer binds the ACCEPT to
-the *live* head SHA fetched read-only from the PR; an audit committed into
-the branch moves the head, so the audited SHA no longer matches and the
-ACCEPT is refused (`audit-stale-head`). (2) ATTESTATION: `audit_committed_in_pr`
-is the auditor's self-report; the validator rejects a `true` attestation.
-The mechanical layer is the real guarantee — the field is a declared
-attestation, not a claim of file-list inspection.
+Two layers enforce this. (1) MECHANICAL: eligibility is confirmed only
+against the live head fetched read-only from the PR at confirmation time
+and embedded durably in the confirmation event; an audit committed into
+the branch moves the head, so the live head no longer equals the audited
+SHA and eligibility is never confirmed. (2) ATTESTATION:
+`audit_committed_in_pr` is the auditor's self-report; the validator
+rejects a `true` attestation. The mechanical layer is the real guarantee —
+the field is a declared attestation, not a claim of file-list inspection.
 
 ---
 

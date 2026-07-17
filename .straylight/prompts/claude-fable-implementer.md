@@ -46,7 +46,9 @@ Assume your local disk did not survive. Reconstruct state from GitHub:
   (only if `may_open_pr` is true). Include the completion report the
   packet requires.
 - Post `implementer.completed` carrying your `lease_id`, the exact
-  `head_sha` you pushed, and `refs.pr_number`.
+  `head_sha` you pushed, `head_branch` (the lane's established working
+  branch — the packet's `target_branch`; the reducer refuses any other
+  branch), and `refs.pr_number`.
 
 ## What you must never do
 

@@ -23,12 +23,19 @@ posted by a non-allowlisted identity is refused: the lane simply does not
 advance. Nothing in v1 can merge.
 
 "Append-oriented" is a protocol convention, not a cryptographic guarantee:
-GitHub comments are editable and deletable. v1 mitigates rather than
-prevents mutation — reconstruction carries each comment's `created_at` and
-`updated_at`, and any protocol comment edited after posting (`updated_at`
-after `created_at`) is routed to `operator-required`. Deletion and
-edit-history forgery remain documented shadow-mode limitations, bounded by
-the actor allowlist and by the fact that nothing merges.
+GitHub comments are editable and deletable. v1 mitigates mutation with two
+independent layers. (1) Edit metadata: reconstruction carries each
+comment's `created_at` and `updated_at` (compared as parsed instants,
+never lexically), and ANY protocol comment edited after posting — an
+event, a task packet, or an audit record — is refused and routes the lane
+to `operator-required`. (2) Durable digests: every packet-posting and
+audit-completion event DECLARES the canonical content digest of the
+artifact it references (`refs.task_packet_digest` / `refs.audit_digest`),
+and the reducer recomputes the bound artifact's digest on every replay —
+a mutated artifact body is refused (`…-digest-mismatch`) even if edit
+metadata is lost. Deletion and edit-history forgery remain documented
+shadow-mode limitations, bounded by the actor allowlist and by the fact
+that nothing merges.
 
 ## Directory layout
 
@@ -98,7 +105,8 @@ Happy path:
 
 ```
 planning → ready-for-coordinator → ready-for-claude → claude-working
-→ ready-for-codex → codex-working → ready-for-merge → merged
+→ ready-for-codex → codex-working → eligibility-pending → ready-for-merge
+→ merged
 ```
 
 Failure/recovery states: `patch-required`, `blocked`, `operator-required`,
@@ -107,32 +115,41 @@ Failure/recovery states: `patch-required`, `blocked`, `operator-required`,
 | Event | Role | From | To |
 |---|---|---|---|
 | `lane.activated` | coordinator/operator | planning | ready-for-coordinator |
-| `coordinator.task_packet_posted` | coordinator | ready-for-coordinator | ready-for-claude |
-| `coordinator.patch_packet_posted` | coordinator | patch-required | ready-for-claude (or operator-required past the patch-cycle max) |
+| `coordinator.task_packet_posted` | coordinator | ready-for-coordinator | ready-for-claude (ESTABLISHES the lane working branch from the packet's `target_branch`) |
+| `coordinator.patch_packet_posted` | coordinator | patch-required | ready-for-claude (or operator-required past the patch-cycle max; must name the established working branch) |
 | `coordinator.escalated` | coordinator | coordinator-turn states only (planning, ready-for-coordinator, patch-required) | operator-required |
 | `implementer.lease_acquired` | implementer | ready-for-claude | claude-working |
-| `implementer.completed` | implementer | claude-working | ready-for-codex |
+| `implementer.completed` | implementer | claude-working | ready-for-codex (must declare `head_branch` == lane working branch) |
 | `implementer.lease_released` / `.blocked` / `.escalated` | implementer | claude-working | ready-for-claude / blocked / operator-required |
 | `auditor.lease_acquired` | auditor | ready-for-codex | codex-working |
 | `auditor.audit_completed` | auditor | codex-working | verdict routing (below) |
 | `auditor.lease_released` | auditor | codex-working | ready-for-codex |
+| `system.eligibility_confirmed` | system | eligibility-pending | ready-for-merge (ONLY with valid embedded live PR metadata) |
 | `operator.paused` / `operator.resumed` | operator | any non-terminal | same state (pause flag) |
 | `operator.decision` | operator | operator-required, blocked | operator-chosen safe target |
 | `operator.merged` | operator | ready-for-merge | merged |
 | `operator.superseded` | operator | any non-terminal | superseded |
 | `system.lease_expired` | system | claude-working, codex-working | lease-expired |
 | `system.requeued` | system | lease-expired | ready-for-claude or ready-for-codex |
-| `system.head_moved` | system | ready-for-merge | ready-for-codex (ACCEPT invalidated) |
+| `system.head_moved` | system | eligibility-pending, ready-for-merge | ready-for-codex (ACCEPT invalidated, pending or confirmed) |
 | `system.escalated` | system | any non-terminal | operator-required (watchdog escalation) |
 
 Verdict routing (`auditor.audit_completed`):
 
-- `ACCEPT` → `ready-for-merge` **only if** `audited_head_sha` equals the
-  current PR head SHA (otherwise refused as `audit-stale-head`);
+- `ACCEPT` → `eligibility-pending` **only if** `audited_head_sha` equals
+  the lane's durably-recorded PR head (otherwise refused as
+  `audit-stale-head`). The lane reaches `ready-for-merge` ONLY via a
+  subsequent `system.eligibility_confirmed` event whose payload EMBEDS the
+  complete live PR metadata the reducer workflow checked (open, not
+  merged, not draft, right repository/number/base/branch, live head ==
+  audited SHA). The metadata is re-validated against the lane on every
+  replay, so a metadata-free replay can never mint `ready-for-merge` and
+  the durable record itself proves the live check happened;
 - `PATCH` → `patch-required` (coordinator writes a bounded patch packet);
 - `REJECT` → `blocked`;
-- `CANNOT_AUDIT` → `ready-for-codex` when `retryable: true` and within the
-  retry budget, else `blocked`.
+- `CANNOT_AUDIT` → requires an explicit `retryable` boolean in the audit
+  record (a CANNOT_AUDIT without one is malformed): `ready-for-codex` when
+  `retryable: true` and within the retry budget, else `blocked`.
 
 Universal fail-closed rules enforced by the reducer:
 
@@ -152,12 +169,29 @@ Universal fail-closed rules enforced by the reducer:
 - a lease whose `expires_at` exceeds the observed grant time plus
   `lease_duration_minutes` is refused (`lease-expiry-unbounded`) so no lease
   can outlive the watchdog's ability to reap it;
+- a lane record whose stored `next_actor` disagrees with the projection
+  derived from its state is structurally invalid, as is an embedded lease
+  whose `lane_id` differs from the lane (cross-lane), whose
+  `expected_state` differs from the lane's current state (cross-state), or
+  whose `expected_state` is not the holder role's working state;
+- a packet/completion/audit that names a branch other than the lane's
+  established working branch is refused (`task-packet-wrong-target-branch`,
+  `wrong-working-branch`, `audit-head-branch-mismatch`); a packet naming
+  the lane's base branch is refused (`task-packet-targets-base-branch`);
+- a packet or audit-completion event without its declared content digest —
+  or whose bound artifact no longer matches the declared digest — is
+  refused (`…-digest-missing` / `…-digest-mismatch`);
 - a lane whose phase is outside `authorized_corridor` escalates to
   `operator-required`;
 - exceeding `maximum_patch_cycles` escalates to `operator-required`;
 - malformed anything (lane, event, packet, audit, policy) → no advance;
 - `policy.enabled: false` (kill switch) → every event refused;
 - `operator_pause: true` → only operator events accepted.
+
+Determinism invariant: the reducer and reconstruction consult NO transient
+live signal. Live PR facts enter the protocol exclusively as the durable
+`pr_metadata` field of `system.eligibility_confirmed` events, re-validated
+on every replay. Same durable content → same projection, on every run.
 
 ## Leases
 
@@ -186,9 +220,23 @@ negative tests, required no-leak checks, required completion report, stop
 conditions, whether a PR may be opened, `merge_forbidden` (always `true`
 in v1), and the expected next actor.
 
+**Working-branch establishment**: the INITIAL packet's `target_branch`
+becomes the lane's `working_branch` when the packet event applies. Every
+later packet must name that exact branch; the implementer's completion
+must declare `head_branch` equal to it; the audit's `head_branch` must
+equal it; and the eligibility confirmation's live `head_branch` must
+equal it. No packet may name the lane's base branch as its target.
+
+The packet-posting event must declare `refs.task_packet_digest` — the
+canonical content digest of the packet payload. The reducer recomputes the
+bound packet's digest on every replay and refuses a mismatch, so mutating
+the packet comment after the event posts is detected mechanically.
+
 Claude must not begin implementation without a valid current packet; the
 reducer enforces this at `implementer.lease_acquired`. A packet whose
-`base_sha` no longer equals the lane's base SHA is stale and fails closed.
+`base_sha` no longer equals the lane's base SHA is stale and fails closed,
+as is one whose `target_branch` differs from the established working
+branch.
 
 ## Audits and the exact-SHA rule
 
@@ -206,28 +254,43 @@ auditor that posts the completion event (`artifact-author-mismatch`
 otherwise), and (c) was not edited after posting; the bound record is
 pinned by a canonical content digest so a later edit breaks the binding.
 It binds to an exact `audited_head_sha` and confirms the complete
-base-to-head diff was reviewed. An `ACCEPT` is invalid when, checked
-against the authoritative live PR metadata: the live head moved; the base
-changed or the PR was retargeted; the PR is closed, merged, or still a
-draft (a draft PR is not ready to merge); the repository or PR number
-differs; the lane differs; the exact SHA is missing; the auditor identity
-is not allowlisted; the referenced audit comment is a forward reference,
-authored by someone else, or edited; the verdict payload is malformed; the
-verdict/next_actor disagree; an `ACCEPT` carries concerns; or —
+base-to-head diff was reviewed, and the completion event pins the record
+content with `refs.audit_digest` (recomputed on every replay). The audit
+transition itself is a pure function of durable lane history: the audited
+SHA must equal the lane's recorded head, the audit's branches must equal
+the lane's base and working branches, and the verdict must be internally
+consistent. An `ACCEPT` then parks the lane in `eligibility-pending`.
+
+`ready-for-merge` is minted ONLY by `system.eligibility_confirmed`, whose
+payload embeds the complete live PR metadata the reducer workflow fetched
+at confirmation time. The confirmation is refused — on first application
+AND on every later replay — when that embedded metadata shows: the live
+head moved off the audited SHA; the base changed or the PR was
+retargeted; the PR is closed, merged, or still a draft (a draft PR is not
+ready to merge); the repository or PR number differs; the head branch is
+not the lane working branch; the fetch failed (`fetch_ok: false`); or any
+field is missing (missing draft/merged information is UNKNOWN and fails
+closed — it is never defaulted to false). An audit is likewise invalid
+when: the lane differs; the exact SHA is missing; the auditor identity is
+not allowlisted; the referenced audit comment is a forward reference,
+authored by someone else, or edited; the declared digest mismatches; the
+verdict payload is malformed; the verdict/next_actor disagree; a
+`CANNOT_AUDIT` omits `retryable`; an `ACCEPT` carries concerns; or —
 
 > **the audit was committed into the audited PR.** An audit report must
 > not be committed into the pull request it audits because doing so
 > changes the audited target (the head SHA the verdict binds to no longer
 > exists as the live PR head). This is the recorded lesson of PR #116.
-> The MECHANICAL guarantee is the live-head binding above (a committed
-> audit moves the head, so `audited_head_sha` no longer matches and the
-> ACCEPT is refused). `audit_committed_in_pr` is the auditor's
-> ATTESTATION: the validator rejects a `true` value, but the field is a
-> self-report, not a file-list inspection.
+> The MECHANICAL guarantee is the confirmation-time live-head binding
+> above (a committed audit moves the head, so the live head no longer
+> equals `audited_head_sha` and eligibility is never confirmed).
+> `audit_committed_in_pr` is the auditor's ATTESTATION: the validator
+> rejects a `true` value, but the field is a self-report, not a file-list
+> inspection.
 
-If the head moves after an `ACCEPT`, the watchdog posts
-`system.head_moved` and the lane returns to `ready-for-codex` with the
-verdict cleared.
+If the head moves after an `ACCEPT` — pending or confirmed — the watchdog
+posts `system.head_moved` and the lane returns to `ready-for-codex` with
+the verdict cleared.
 
 ## Actor identity (recorded limitation)
 
@@ -244,10 +307,10 @@ control-plane workflow holds `contents: write`.
 
 | Workflow | Trigger | Does | Never |
 |---|---|---|---|
-| `straylight-reducer.yml` | `issues`, `issue_comment` on `cp-lane` issues; manual | fetch issue + comments, run `reduce-issue.mjs`, sync derived labels, post reducer result | evaluate comment content as shell; call model APIs; write repo contents |
-| `straylight-watchdog.yml` | cron (off-minute) + manual | reconstruct all lanes, run `watchdog-scan.mjs`, post deduped recovery events / escalations | duplicate a recovery event (dedupe keys); merge |
-| `straylight-merge-guard.yml` | manual `workflow_dispatch` (lane issue number) | reconstruct lane, run `merge-guard-check.mjs`, post shadow eligibility comment | merge (no merge API call exists in the workflow or CLI) |
-| `straylight-bootstrap.yml` | manual `workflow_dispatch` | idempotently create the single Phase 49P shadow lane issue | implement 49P, open its PR, call a model API, merge |
+| `straylight-reducer.yml` | `issues`, `issue_comment` on `cp-lane` issues; manual | fetch issue + comments, run `reduce-issue.mjs`, sync derived labels, post reducer result; for an `eligibility-pending` lane, fetch the live PR and post the durable `system.eligibility_confirmed` event (metadata embedded; nothing posted on a failed/partial fetch) | evaluate comment content as shell; call model APIs; write repo contents |
+| `straylight-watchdog.yml` | cron (off-minute) + manual | reconstruct all lanes, run `watchdog-scan.mjs`, post deduped recovery events / escalations (a failed lane enumeration aborts the sweep — never treated as zero lanes) | duplicate a recovery event (dedupe keys); merge |
+| `straylight-merge-guard.yml` | manual `workflow_dispatch` (lane issue number) | reconstruct lane, gather live PR facts (draft/merged forwarded only as OBSERVED booleans) and the complete all-pages check-run conclusion list, run `merge-guard-check.mjs`, post shadow eligibility comment | merge (no merge API call exists in the workflow or CLI) |
+| `straylight-bootstrap.yml` | manual `workflow_dispatch` | idempotently create the single Phase 49P shadow lane issue (a failed existence-check enumeration aborts — never treated as "no existing lane") | implement 49P, open its PR, call a model API, merge |
 
 All workflows: least-privilege permissions (`contents: read` +
 `issues: write` and/or `pull-requests: read`), actions pinned to
