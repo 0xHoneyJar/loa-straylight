@@ -76,46 +76,58 @@ jobs:
           HEAD=""
           PR_STATE=""
           PR_BASE=""
-          PR_DRAFT=""
-          # RAW evidence only: emit observed counts and let the pure module
-          # decide (it fails closed on any unknown). No "no checks configured
-          # => passing" fail-open branch: zero check runs is ineligible.
+          # RAW evidence only: emit the observed per-run conclusion list and
+          # the API totals, and let the pure module decide (it fails closed on
+          # any unknown). No "no checks configured => passing" fail-open
+          # branch: zero check runs is ineligible. Unknown-preserving: draft
+          # and merged are forwarded ONLY when the API returned a literal
+          # boolean; a missing field stays absent (unknown), never becomes
+          # false. Both come from ONE fetch of the PR object, so they cannot
+          # disagree with each other or with head/state/base.
           CHECKS_JSON="null"
+          PR_FLAGS="{}"
           if [[ "$PRNUM" =~ ^[0-9]+$ ]]; then
-            # PR liveness: open/closed state and the current base ref. A closed
-            # or retargeted PR must fail the guard closed (not stay eligible).
-            PR_STATE=$(gh api "repos/${REPO}/pulls/${PRNUM}" -q '.state' 2>/dev/null || echo "")
-            PR_BASE=$(gh api "repos/${REPO}/pulls/${PRNUM}" -q '.base.ref' 2>/dev/null || echo "")
-            PR_DRAFT=$(gh api "repos/${REPO}/pulls/${PRNUM}" -q '.draft' 2>/dev/null || echo "")
-            HEAD=$(gh api "repos/${REPO}/pulls/${PRNUM}" -q '.head.sha' 2>/dev/null || true)
+            if gh api "repos/${REPO}/pulls/${PRNUM}" > /tmp/pr.json 2>/dev/null; then
+              PR_STATE=$(jq -r '.state // empty' /tmp/pr.json)
+              PR_BASE=$(jq -r '.base.ref // empty' /tmp/pr.json)
+              HEAD=$(jq -r '.head.sha // empty' /tmp/pr.json)
+              PR_FLAGS=$(jq '{}
+                + (if (.draft|type) == "boolean" then {pr_draft: .draft} else {} end)
+                + (if (.merged|type) == "boolean" then {pr_merged: .merged} else {} end)' /tmp/pr.json)
+            fi
             if [[ "$HEAD" =~ ^[0-9a-f]{40}$ ]]; then
-              # Modern check runs on the head.
+              # Modern check runs on the head: aggregate EVERY page's runs into
+              # one conclusion list (--paginate emits one JSON document per
+              # page; slurp + flatten joins them). The pure module cross-checks
+              # the list length against total_count, so a dropped page (or this
+              # aggregation ever regressing to page 1 only) fails closed
+              # instead of passing on partial evidence. In-progress runs have
+              # conclusion null → recorded as "null" (non-passing).
               CR_TOTAL=$(gh api "repos/${REPO}/commits/${HEAD}/check-runs" -q '.total_count' 2>/dev/null || echo "")
-              CR_FAILING=""
-              if [[ "$CR_TOTAL" =~ ^[0-9]+$ ]]; then
-                CR_FAILING=$(gh api "repos/${REPO}/commits/${HEAD}/check-runs" --paginate \
-                  -q '[.check_runs[] | select(.conclusion != "success" and .conclusion != "neutral" and .conclusion != "skipped")] | length' 2>/dev/null || echo "")
+              CR_CONCLUSIONS="null"
+              if gh api --paginate "repos/${REPO}/commits/${HEAD}/check-runs" > /tmp/check-pages.json 2>/dev/null; then
+                CR_CONCLUSIONS=$(jq -s '[.[].check_runs[] | (.conclusion // "null")]' /tmp/check-pages.json)
               fi
               # Legacy combined commit status (the check-runs API does not
               # surface these; branch protection may still require them).
               CS_STATE=$(gh api "repos/${REPO}/commits/${HEAD}/status" -q '.state' 2>/dev/null || echo "")
               CS_TOTAL=$(gh api "repos/${REPO}/commits/${HEAD}/status" -q '.total_count' 2>/dev/null || echo "")
-              if [[ "$CR_TOTAL" =~ ^[0-9]+$ && "$CR_FAILING" =~ ^[0-9]+$ && "$CS_TOTAL" =~ ^[0-9]+$ && -n "$CS_STATE" ]]; then
+              if [[ "$CR_TOTAL" =~ ^[0-9]+$ && "$CR_CONCLUSIONS" != "null" && "$CS_TOTAL" =~ ^[0-9]+$ && -n "$CS_STATE" ]]; then
                 CHECKS_JSON=$(jq -n \
-                  --argjson crt "$CR_TOTAL" --argjson crf "$CR_FAILING" \
+                  --argjson crt "$CR_TOTAL" --argjson crc "$CR_CONCLUSIONS" \
                   --argjson cst "$CS_TOTAL" --arg css "$CS_STATE" \
-                  '{check_runs_total: $crt, check_runs_failing: $crf, commit_statuses_total: $cst, commit_status_state: $css}')
+                  '{check_runs_total: $crt, check_run_conclusions: $crc, commit_statuses_total: $cst, commit_status_state: $css}')
               fi
             fi
           fi
           jq -n --slurpfile lane /tmp/lane.json --arg head "$HEAD" --argjson checks "$CHECKS_JSON" \
-            --arg prstate "$PR_STATE" --arg prbase "$PR_BASE" --arg prdraft "$PR_DRAFT" \
+            --arg prstate "$PR_STATE" --arg prbase "$PR_BASE" --argjson prflags "$PR_FLAGS" \
             '{lane: $lane[0],
               context: ((if $checks != null then {checks: $checks} else {} end)
                         + (if $head != "" then {pr_head_sha: $head} else {} end)
                         + (if $prstate != "" then {pr_state: $prstate} else {} end)
                         + (if $prbase != "" then {pr_base_ref: $prbase} else {} end)
-                        + (if $prdraft == "true" then {pr_draft: true} elif $prdraft == "false" then {pr_draft: false} else {} end))}' \
+                        + $prflags)}' \
             > /tmp/guard-input.json
 
       - name: Evaluate shadow eligibility

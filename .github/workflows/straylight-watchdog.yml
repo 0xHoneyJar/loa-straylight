@@ -66,7 +66,16 @@ jobs:
           # --paginate: never silently drop lanes past page 1. With >100 open
           # cp-lane issues, an un-paginated fetch would leave later lanes
           # unrecovered forever (R4).
-          mapfile -t ISSUES < <(gh api --paginate "repos/${REPO}/issues?labels=cp-lane&state=open&per_page=100" -q '.[].number')
+          #
+          # FAIL CLOSED on enumeration failure: a failed listing API call must
+          # abort the sweep loudly, never be mistaken for "zero lanes" (an
+          # empty successful query). Capture the exit status explicitly —
+          # mapfile over a failed process substitution would swallow it.
+          if ! gh api --paginate "repos/${REPO}/issues?labels=cp-lane&state=open&per_page=100" -q '.[].number' > /tmp/lane-numbers.txt; then
+            echo "::error::lane enumeration failed (gh api non-zero); aborting sweep — NOT treating as zero lanes"
+            exit 1
+          fi
+          mapfile -t ISSUES < /tmp/lane-numbers.txt
           : > /tmp/lane-issues.tsv
           for N in "${ISSUES[@]:-}"; do
             [[ -z "$N" ]] && continue
@@ -136,10 +145,16 @@ jobs:
               continue
             fi
             if [[ "$TYPE" == "post-event" ]]; then
-              jq -n --slurpfile a /tmp/action.json --arg now "$NOW" --arg dedupe "$DEDUPE" '
+              # event_id comes from the pure scanner: "evt-" + sha256 of the
+              # FULL dedupe key (complete lane id + recovery key). Hashing —
+              # never truncation — keeps distinct long lane ids / recovery
+              # keys collision-free. Fail closed if a scanner ever omits it.
+              EVENT_ID=$(jq -r '.event_id // empty' /tmp/action.json)
+              [[ -n "$EVENT_ID" ]] || { echo "::error::action missing event_id; skipping"; continue; }
+              jq -n --slurpfile a /tmp/action.json --arg now "$NOW" '
                 {
                   schema: "straylight.event.v1",
-                  event_id: ("evt-" + ($dedupe | gsub("[^a-z0-9-]"; "-") | ascii_downcase | .[0:60])),
+                  event_id: $a[0].event_id,
                   lane_id: $a[0].lane_id,
                   sequence: $a[0].sequence,
                   actor_role: "system",

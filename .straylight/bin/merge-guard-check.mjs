@@ -4,7 +4,11 @@
 // Usage:
 //   node .straylight/bin/merge-guard-check.mjs --input <file.json> [--policy <policy.json>]
 //
-// input.json = { lane: <reduced lane>, context: { pr_head_sha?, required_checks_passed? } }
+// input.json = { lane: <reduced lane>, context: { pr_head_sha?, pr_state?,
+//   pr_draft?, pr_merged?, pr_base_ref?, checks? } }
+// checks = { check_runs_total, check_run_conclusions[] (ALL pages),
+//   commit_statuses_total, commit_status_state } — raw evidence only; the
+// pure module fails closed on anything missing, partial, or unknown.
 //
 // Prints the shadow eligibility verdict. THIS PROGRAM CANNOT MERGE:
 // it performs no network calls and its output is a report object whose

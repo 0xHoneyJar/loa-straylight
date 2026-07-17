@@ -110,52 +110,140 @@ jobs:
               comments: ($comments | add // [] | map({id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}))
             }' > /tmp/reducer-input.json
 
-      - name: Attach authoritative live PR metadata (fail closed if absent)
-        if: steps.killswitch.outputs.enabled == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          # If the lane names a PR, attach the normalized authoritative live PR
-          # metadata object so the reducer can bind an ACCEPT to live truth
-          # (R1). A failed/partial fetch yields {fetch_ok:false}, on which the
-          # reducer fails closed at the audit frontier. pr_head_sha is kept for
-          # the non-frontier / legacy fallback path.
-          PR=$(node .straylight/bin/reduce-issue.mjs --input /tmp/reducer-input.json 2>/dev/null \
-               | jq -r '.lane.pr_number // empty' || true)
-          if [[ "$PR" =~ ^[0-9]+$ ]]; then
-            if gh api "repos/${REPO}/pulls/${PR}" > /tmp/pr.json 2>/dev/null; then
-              jq -n --arg repo "$REPO" --slurpfile pr /tmp/pr.json '
-                ($pr[0]) as $p
-                | {
-                    fetch_ok: true,
-                    repository: $repo,
-                    pr_number: $p.number,
-                    state: $p.state,
-                    draft: ($p.draft // false),
-                    merged: ($p.merged // false),
-                    base_branch: $p.base.ref,
-                    base_sha: $p.base.sha,
-                    head_branch: $p.head.ref,
-                    head_sha: $p.head.sha
-                  }' > /tmp/pr-meta.json
-            else
-              echo '{"fetch_ok": false}' > /tmp/pr-meta.json
-            fi
-            HEAD=$(jq -r '.head_sha // empty' /tmp/pr-meta.json)
-            jq --slurpfile meta /tmp/pr-meta.json --arg head "$HEAD" '
-              .context = ({pr_metadata: $meta[0]}
-                          + (if ($head | test("^[0-9a-f]{40}$")) then {pr_head_sha: $head} else {} end))' \
-              /tmp/reducer-input.json > /tmp/reducer-input2.json
-            mv /tmp/reducer-input2.json /tmp/reducer-input.json
-          fi
-
       - name: Reduce lane
         id: reduce
         if: steps.killswitch.outputs.enabled == 'true'
         run: |
           set -euo pipefail
+          node .straylight/bin/reduce-issue.mjs --input /tmp/reducer-input.json > /tmp/reducer-result.json || true
+          cat /tmp/reducer-result.json
+
+      - name: Confirm eligibility with durable live PR metadata
+        if: steps.killswitch.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # An ACCEPT audit parks the lane in eligibility-pending. This step is
+          # the ONLY producer of ready-for-merge: it fetches the complete live
+          # PR metadata and posts a system.eligibility_confirmed EVENT with the
+          # checked metadata EMBEDDED DURABLY in the event payload. The pure
+          # reducer re-validates every embedded field against the lane on every
+          # replay, so metadata-free replay can never mint ready-for-merge and
+          # a confirmation is exactly as trustworthy as its durable record.
+          #
+          # Fail closed: a failed fetch, a non-boolean draft/merged, or any
+          # missing field posts NOTHING (the lane stays eligibility-pending;
+          # the watchdog escalates it if it stays stuck).
+          STATE=$(jq -r '.lane.state // empty' /tmp/reducer-result.json)
+          [[ "$STATE" == "eligibility-pending" ]] || { echo "lane not eligibility-pending; no confirmation to post"; exit 0; }
+          LANE_ID=$(jq -r '.lane.lane_id' /tmp/reducer-result.json)
+          SEQ=$(jq -r '.lane.event_sequence' /tmp/reducer-result.json)
+          PR=$(jq -r '.lane.pr_number // empty' /tmp/reducer-result.json)
+          [[ "$PR" =~ ^[0-9]+$ ]] || { echo "no PR recorded; cannot confirm (fail closed)"; exit 0; }
+          if ! gh api "repos/${REPO}/pulls/${PR}" > /tmp/pr.json 2>/dev/null; then
+            echo "live PR fetch failed; posting nothing (fail closed, lane stays pending)"
+            exit 0
+          fi
+          # Normalize WITHOUT defaulting: draft/merged must be OBSERVED
+          # booleans. A missing/non-boolean field yields fetch_ok:false and
+          # nothing is posted — unknown is preserved as unknown, never
+          # converted to false.
+          jq --arg repo "$REPO" '
+            . as $p
+            | if (($p.draft|type) == "boolean" and ($p.merged|type) == "boolean"
+                  and (($p.number)|type) == "number" and (($p.state)|type) == "string"
+                  and (($p.base.ref)|type) == "string" and (($p.base.sha)|type) == "string"
+                  and (($p.head.ref)|type) == "string" and (($p.head.sha)|type) == "string")
+              then {
+                fetch_ok: true,
+                repository: $repo,
+                pr_number: $p.number,
+                state: $p.state,
+                draft: $p.draft,
+                merged: $p.merged,
+                base_branch: $p.base.ref,
+                base_sha: $p.base.sha,
+                head_branch: $p.head.ref,
+                head_sha: $p.head.sha
+              }
+              else { fetch_ok: false }
+              end' /tmp/pr.json > /tmp/pr-meta.json
+          [[ "$(jq -r '.fetch_ok' /tmp/pr-meta.json)" == "true" ]] || {
+            echo "live PR metadata incomplete; posting nothing (fail closed)"; exit 0; }
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          NEXT=$((SEQ + 1))
+          DEDUPE="eligibility-confirmed:${LANE_ID}:${SEQ}"
+          # Collision-resistant deterministic event id: sha256 over the FULL
+          # dedupe key (never a truncation of it).
+          EVENT_ID="evt-$(printf '%s' "$DEDUPE" | sha256sum | cut -c1-48)"
+          # Idempotency: only a bot-authored event-marker comment counts.
+          if gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate \
+              --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | test("<!-- straylight:event:v1 -->")) | .body' \
+              | grep -qF "dedupe:${DEDUPE}"; then
+            echo "confirmation already posted for ${DEDUPE}; skipping"
+            exit 0
+          fi
+          jq -n --slurpfile meta /tmp/pr-meta.json \
+            --arg id "$EVENT_ID" --arg lane "$LANE_ID" --argjson seq "$NEXT" --arg now "$NOW" '
+            {
+              schema: "straylight.event.v1",
+              event_id: $id,
+              lane_id: $lane,
+              sequence: $seq,
+              actor_role: "system",
+              github_actor: "github-actions[bot]",
+              event_type: "system.eligibility_confirmed",
+              prior_state: "eligibility-pending",
+              occurred_at: $now,
+              pr_metadata: $meta[0]
+            }' > /tmp/confirm-event.json
+          {
+            echo "## Straylight eligibility confirmation (shadow mode)"
+            echo ""
+            echo "dedupe:${DEDUPE}"
+            echo ""
+            echo "<!-- straylight:event:v1 -->"
+            echo '```json'
+            cat /tmp/confirm-event.json
+            echo '```'
+            echo ""
+            echo "_Live PR metadata checked and recorded durably above. Nothing merges; merge remains an exclusive operator action._"
+          } > /tmp/confirm-comment.md
+          # DRY-RUN before posting: append the candidate confirmation to the
+          # fetched stream and re-reduce. Post ONLY if the pure reducer would
+          # APPLY it. A confirmation that would be refused (draft PR, moved
+          # head, retargeted base…) is NOT posted — the lane stays pending and
+          # a LATER run retries with the same dedupe key once the PR is fixed.
+          # Posting a doomed event would permanently burn the dedupe key for
+          # this sequence and park the lane (liveness, not just safety).
+          MAXID=$(jq '[.comments[].id] | max // 0' /tmp/reducer-input.json)
+          jq --rawfile body /tmp/confirm-comment.md --argjson id "$((MAXID + 1))" --arg now "$NOW" \
+            '.comments += [{id: $id, user: "github-actions[bot]", body: $body, created_at: $now, updated_at: $now}]' \
+            /tmp/reducer-input.json > /tmp/dryrun-input.json
+          node .straylight/bin/reduce-issue.mjs --input /tmp/dryrun-input.json > /tmp/dryrun-result.json || true
+          DRYSTATE=$(jq -r '.lane.state // empty' /tmp/dryrun-result.json)
+          if [[ "$DRYSTATE" != "ready-for-merge" ]]; then
+            echo "dry-run: confirmation would be refused (lane stays ${DRYSTATE:-unreadable}); posting nothing (fail closed, retry next run)"
+            jq -r '.dispositions[-1] // empty' /tmp/dryrun-result.json || true
+            exit 0
+          fi
+          gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+            --input <(jq -n --rawfile body /tmp/confirm-comment.md '{body: $body}')
+          echo "posted ${DEDUPE}"
+          # Re-fetch and re-reduce so this run's labels/result reflect the
+          # confirmation we just posted.
+          gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" > /tmp/issue.json
+          gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate > /tmp/comments.json
+          jq -n \
+            --slurpfile issue /tmp/issue.json \
+            --slurpfile comments /tmp/comments.json \
+            '{
+              issue_body: $issue[0].body,
+              comments: ($comments | add // [] | map({id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}))
+            }' > /tmp/reducer-input.json
           node .straylight/bin/reduce-issue.mjs --input /tmp/reducer-input.json > /tmp/reducer-result.json || true
           cat /tmp/reducer-result.json
 

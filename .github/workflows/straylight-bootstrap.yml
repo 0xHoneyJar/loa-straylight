@@ -65,9 +65,18 @@ jobs:
           # un-paginated check could miss an existing lane on page 2 and
           # create a duplicate (R4). --jq emits one issue number per match
           # per page; count the lines.
-          FOUND=$(gh api --paginate "repos/${REPO}/issues?labels=cp-lane&state=all&per_page=100" \
-            --jq '.[] | select(.body // "" | contains("\"lane_id\": \"lane-phase-49p\"")) | .number' \
-            | grep -c . || true)
+          #
+          # FAIL CLOSED on enumeration failure: a failed listing API call must
+          # abort the bootstrap loudly, never be mistaken for "no existing
+          # lane" (an empty successful query) — that would create a duplicate.
+          # Capture the exit status explicitly; no `|| true` may swallow it.
+          if ! gh api --paginate "repos/${REPO}/issues?labels=cp-lane&state=all&per_page=100" \
+              --jq '.[] | select(.body // "" | contains("\"lane_id\": \"lane-phase-49p\"")) | .number' \
+              > /tmp/existing-lanes.txt; then
+            echo "::error::lane enumeration failed (gh api non-zero); refusing to bootstrap — NOT treating as zero lanes"
+            exit 1
+          fi
+          FOUND=$(grep -c . /tmp/existing-lanes.txt || true)
           echo "found=${FOUND}" >> "$GITHUB_OUTPUT"
           if [[ "$FOUND" != "0" ]]; then
             echo "Phase 49P lane already exists (${FOUND} match(es)); bootstrap is a no-op."
