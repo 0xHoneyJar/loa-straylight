@@ -2,14 +2,16 @@
 // Covers: reducer idempotency (replay convergence), identity binding of
 // payload actor vs authenticated commenter, event-for-another-lane isolation,
 // Claude-start-without-packet via the durable record, recovery after total
-// local-state loss.
+// local-state loss, and the metadata-free-replay determinism invariant: the
+// full happy path INCLUDING the eligibility confirmation replays to
+// ready-for-merge from nothing but the durable comment stream.
 
 import { describe, it, expect } from "vitest";
 import { reconstructLane, deriveLabels } from "../../.straylight/lib/reconstruct.mjs";
 import { MARKERS, renderPayload } from "../../.straylight/lib/markers.mjs";
 import {
-  makeLane, makeEvent, makePolicy, makeTaskPacket, makeAuditRecord,
-  NOW, LEASE_EXPIRY, HEAD_SHA, BASE_SHA,
+  makeLane, makeEvent, makePolicy, makeTaskPacket, makeAuditRecord, liveMeta,
+  payloadDigest, NOW, LEASE_EXPIRY, HEAD_SHA, BASE_SHA, WORKING_BRANCH,
 } from "./_fixtures.js";
 
 const policy = makePolicy();
@@ -23,14 +25,18 @@ function genesisBody() {
 }
 
 // The full happy-path comment stream: activate → packet → lease → complete
-// → audit lease → audit ACCEPT.
-function happyPathComments() {
+// → audit lease → audit ACCEPT (→ eligibility-pending) → system
+// eligibility confirmation with embedded live metadata (→ ready-for-merge).
+export function happyPathComments() {
+  const packet = makeTaskPacket();
+  const audit = makeAuditRecord();
   return [
     comment(1, "chatgpt-login", MARKERS.event, makeEvent({ sequence: 1 })),
-    comment(2, "chatgpt-login", MARKERS.taskPacket, makeTaskPacket()),
+    comment(2, "chatgpt-login", MARKERS.taskPacket, packet),
     comment(3, "chatgpt-login", MARKERS.event, makeEvent({
       sequence: 2, event_type: "coordinator.task_packet_posted",
-      prior_state: "ready-for-coordinator", refs: { task_packet_comment_id: 2 },
+      prior_state: "ready-for-coordinator",
+      refs: { task_packet_comment_id: 2, task_packet_digest: payloadDigest(packet) },
     })),
     comment(4, "claude-login", MARKERS.event, makeEvent({
       sequence: 3, actor_role: "implementer", github_actor: "claude-login",
@@ -40,19 +46,25 @@ function happyPathComments() {
     comment(5, "claude-login", MARKERS.event, makeEvent({
       sequence: 4, actor_role: "implementer", github_actor: "claude-login",
       event_type: "implementer.completed", prior_state: "claude-working",
-      lease_id: "lease-claude-1", head_sha: HEAD_SHA, refs: { pr_number: 120 },
+      lease_id: "lease-claude-1", head_sha: HEAD_SHA, head_branch: WORKING_BRANCH,
+      refs: { pr_number: 120 },
     })),
     comment(6, "codex-login", MARKERS.event, makeEvent({
       sequence: 5, actor_role: "auditor", github_actor: "codex-login",
       event_type: "auditor.lease_acquired", prior_state: "ready-for-codex",
       lease_id: "lease-codex-1", lease_expires_at: LEASE_EXPIRY,
     })),
-    comment(7, "codex-login", MARKERS.audit, makeAuditRecord()),
+    comment(7, "codex-login", MARKERS.audit, audit),
     comment(8, "codex-login", MARKERS.event, makeEvent({
       sequence: 6, actor_role: "auditor", github_actor: "codex-login",
       event_type: "auditor.audit_completed", prior_state: "codex-working",
       lease_id: "lease-codex-1", audited_sha: HEAD_SHA, verdict: "ACCEPT",
-      refs: { audit_comment_id: 7, pr_number: 120 },
+      refs: { audit_comment_id: 7, pr_number: 120, audit_digest: payloadDigest(audit) },
+    })),
+    comment(9, "github-actions[bot]", MARKERS.event, makeEvent({
+      sequence: 7, actor_role: "system", github_actor: "github-actions[bot]",
+      event_type: "system.eligibility_confirmed", prior_state: "eligibility-pending",
+      pr_metadata: liveMeta(),
     })),
   ];
 }
@@ -69,10 +81,18 @@ describe("reconstruction from durable GitHub content", () => {
     expect(out.lane?.state).toBe("ready-for-merge");
     expect(out.lane?.verdict).toBe("ACCEPT");
     expect(out.lane?.audited_sha).toBe(HEAD_SHA);
-    expect(out.lane?.event_sequence).toBe(6);
-    expect(out.dispositions.filter((d) => d.status === "applied")).toHaveLength(6);
+    expect(out.lane?.event_sequence).toBe(7);
+    expect(out.dispositions.filter((d) => d.status === "applied")).toHaveLength(7);
     expect(out.labels).toContain("cp-state:ready-for-merge");
     expect(out.labels).toContain("cp-ready-for-merge");
+  });
+
+  it("without the durable confirmation the same stream stops at eligibility-pending", () => {
+    const comments = happyPathComments().slice(0, -1); // drop the confirmation
+    const out = reconstructLane({ issue_body: genesisBody(), comments, policy, context: { now: NOW } });
+    expect(out.lane?.state).toBe("eligibility-pending");
+    expect(out.lane?.verdict).toBe("ACCEPT");
+    expect(out.labels).not.toContain("cp-ready-for-merge");
   });
 
   it("is idempotent: reconstructing twice yields identical lanes (reducer idempotency)", () => {
@@ -160,7 +180,7 @@ describe("reconstruction from durable GitHub content", () => {
   });
 
   it("derives labels purely from the reduced lane", () => {
-    const lane = makeLane({ state: "ready-for-claude", next_actor: "implementer" });
+    const lane = makeLane({ state: "ready-for-claude" });
     expect(deriveLabels(lane)).toEqual(["cp-lane", "cp-state:ready-for-claude", "cp-next:implementer"]);
   });
 });

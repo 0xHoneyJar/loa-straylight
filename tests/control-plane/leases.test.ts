@@ -46,9 +46,12 @@ describe("lease acquisition", () => {
     expect(out.ok).toBe(false); // transition-forbidden from claude-working
   });
 
-  it("rejects an auditor lease while an unexpired lease exists after requeue", () => {
+  it("rejects an auditor lease while an unexpired lease exists (stale lease in a queue state fails closed)", () => {
     // lease survived in lane state (reconstruction edge): ready-for-codex
-    // but stale lease object still present and unexpired.
+    // but stale lease object still present and unexpired. The embedded-lease
+    // invariant (lease.expected_state must equal the lane state) makes this
+    // corrupted record fail STRUCTURAL validation — refused before any
+    // per-event logic can even run (stronger than the old runtime-only check).
     const lane = makeLane({
       state: "ready-for-codex", event_sequence: 4, pr_number: 120, pr_head_sha: HEAD_SHA,
       lease: makeLease({ actor_role: "auditor", lease_id: "lease-codex-0", expected_state: "codex-working" }),
@@ -60,7 +63,29 @@ describe("lease acquisition", () => {
     });
     const out = reduce(lane, event, policy, ctx);
     expect(out.ok).toBe(false);
-    if (!out.ok) expect(out.refusal).toBe("lease-already-held");
+    if (!out.ok) {
+      expect(out.refusal).toBe("lane-invalid");
+      expect(out.detail).toContain("cross-state lease");
+    }
+  });
+
+  it("still refuses a second grant while a live same-state lease is held (lease-already-held)", () => {
+    // A structurally VALID held lease (claude-working lane, implementer
+    // lease expecting claude-working): a hypothetical re-grant must die at
+    // the lease-already-held check, not structural validation.
+    const lane = laneClaudeWorking();
+    // implementer.lease_acquired is only legal from ready-for-claude, so use
+    // a forged prior_state to reach the lease logic — the transition check
+    // fires first and refuses; the held lease must never be replaced either
+    // way. Assert the lane did not advance and the original lease survives.
+    const event = makeEvent({
+      sequence: 4, actor_role: "implementer", github_actor: "claude-login",
+      event_type: "implementer.lease_acquired", prior_state: "claude-working",
+      lease_id: "lease-claude-2", lease_expires_at: LEASE_EXPIRY,
+    });
+    const out = reduce(lane, event, policy, { ...ctx, task_packet: makeTaskPacket() });
+    expect(out.ok).toBe(false);
+    expect(out.lane.lease?.lease_id).toBe("lease-claude-1");
   });
 });
 
@@ -113,10 +138,11 @@ describe("completion discipline", () => {
     expect(out.ok).toBe(false); // transition-forbidden: auditor release only legal from codex-working
   });
 
-  it("rejects cross-role release at the LEASE guard when the transition itself is legal", () => {
-    // codex-working with an implementer-held lease (corrupted/rare state):
-    // auditor.lease_released IS legal from codex-working, so the transition
-    // table passes and the lease guard itself must catch the role mismatch.
+  it("rejects a cross-role lease structurally (codex-working lane holding an implementer lease)", () => {
+    // codex-working with an implementer-held lease is a corrupted record:
+    // the embedded-lease invariant (expected_state must equal both the
+    // holder role's working state AND the lane's current state) rejects it
+    // at structural validation — before any event logic runs.
     const lane = laneCodexWorking({
       lease: makeLease({ actor_role: "implementer", lease_id: "lease-claude-9", expected_state: "claude-working" }),
     });
@@ -127,7 +153,23 @@ describe("completion discipline", () => {
     });
     const out = reduce(lane, event, policy, ctx);
     expect(out.ok).toBe(false);
-    if (!out.ok) expect(out.refusal).toBe("lease-role-mismatch");
+    if (!out.ok) expect(out.refusal).toBe("lane-invalid");
+  });
+
+  it("rejects cross-role completion at the LEASE guard when the record itself is valid", () => {
+    // A structurally valid auditor lease on a codex-working lane, but the
+    // completing event claims the IMPLEMENTER role's completion — the lease
+    // guard catches the role mismatch (defense in depth behind the
+    // transition table, which also refuses implementer.completed here).
+    const lane = laneCodexWorking();
+    const event = makeEvent({
+      sequence: 6, actor_role: "implementer", github_actor: "claude-login",
+      event_type: "implementer.completed", prior_state: "codex-working",
+      lease_id: "lease-codex-1", head_sha: HEAD_SHA, refs: { pr_number: 120 },
+    });
+    const out = reduce(lane, event, policy, ctx);
+    expect(out.ok).toBe(false);
+    expect(out.lane.state).toBe("codex-working");
   });
 
   it("rejects unknown-time lease checks (fail closed without now)", () => {

@@ -19,8 +19,9 @@ import { parseStrict } from "../../.straylight/lib/strict-json.mjs";
 import { validateEvent } from "../../.straylight/lib/validate.mjs";
 import {
   makeLane, makeEvent, makePolicy, makeTaskPacket, makeAuditRecord, makeLease,
-  laneCodexWorking, laneClaudeWorking,
-  NOW, LEASE_EXPIRY, AFTER_EXPIRY, HEAD_SHA, OTHER_SHA, BASE_SHA,
+  laneCodexWorking, laneClaudeWorking, laneEligibilityPending, makeConfirmEvent,
+  liveMeta, payloadDigest,
+  NOW, LEASE_EXPIRY, AFTER_EXPIRY, HEAD_SHA, OTHER_SHA, BASE_SHA, WORKING_BRANCH,
 } from "./_fixtures.js";
 
 const policy = makePolicy();
@@ -41,48 +42,46 @@ function auditComment(id: number, user: string, audit: any) {
   return { id, user, body: renderPayload(MARKERS.audit, audit), created_at: NOW };
 }
 
-function auditEvent(overrides: Record<string, any> = {}) {
+function auditEvent(record: Record<string, any>, overrides: Record<string, any> = {}) {
   return makeEvent({
     sequence: 6, actor_role: "auditor", github_actor: "codex-login",
     event_type: "auditor.audit_completed", prior_state: "codex-working",
-    lease_id: "lease-codex-1", audited_sha: HEAD_SHA, verdict: "ACCEPT",
-    refs: { audit_comment_id: 777, pr_number: 120 },
+    lease_id: "lease-codex-1", audited_sha: record.audited_head_sha ?? HEAD_SHA,
+    verdict: record.verdict ?? "ACCEPT",
+    refs: { audit_comment_id: 777, pr_number: 120, audit_digest: payloadDigest(record) },
     ...overrides,
   });
 }
 
 // =============================================================================
 // B1 — live PR target is not authoritative.
-// Exploit: the lane's event-recorded head (lane.pr_head_sha, set from the
+// Original exploit: the lane's event-recorded head (set from the
 // implementer's CLAIMED implementer.completed.head_sha) was used to bind an
-// ACCEPT, so an audit could be accepted against a head that differs from the
-// live PR head fetched by the workflow.
+// ACCEPT, so an audit could be accepted against a head that differed from
+// the live PR. Resolution: the audit parks in eligibility-pending; the ONLY
+// path to ready-for-merge is a durable system.eligibility_confirmed event
+// whose embedded metadata (checked live by the workflow) must correspond
+// field-by-field — including head_sha == audited_sha — on every replay.
 // =============================================================================
-describe("B1 — live PR head is authoritative over the implementer-recorded head", () => {
-  it("refuses ACCEPT when the live head diverges from the implementer-recorded head", () => {
-    const lane = laneCodexWorking({ pr_head_sha: HEAD_SHA }); // implementer-claimed head
-    const out = reduce(lane, auditEvent(), policy, {
-      ...ctx,
-      audit_record: makeAuditRecord({ audited_head_sha: HEAD_SHA }),
-      pr_head_sha: OTHER_SHA, // LIVE head fetched by the workflow — diverges
-    });
-    expect(out.ok).toBe(false);
-    if (!out.ok) expect(out.refusal).toBe("audit-stale-head");
-    expect(out.lane.state).toBe("codex-working");
-  });
-
-  it("still accepts when the live head equals the audited head", () => {
-    const out = reduce(laneCodexWorking(), auditEvent(), policy, {
-      ...ctx, audit_record: makeAuditRecord(), pr_head_sha: HEAD_SHA,
+describe("B1 — live PR truth gates eligibility via the durable confirmation", () => {
+  it("an ACCEPT audit alone never yields ready-for-merge (parks pending)", () => {
+    const record = makeAuditRecord();
+    const out = reduce(laneCodexWorking(), auditEvent(record), policy, {
+      ...ctx, audit_record: record,
     });
     expect(out.ok).toBe(true);
-    if (out.ok) expect(out.lane.state).toBe("ready-for-merge");
+    if (out.ok) expect(out.lane.state).toBe("eligibility-pending");
   });
 
-  it("falls back to the recorded head for deterministic replay when no live head is supplied", () => {
-    const out = reduce(laneCodexWorking(), auditEvent(), policy, {
-      ...ctx, audit_record: makeAuditRecord(), // no pr_head_sha in context
-    });
+  it("a confirmation whose live head diverged from the audited head is refused", () => {
+    const out = reduce(laneEligibilityPending(), makeConfirmEvent({ sequence: 7 }, { head_sha: OTHER_SHA }), policy, ctx);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.refusal).toBe("audit-stale-head");
+    expect(out.lane.state).toBe("eligibility-pending");
+  });
+
+  it("a corresponding confirmation reaches ready-for-merge", () => {
+    const out = reduce(laneEligibilityPending(), makeConfirmEvent({ sequence: 7 }), policy, ctx);
     expect(out.ok).toBe(true);
     if (out.ok) expect(out.lane.state).toBe("ready-for-merge");
   });
@@ -118,12 +117,14 @@ describe("B2 — implementer cannot substitute its own task packet", () => {
   });
 
   it("still uses the coordinator-approved packet on a normal lease (no ref needed)", () => {
+    const packet = makeTaskPacket();
     const comments = [
       evComment(1, "chatgpt-login", makeEvent({ sequence: 1 })),
-      packetComment(2, "chatgpt-login", makeTaskPacket()),
+      packetComment(2, "chatgpt-login", packet),
       evComment(3, "chatgpt-login", makeEvent({
         sequence: 2, event_type: "coordinator.task_packet_posted",
-        prior_state: "ready-for-coordinator", refs: { task_packet_comment_id: 2 },
+        prior_state: "ready-for-coordinator",
+        refs: { task_packet_comment_id: 2, task_packet_digest: payloadDigest(packet) },
       })),
       evComment(4, "claude-login", makeEvent({
         sequence: 3, actor_role: "implementer", github_actor: "claude-login",
@@ -298,12 +299,15 @@ describe("B6 — validator enforces the published schema's maxLength on reason",
 // =============================================================================
 describe("B7 — audit record must be authored by the completing auditor", () => {
   it("refuses an audit record authored by the implementer under audit", () => {
+    const packet = makeTaskPacket();
+    const record = makeAuditRecord();
     const comments = [
       evComment(1, "chatgpt-login", makeEvent({ sequence: 1 })),
-      packetComment(2, "chatgpt-login", makeTaskPacket()),
+      packetComment(2, "chatgpt-login", packet),
       evComment(3, "chatgpt-login", makeEvent({
         sequence: 2, event_type: "coordinator.task_packet_posted",
-        prior_state: "ready-for-coordinator", refs: { task_packet_comment_id: 2 },
+        prior_state: "ready-for-coordinator",
+        refs: { task_packet_comment_id: 2, task_packet_digest: payloadDigest(packet) },
       })),
       evComment(4, "claude-login", makeEvent({
         sequence: 3, actor_role: "implementer", github_actor: "claude-login",
@@ -313,7 +317,8 @@ describe("B7 — audit record must be authored by the completing auditor", () =>
       evComment(5, "claude-login", makeEvent({
         sequence: 4, actor_role: "implementer", github_actor: "claude-login",
         event_type: "implementer.completed", prior_state: "claude-working",
-        lease_id: "lease-claude-1", head_sha: HEAD_SHA, refs: { pr_number: 120 },
+        lease_id: "lease-claude-1", head_sha: HEAD_SHA, head_branch: WORKING_BRANCH,
+        refs: { pr_number: 120 },
       })),
       evComment(6, "codex-login", makeEvent({
         sequence: 5, actor_role: "auditor", github_actor: "codex-login",
@@ -321,16 +326,16 @@ describe("B7 — audit record must be authored by the completing auditor", () =>
         lease_id: "lease-codex-1", lease_expires_at: LEASE_EXPIRY,
       })),
       // Audit payload authored by the IMPLEMENTER, not the auditor.
-      auditComment(7, "claude-login", makeAuditRecord()),
+      auditComment(7, "claude-login", record),
       evComment(8, "codex-login", makeEvent({
         sequence: 6, actor_role: "auditor", github_actor: "codex-login",
         event_type: "auditor.audit_completed", prior_state: "codex-working",
         lease_id: "lease-codex-1", audited_sha: HEAD_SHA, verdict: "ACCEPT",
-        refs: { audit_comment_id: 7, pr_number: 120 },
+        refs: { audit_comment_id: 7, pr_number: 120, audit_digest: payloadDigest(record) },
       })),
     ];
-    const out = reconstructLane({ issue_body: laneGenesisBody(), comments, policy, context: { now: NOW, pr_head_sha: HEAD_SHA } });
-    expect(out.lane?.state).toBe("codex-working"); // did NOT advance to ready-for-merge
+    const out = reconstructLane({ issue_body: laneGenesisBody(), comments, policy, context: { now: NOW } });
+    expect(out.lane?.state).toBe("codex-working"); // did NOT advance
     const audit = out.dispositions.find((d) => d.comment_id === 8);
     expect(audit?.status).toBe("refused");
     expect(audit?.refusal).toBe("audit-record-invalid");
@@ -389,13 +394,13 @@ describe("B8 — watchdog fails closed on an unverifiable ready-for-merge head",
 // =============================================================================
 describe("B9 — merge guard fails closed on the check-status unknowns", () => {
   const eligibleLane = makeLane({
-    state: "ready-for-merge", next_actor: "operator", event_sequence: 6,
+    state: "ready-for-merge", event_sequence: 7,
     pr_number: 120, pr_head_sha: HEAD_SHA, audited_sha: HEAD_SHA, verdict: "ACCEPT",
   });
   it("zero check runs is ineligible (was fail-open)", () => {
     const out = evaluate(eligibleLane, policy, {
       pr_head_sha: HEAD_SHA,
-      checks: { check_runs_total: 0, check_runs_failing: 0, commit_statuses_total: 0, commit_status_state: "pending" },
+      checks: { check_runs_total: 0, check_run_conclusions: [], commit_statuses_total: 0, commit_status_state: "pending" },
     });
     expect(out.eligible).toBe(false);
   });
@@ -406,25 +411,40 @@ describe("B9 — merge guard fails closed on the check-status unknowns", () => {
   it("a failing legacy combined status blocks even with passing check runs", () => {
     const out = evaluate(eligibleLane, policy, {
       pr_head_sha: HEAD_SHA,
-      checks: { check_runs_total: 3, check_runs_failing: 0, commit_statuses_total: 1, commit_status_state: "failure" },
+      checks: { check_runs_total: 3, check_run_conclusions: ["success", "success", "success"], commit_statuses_total: 1, commit_status_state: "failure" },
     });
     expect(out.eligible).toBe(false);
   });
-  it("passing check runs with no legacy statuses (and an open, non-draft, on-base PR) is eligible", () => {
+  it("passing check runs with no legacy statuses (and an open, non-draft, non-merged, on-base PR) is eligible", () => {
     const out = evaluate(eligibleLane, policy, {
       pr_head_sha: HEAD_SHA,
-      checks: { check_runs_total: 2, check_runs_failing: 0, commit_statuses_total: 0, commit_status_state: "pending" },
-      pr_state: "open", pr_draft: false, pr_base_ref: "main",
+      checks: { check_runs_total: 2, check_run_conclusions: ["success", "skipped"], commit_statuses_total: 0, commit_status_state: "pending" },
+      pr_state: "open", pr_draft: false, pr_merged: false, pr_base_ref: "main",
     });
     expect(out.eligible).toBe(true);
   });
-  it("a closed, draft, or retargeted PR fails the guard closed (R3 regression)", () => {
-    const liveChecks = { check_runs_total: 2, check_runs_failing: 0, commit_statuses_total: 0, commit_status_state: "pending" };
-    const base = { pr_head_sha: HEAD_SHA, checks: liveChecks, pr_state: "open", pr_draft: false, pr_base_ref: "main" };
+  it("a closed, draft, merged, or retargeted PR fails the guard closed (R3 regression)", () => {
+    const liveChecks = { check_runs_total: 2, check_run_conclusions: ["success", "success"], commit_statuses_total: 0, commit_status_state: "pending" };
+    const base = { pr_head_sha: HEAD_SHA, checks: liveChecks, pr_state: "open", pr_draft: false, pr_merged: false, pr_base_ref: "main" };
     expect(evaluate(eligibleLane, policy, { ...base, pr_state: "closed" }).eligible).toBe(false);
     expect(evaluate(eligibleLane, policy, { ...base, pr_draft: true }).eligible).toBe(false);
+    expect(evaluate(eligibleLane, policy, { ...base, pr_merged: true }).eligible).toBe(false);
     expect(evaluate(eligibleLane, policy, { ...base, pr_base_ref: "release-x" }).eligible).toBe(false);
     expect(evaluate(eligibleLane, policy, { pr_head_sha: HEAD_SHA, checks: liveChecks }).eligible).toBe(false); // no liveness info → closed
+  });
+  it("a conclusion list that disagrees with the API total fails closed (dropped page)", () => {
+    // total_count says 150 runs but only page 1 (100 conclusions) arrived:
+    // the guard must treat this as partial evidence, never as passing.
+    const out = evaluate(eligibleLane, policy, {
+      pr_head_sha: HEAD_SHA,
+      checks: {
+        check_runs_total: 150,
+        check_run_conclusions: Array.from({ length: 100 }, () => "success"),
+        commit_statuses_total: 0, commit_status_state: "pending",
+      },
+      pr_state: "open", pr_draft: false, pr_merged: false, pr_base_ref: "main",
+    });
+    expect(out.eligible).toBe(false);
   });
 });
 
@@ -521,12 +541,15 @@ describe("B12 — only the lane's turn owner may advance it", () => {
 // =============================================================================
 describe("B13 — kill switch freezes the projection, never rewinds it", () => {
   function happyPathComments() {
+    const packet = makeTaskPacket();
+    const record = makeAuditRecord();
     return [
       evComment(1, "chatgpt-login", makeEvent({ sequence: 1 })),
-      packetComment(2, "chatgpt-login", makeTaskPacket()),
+      packetComment(2, "chatgpt-login", packet),
       evComment(3, "chatgpt-login", makeEvent({
         sequence: 2, event_type: "coordinator.task_packet_posted",
-        prior_state: "ready-for-coordinator", refs: { task_packet_comment_id: 2 },
+        prior_state: "ready-for-coordinator",
+        refs: { task_packet_comment_id: 2, task_packet_digest: payloadDigest(packet) },
       })),
       evComment(4, "claude-login", makeEvent({
         sequence: 3, actor_role: "implementer", github_actor: "claude-login",
@@ -536,58 +559,61 @@ describe("B13 — kill switch freezes the projection, never rewinds it", () => {
       evComment(5, "claude-login", makeEvent({
         sequence: 4, actor_role: "implementer", github_actor: "claude-login",
         event_type: "implementer.completed", prior_state: "claude-working",
-        lease_id: "lease-claude-1", head_sha: HEAD_SHA, refs: { pr_number: 120 },
+        lease_id: "lease-claude-1", head_sha: HEAD_SHA, head_branch: WORKING_BRANCH,
+        refs: { pr_number: 120 },
       })),
       evComment(6, "codex-login", makeEvent({
         sequence: 5, actor_role: "auditor", github_actor: "codex-login",
         event_type: "auditor.lease_acquired", prior_state: "ready-for-codex",
         lease_id: "lease-codex-1", lease_expires_at: LEASE_EXPIRY,
       })),
-      auditComment(7, "codex-login", makeAuditRecord()),
+      auditComment(7, "codex-login", record),
       evComment(8, "codex-login", makeEvent({
         sequence: 6, actor_role: "auditor", github_actor: "codex-login",
         event_type: "auditor.audit_completed", prior_state: "codex-working",
         lease_id: "lease-codex-1", audited_sha: HEAD_SHA, verdict: "ACCEPT",
-        refs: { audit_comment_id: 7, pr_number: 120 },
+        refs: { audit_comment_id: 7, pr_number: 120, audit_digest: payloadDigest(record) },
+      })),
+      evComment(9, "github-actions[bot]", makeEvent({
+        sequence: 7, actor_role: "system", github_actor: "github-actions[bot]",
+        event_type: "system.eligibility_confirmed", prior_state: "eligibility-pending",
+        pr_metadata: liveMeta(),
       })),
     ];
   }
 
   it("freeze equals live replay: disabled policy does not rewind the lane", () => {
-    const input = { issue_body: laneGenesisBody(), comments: happyPathComments(), context: { now: NOW, pr_head_sha: HEAD_SHA } };
+    const input = { issue_body: laneGenesisBody(), comments: happyPathComments(), context: { now: NOW } };
     const live = reconstructLane({ ...input, policy: makePolicy() });
     const killed = reconstructLane({ ...input, policy: makePolicy({ enabled: false }) });
     expect(killed.ok).toBe(true);
     expect(killed.lane).toEqual(live.lane);
     expect(killed.lane?.state).toBe("ready-for-merge");
-    expect(killed.lane?.event_sequence).toBe(6);
+    expect(killed.lane?.event_sequence).toBe(7);
     expect(killed.frozen).toBe(true);
     expect(live.frozen).toBe(false);
-    expect(killed.dispositions.filter((d) => d.status === "applied")).toHaveLength(6);
+    expect(killed.dispositions.filter((d) => d.status === "applied")).toHaveLength(7);
   });
 
-  it("B1×B13 interaction: a historical audit event replays deterministically regardless of the transient live head", () => {
-    // Regression for the self-review finding: the B1 live-head guard must
-    // apply only at the frontier, never during replay of an already-applied
-    // audit — otherwise a head move rewinds ready-for-merge → codex-working
-    // and the projection stops being a pure function of durable content.
-    // Here the audit is NOT the frontier (a later operator.paused is), so the
-    // reduced state must be identical no matter what live head is supplied.
+  it("B1×B13 interaction: the full history replays deterministically with NO live signal in context", () => {
+    // The determinism invariant, pinned end-to-end: reconstruction takes NO
+    // transient live signal, so the same durable stream produces the same
+    // projection on every replay — the eligibility confirmation's metadata
+    // travels IN the event, not in context. A later operator pause replays
+    // identically too.
     const comments = [
       ...happyPathComments(),
-      evComment(9, "eileen1337", makeEvent({
-        sequence: 7, actor_role: "operator", github_actor: "eileen1337",
+      evComment(10, "eileen1337", makeEvent({
+        sequence: 8, actor_role: "operator", github_actor: "eileen1337",
         event_type: "operator.paused", prior_state: "ready-for-merge",
       }), "2026-07-16T13:00:00Z"),
     ];
-    const withHead = reconstructLane({ issue_body: laneGenesisBody(), comments, policy, context: { now: NOW, pr_head_sha: HEAD_SHA } });
-    const withMovedHead = reconstructLane({ issue_body: laneGenesisBody(), comments, policy, context: { now: NOW, pr_head_sha: OTHER_SHA } });
-    const withNoHead = reconstructLane({ issue_body: laneGenesisBody(), comments, policy, context: { now: NOW } });
-    expect(withHead.lane).toEqual(withMovedHead.lane);
-    expect(withMovedHead.lane).toEqual(withNoHead.lane);
-    expect(withHead.lane?.state).toBe("ready-for-merge");
-    expect(withHead.lane?.event_sequence).toBe(7);
-    expect(withHead.lane?.operator_pause).toBe(true);
+    const a = reconstructLane({ issue_body: laneGenesisBody(), comments, policy, context: { now: NOW } });
+    const b = reconstructLane({ issue_body: laneGenesisBody(), comments, policy, context: { now: "2026-07-20T00:00:00Z" } });
+    expect(a.lane).toEqual(b.lane);
+    expect(a.lane?.state).toBe("ready-for-merge");
+    expect(a.lane?.event_sequence).toBe(8);
+    expect(a.lane?.operator_pause).toBe(true);
   });
 
   it("a structurally invalid policy still fails closed (not force-enabled)", () => {

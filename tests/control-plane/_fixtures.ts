@@ -1,6 +1,9 @@
 // Shared fixtures for the control-plane test suite.
 // Everything here mirrors the published v1 contracts in .straylight/schemas/.
 
+import { payloadDigest } from "../../.straylight/lib/canonical.mjs";
+import { nextActorFor } from "../../.straylight/lib/state-machine.mjs";
+
 export const BASE_SHA = "009c4afe34f3f7151db4239fe1c69898833440bb";
 export const HEAD_SHA = "a93e9f3694c3b8e5f7e6839856b9f347998a49ad";
 export const OTHER_SHA = "1111111111111111111111111111111111111111";
@@ -8,6 +11,15 @@ export const OTHER_SHA = "1111111111111111111111111111111111111111";
 export const NOW = "2026-07-16T12:00:00Z";
 export const LEASE_EXPIRY = "2026-07-16T16:00:00Z";
 export const AFTER_EXPIRY = "2026-07-16T17:00:00Z";
+
+// The lane working branch: established by the INITIAL coordinator packet
+// (its target_branch) and matched by every later packet, implementer
+// completion, audit, and confirmed live PR head branch.
+export const WORKING_BRANCH = "phase-49p-sibling-evidence-intake";
+
+export const REPO = "0xHoneyJar/loa-straylight";
+
+export { payloadDigest };
 
 export function makePolicy(overrides: Record<string, any> = {}) {
   return {
@@ -36,20 +48,31 @@ export function makePolicy(overrides: Record<string, any> = {}) {
   };
 }
 
+// States in which the lane working branch has been established by the
+// initial coordinator packet (everything from ready-for-claude onward).
+const BRANCH_ESTABLISHED_STATES = new Set([
+  "ready-for-claude", "claude-working", "ready-for-codex", "codex-working",
+  "eligibility-pending", "ready-for-merge", "merged", "patch-required",
+  "lease-expired",
+]);
+
 export function makeLane(overrides: Record<string, any> = {}) {
+  const state = overrides.state ?? "planning";
   return {
     schema: "straylight.lane.v1",
     lane_id: "lane-phase-49p",
     phase: "phase-49p",
     authorized_corridor: ["phase-49p", "phase-49q", "phase-50a", "phase-50b"],
-    repository: "0xHoneyJar/loa-straylight",
+    repository: REPO,
     base_branch: "main",
     base_sha: BASE_SHA,
     tier: "tier-1",
     authority_bearing: false,
-    state: "planning",
-    next_actor: "coordinator",
-    working_branch: null,
+    state,
+    // next_actor is a projection of state; the validator refuses records
+    // whose next_actor disagrees, so the fixture derives it by default.
+    next_actor: nextActorFor(state),
+    working_branch: BRANCH_ESTABLISHED_STATES.has(state) ? WORKING_BRANCH : null,
     pr_number: null,
     pr_head_sha: null,
     audited_sha: null,
@@ -90,8 +113,8 @@ export function makeTaskPacket(overrides: Record<string, any> = {}) {
     lane_id: "lane-phase-49p",
     authority_basis: "ADR-050 corridor phase-49p; ADR-049 §10 step 3",
     base_sha: BASE_SHA,
-    repository: "0xHoneyJar/loa-straylight",
-    target_branch: "phase-49p-sibling-evidence-intake",
+    repository: REPO,
+    target_branch: WORKING_BRANCH,
     allowed_paths: ["docs/decisions/", "docs/handoffs/"],
     forbidden_paths: [".loa", ".claude", "src/", ".github/workflows/post-merge.yml"],
     capability_success_condition:
@@ -112,18 +135,25 @@ export function makeTaskPacket(overrides: Record<string, any> = {}) {
 }
 
 export function makeAuditRecord(overrides: Record<string, any> = {}) {
-  // next_actor must agree with the verdict (validateAuditRecord enforces:
-  // ACCEPT/REJECT/CANNOT_AUDIT -> operator, PATCH -> coordinator). Derive it
-  // from the (possibly overridden) verdict unless the caller sets it.
+  // next_actor must agree with the verdict and retryability
+  // (validateAuditRecord enforces: ACCEPT -> system [eligibility-pending
+  // awaits the durable confirmation], PATCH -> coordinator, REJECT ->
+  // operator, CANNOT_AUDIT -> auditor when retryable else operator). Derive
+  // it from the (possibly overridden) fields unless the caller sets it.
   const verdict = overrides.verdict ?? "ACCEPT";
-  const nextForVerdict = verdict === "PATCH" ? "coordinator" : "operator";
+  const retryable = overrides.retryable;
+  const nextForVerdict =
+    verdict === "ACCEPT" ? "system"
+    : verdict === "PATCH" ? "coordinator"
+    : verdict === "CANNOT_AUDIT" ? (retryable === true ? "auditor" : "operator")
+    : "operator";
   return {
     schema: "straylight.audit.v1",
     lane_id: "lane-phase-49p",
     pr_number: 120,
     base_branch: "main",
     base_sha: BASE_SHA,
-    head_branch: "phase-49p-sibling-evidence-intake",
+    head_branch: WORKING_BRANCH,
     audited_head_sha: HEAD_SHA,
     complete_diff_reviewed: true,
     changed_files: ["docs/decisions/PHASE-49P-INTAKE.md"],
@@ -150,11 +180,40 @@ export function makeLease(overrides: Record<string, any> = {}) {
   };
 }
 
+// The complete authoritative live PR metadata object, as embedded durably
+// in a system.eligibility_confirmed event by the reducer workflow.
+export function liveMeta(overrides: Record<string, any> = {}) {
+  return {
+    fetch_ok: true,
+    repository: REPO,
+    pr_number: 120,
+    state: "open",
+    draft: false,
+    merged: false,
+    base_branch: "main",
+    base_sha: BASE_SHA,
+    head_branch: WORKING_BRANCH,
+    head_sha: HEAD_SHA,
+    ...overrides,
+  };
+}
+
+// A system.eligibility_confirmed event with embedded live metadata.
+export function makeConfirmEvent(overrides: Record<string, any> = {}, metaOverrides: Record<string, any> = {}) {
+  return makeEvent({
+    actor_role: "system",
+    github_actor: "github-actions[bot]",
+    event_type: "system.eligibility_confirmed",
+    prior_state: "eligibility-pending",
+    pr_metadata: liveMeta(metaOverrides),
+    ...overrides,
+  });
+}
+
 // A lane mid-flight in claude-working with an active implementer lease.
 export function laneClaudeWorking(overrides: Record<string, any> = {}) {
   return makeLane({
     state: "claude-working",
-    next_actor: "implementer",
     event_sequence: 3,
     attempt: 1,
     lease: makeLease(),
@@ -166,12 +225,26 @@ export function laneClaudeWorking(overrides: Record<string, any> = {}) {
 export function laneCodexWorking(overrides: Record<string, any> = {}) {
   return makeLane({
     state: "codex-working",
-    next_actor: "auditor",
     event_sequence: 5,
     attempt: 1,
     pr_number: 120,
     pr_head_sha: HEAD_SHA,
     lease: makeLease({ actor_role: "auditor", lease_id: "lease-codex-1", holder_login: "codex-login", grant_sequence: 5, expected_state: "codex-working" }),
+    ...overrides,
+  });
+}
+
+// A lane whose ACCEPT audit is recorded but not yet confirmed against live
+// PR metadata (awaiting system.eligibility_confirmed).
+export function laneEligibilityPending(overrides: Record<string, any> = {}) {
+  return makeLane({
+    state: "eligibility-pending",
+    event_sequence: 6,
+    attempt: 1,
+    pr_number: 120,
+    pr_head_sha: HEAD_SHA,
+    audited_sha: HEAD_SHA,
+    verdict: "ACCEPT",
     ...overrides,
   });
 }

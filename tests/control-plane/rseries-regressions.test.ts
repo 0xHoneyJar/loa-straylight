@@ -1,7 +1,9 @@
 // Control Plane v1 — regression tests for the R1–R7 correction pass.
 // ChatGPT's inspection of the pushed branch found the first PATCH round
 // overstated several fixes; these tests pin the tightened behavior:
-//   R1 authoritative live PR metadata at the audit frontier
+//   R1 authoritative live PR metadata at the eligibility confirmation
+//      (embedded DURABLY in the system.eligibility_confirmed event and
+//      re-validated field-by-field on every replay)
 //   R2 temporal + digest + full-contract task-packet binding
 //   R3 lease holder_login, trusted time, strict calendar, lease-id reuse
 //   R4 temporal + digest audit binding, canonical location, ACCEPT/next_actor
@@ -19,98 +21,125 @@ import { payloadDigest, canonicalize } from "../../.straylight/lib/canonical.mjs
 import { renderPayload, MARKERS } from "../../.straylight/lib/markers.mjs";
 import {
   makeLane, makeEvent, makePolicy, makeTaskPacket, makeAuditRecord, makeLease,
-  laneCodexWorking, NOW, LEASE_EXPIRY, AFTER_EXPIRY, HEAD_SHA, OTHER_SHA, BASE_SHA,
+  laneCodexWorking, laneEligibilityPending, makeConfirmEvent, liveMeta,
+  NOW, LEASE_EXPIRY, AFTER_EXPIRY, HEAD_SHA, OTHER_SHA, BASE_SHA, REPO, WORKING_BRANCH,
 } from "./_fixtures.js";
 
 const policy = makePolicy();
-const REPO = "0xHoneyJar/loa-straylight";
 
-function liveMeta(overrides: Record<string, any> = {}): Record<string, any> {
-  return {
-    fetch_ok: true, repository: REPO, pr_number: 120, state: "open",
-    draft: false, merged: false, base_branch: "main", base_sha: BASE_SHA,
-    head_branch: "phase-49p-sibling-evidence-intake", head_sha: HEAD_SHA,
-    ...overrides,
-  };
-}
-function auditEvent(overrides: Record<string, any> = {}) {
+function auditEvent(record: Record<string, any>, overrides: Record<string, any> = {}) {
   return makeEvent({
     sequence: 6, actor_role: "auditor", github_actor: "codex-login",
     event_type: "auditor.audit_completed", prior_state: "codex-working",
-    lease_id: "lease-codex-1", audited_sha: HEAD_SHA, verdict: "ACCEPT",
-    refs: { audit_comment_id: 777, pr_number: 120 },
+    lease_id: "lease-codex-1", audited_sha: record.audited_head_sha ?? HEAD_SHA,
+    verdict: record.verdict ?? "ACCEPT",
+    refs: { audit_comment_id: 777, pr_number: 120, audit_digest: payloadDigest(record) },
     ...overrides,
   });
 }
-const frontierCtx = (over: Record<string, any> = {}) => ({
-  now: NOW, comment_author: "codex-login", audit_record: makeAuditRecord(), ...over,
+const frontierCtx = (record: Record<string, any>, over: Record<string, any> = {}) => ({
+  now: NOW, comment_author: "codex-login", audit_record: record, ...over,
 });
 
 // =============================================================================
-// R1 — full live PR target authority at the audit frontier.
+// R1 — full live PR target authority at the eligibility confirmation. The
+// metadata is embedded in the durable event; every field must correspond
+// with the lane on every replay or the confirmation is refused.
 // =============================================================================
-describe("R1 — authoritative live PR metadata governs the audit transition", () => {
-  const lane = () => laneCodexWorking();
+describe("R1 — durable live PR metadata governs the eligibility confirmation", () => {
+  const lane = () => laneEligibilityPending({ event_sequence: 6 });
+  const confirm = (metaOver: Record<string, any> = {}) =>
+    makeConfirmEvent({ sequence: 7 }, metaOver);
+  const ctx = { now: NOW };
 
-  it("1. correct stored head but CLOSED live PR → refused", () => {
-    const out = reduce(lane(), auditEvent(), policy, frontierCtx({ pr_metadata: liveMeta({ state: "closed" }) }));
+  it("1. correct audited head but CLOSED live PR → refused", () => {
+    const out = reduce(lane(), confirm({ state: "closed" }), policy, ctx);
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.refusal).toBe("pr-not-open");
   });
   it("2. correct head but WRONG live base branch → refused", () => {
-    const out = reduce(lane(), auditEvent(), policy, frontierCtx({ pr_metadata: liveMeta({ base_branch: "release-x" }) }));
+    const out = reduce(lane(), confirm({ base_branch: "release-x" }), policy, ctx);
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.refusal).toBe("pr-retargeted-branch");
   });
   it("3. correct head but WRONG base SHA → refused", () => {
-    const out = reduce(lane(), auditEvent(), policy, frontierCtx({ pr_metadata: liveMeta({ base_sha: OTHER_SHA }) }));
+    const out = reduce(lane(), confirm({ base_sha: OTHER_SHA }), policy, ctx);
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.refusal).toBe("pr-base-sha-mismatch");
   });
   it("4. correct head but WRONG head branch → refused", () => {
-    const out = reduce(lane(), auditEvent(), policy, frontierCtx({ pr_metadata: liveMeta({ head_branch: "sneaky-branch" }) }));
+    const out = reduce(lane(), confirm({ head_branch: "sneaky-branch" }), policy, ctx);
     expect(out.ok).toBe(false);
-    if (!out.ok) expect(out.refusal).toBe("audit-head-branch-mismatch");
+    if (!out.ok) expect(out.refusal).toBe("pr-wrong-head-branch");
   });
   it("5. correct head but WRONG repository → refused", () => {
-    const out = reduce(lane(), auditEvent(), policy, frontierCtx({ pr_metadata: liveMeta({ repository: "evil/fork" }) }));
+    const out = reduce(lane(), confirm({ repository: "evil/fork" }), policy, ctx);
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.refusal).toBe("pr-wrong-repository");
   });
-  it("6. live metadata UNAVAILABLE (fetch failed) → refused", () => {
-    const out = reduce(lane(), auditEvent(), policy, frontierCtx({ pr_metadata: { fetch_ok: false } }));
+  it("6. live metadata records a FAILED fetch → refused (cannot confirm)", () => {
+    const event = makeEvent({
+      sequence: 7, actor_role: "system", github_actor: "github-actions[bot]",
+      event_type: "system.eligibility_confirmed", prior_state: "eligibility-pending",
+      pr_metadata: { fetch_ok: false },
+    });
+    const out = reduce(lane(), event, policy, ctx);
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.refusal).toBe("pr-metadata-unavailable");
   });
-  it("7a. a merged live PR → refused (merged cannot record eligibility)", () => {
-    const out = reduce(lane(), auditEvent(), policy, frontierCtx({ pr_metadata: liveMeta({ merged: true }) }));
+  it("6b. metadata WHOLLY ABSENT from the confirmation event → refused", () => {
+    const event = makeEvent({
+      sequence: 7, actor_role: "system", github_actor: "github-actions[bot]",
+      event_type: "system.eligibility_confirmed", prior_state: "eligibility-pending",
+    });
+    const out = reduce(lane(), event, policy, ctx);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.refusal).toBe("pr-metadata-missing");
+  });
+  it("7a. a merged live PR → refused (merged cannot confirm eligibility)", () => {
+    const out = reduce(lane(), confirm({ merged: true }), policy, ctx);
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.refusal).toBe("pr-already-merged");
   });
   it("7b. draft policy: a DRAFT live PR → refused (must be ready-for-review first)", () => {
-    const out = reduce(lane(), auditEvent(), policy, frontierCtx({ pr_metadata: liveMeta({ draft: true }) }));
+    const out = reduce(lane(), confirm({ draft: true }), policy, ctx);
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.refusal).toBe("pr-draft");
   });
-  it("8. stored H1 vs live H2 (head moved) → refused audit-stale-head", () => {
-    const out = reduce(lane(), auditEvent(), policy, frontierCtx({ pr_metadata: liveMeta({ head_sha: OTHER_SHA }) }));
+  it("8. audited H1 vs live H2 (head moved) → refused audit-stale-head", () => {
+    const out = reduce(lane(), confirm({ head_sha: OTHER_SHA }), policy, ctx);
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.refusal).toBe("audit-stale-head");
   });
   it("wrong PR number → refused", () => {
-    const out = reduce(lane(), auditEvent(), policy, frontierCtx({ pr_metadata: liveMeta({ pr_number: 999 }) }));
+    const out = reduce(lane(), confirm({ pr_number: 999 }), policy, ctx);
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.refusal).toBe("pr-wrong-number");
   });
-  it("all fields correspond → ACCEPT records eligibility", () => {
-    const out = reduce(lane(), auditEvent(), policy, frontierCtx({ pr_metadata: liveMeta() }));
+  it("all fields correspond → confirmation reaches ready-for-merge", () => {
+    const out = reduce(lane(), confirm(), policy, ctx);
     expect(out.ok).toBe(true);
     if (out.ok) expect(out.lane.state).toBe("ready-for-merge");
   });
-  it("partial/invalid metadata object → refused pr-metadata-invalid", () => {
-    const out = reduce(lane(), auditEvent(), policy, frontierCtx({ pr_metadata: { fetch_ok: true, repository: REPO } }));
+  it("partial/invalid metadata object → refused (event-invalid at validation)", () => {
+    const event = makeEvent({
+      sequence: 7, actor_role: "system", github_actor: "github-actions[bot]",
+      event_type: "system.eligibility_confirmed", prior_state: "eligibility-pending",
+      pr_metadata: { fetch_ok: true, repository: REPO }, // missing every other field
+    });
+    const out = reduce(lane(), event, policy, ctx);
     expect(out.ok).toBe(false);
-    if (!out.ok) expect(out.refusal).toBe("pr-metadata-invalid");
+    if (!out.ok) expect(out.refusal).toBe("event-invalid");
+  });
+  it("the AUDIT transition itself never consults live context and parks in eligibility-pending", () => {
+    const record = makeAuditRecord();
+    const out = reduce(laneCodexWorking(), auditEvent(record), policy,
+      frontierCtx(record, { pr_metadata: liveMeta({ head_sha: OTHER_SHA }) } as any));
+    // Even with a (stray) transient metadata object in context, the audit
+    // binds to the DURABLE recorded head and parks pending — the transient
+    // signal is simply not consulted.
+    expect(out.ok).toBe(true);
+    if (out.ok) expect(out.lane.state).toBe("eligibility-pending");
   });
 });
 
@@ -187,29 +216,64 @@ describe("R2 — task-packet binding is temporal, digest-pinned, and full-contra
   });
 
   it("reducer cross-checks packet fields against the lane (repo, next_actor, patch_cycle)", () => {
-    const laneRFC = makeLane({ state: "ready-for-coordinator", next_actor: "coordinator", event_sequence: 1 });
-    const packetEvent = makeEvent({
+    const laneRFC = makeLane({ state: "ready-for-coordinator", event_sequence: 1 });
+    const packetEvent = (tp: any) => makeEvent({
+      sequence: 2, actor_role: "coordinator", github_actor: "chatgpt-login",
+      event_type: "coordinator.task_packet_posted", prior_state: "ready-for-coordinator",
+      refs: { task_packet_comment_id: 2, task_packet_digest: payloadDigest(tp) },
+    });
+    const ctx = (tp: any) => ({ now: NOW, comment_author: "chatgpt-login", task_packet: tp });
+    // Wrong repository → refused (the R2 exploit: packet drives implementer into a foreign repo).
+    let tp = makeTaskPacket({ repository: "attacker/evil-repo" });
+    let out = reduce(laneRFC, packetEvent(tp), policy, ctx(tp));
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.refusal).toBe("task-packet-wrong-repository");
+    // Wrong expected_next_actor → refused.
+    tp = makeTaskPacket({ expected_next_actor: "operator" });
+    out = reduce(laneRFC, packetEvent(tp), policy, ctx(tp));
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.refusal).toBe("task-packet-wrong-next-actor");
+    // Initial packet with wrong patch_cycle → refused.
+    tp = makeTaskPacket({ patch_cycle: 3 });
+    out = reduce(laneRFC, packetEvent(tp), policy, ctx(tp));
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.refusal).toBe("task-packet-wrong-patch-cycle");
+    // A packet targeting the lane BASE branch is refused (working branch required).
+    tp = makeTaskPacket({ target_branch: "main" });
+    out = reduce(laneRFC, packetEvent(tp), policy, ctx(tp));
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.refusal).toBe("task-packet-targets-base-branch");
+    // A fully-corresponding packet is accepted and establishes the working branch.
+    tp = makeTaskPacket();
+    out = reduce(laneRFC, packetEvent(tp), policy, ctx(tp));
+    expect(out.ok).toBe(true);
+    if (out.ok) {
+      expect(out.lane.state).toBe("ready-for-claude");
+      expect(out.lane.working_branch).toBe(WORKING_BRANCH);
+    }
+  });
+
+  it("a packet event with a MISSING or MISMATCHED declared digest is refused", () => {
+    const laneRFC = makeLane({ state: "ready-for-coordinator", event_sequence: 1 });
+    const tp = makeTaskPacket();
+    const noDigest = makeEvent({
       sequence: 2, actor_role: "coordinator", github_actor: "chatgpt-login",
       event_type: "coordinator.task_packet_posted", prior_state: "ready-for-coordinator",
       refs: { task_packet_comment_id: 2 },
     });
-    const ctx = (tp: any) => ({ now: NOW, comment_author: "chatgpt-login", task_packet: tp });
-    // Wrong repository → refused (the R2 exploit: packet drives implementer into a foreign repo).
-    let out = reduce(laneRFC, packetEvent, policy, ctx(makeTaskPacket({ repository: "attacker/evil-repo" })));
+    let out = reduce(laneRFC, noDigest, policy, { now: NOW, task_packet: tp });
     expect(out.ok).toBe(false);
-    if (!out.ok) expect(out.refusal).toBe("task-packet-wrong-repository");
-    // Wrong expected_next_actor → refused.
-    out = reduce(laneRFC, packetEvent, policy, ctx(makeTaskPacket({ expected_next_actor: "operator" })));
+    if (!out.ok) expect(out.refusal).toBe("task-packet-digest-missing");
+    // Declared digest of a DIFFERENT packet than the bound one → mismatch
+    // (the mutation-after-post case at the reducer layer).
+    const wrongDigest = makeEvent({
+      sequence: 2, actor_role: "coordinator", github_actor: "chatgpt-login",
+      event_type: "coordinator.task_packet_posted", prior_state: "ready-for-coordinator",
+      refs: { task_packet_comment_id: 2, task_packet_digest: payloadDigest(makeTaskPacket({ allowed_paths: ["src/"] })) },
+    });
+    out = reduce(laneRFC, wrongDigest, policy, { now: NOW, task_packet: tp });
     expect(out.ok).toBe(false);
-    if (!out.ok) expect(out.refusal).toBe("task-packet-wrong-next-actor");
-    // Initial packet with wrong patch_cycle → refused.
-    out = reduce(laneRFC, packetEvent, policy, ctx(makeTaskPacket({ patch_cycle: 3 })));
-    expect(out.ok).toBe(false);
-    if (!out.ok) expect(out.refusal).toBe("task-packet-wrong-patch-cycle");
-    // A fully-corresponding packet is accepted.
-    out = reduce(laneRFC, packetEvent, policy, ctx(makeTaskPacket()));
-    expect(out.ok).toBe(true);
-    if (out.ok) expect(out.lane.state).toBe("ready-for-claude");
+    if (!out.ok) expect(out.refusal).toBe("task-packet-digest-mismatch");
   });
 
   it("an IMPLEMENTER-authored packet referenced by a coordinator event does not bind", () => {
@@ -388,12 +452,14 @@ describe("R4 — audit reference binding and record consistency", () => {
     return { id, user, body: renderPayload(MARKERS.audit, a), created_at: NOW, ...over };
   }
   function upToAuditLease() {
+    const packet = makeTaskPacket();
     return [
       ev(1, "chatgpt-login", makeEvent({ sequence: 1 })),
-      { id: 2, user: "chatgpt-login", body: renderPayload(MARKERS.taskPacket, makeTaskPacket()), created_at: NOW },
+      { id: 2, user: "chatgpt-login", body: renderPayload(MARKERS.taskPacket, packet), created_at: NOW },
       ev(3, "chatgpt-login", makeEvent({
         sequence: 2, event_type: "coordinator.task_packet_posted",
-        prior_state: "ready-for-coordinator", refs: { task_packet_comment_id: 2 },
+        prior_state: "ready-for-coordinator",
+        refs: { task_packet_comment_id: 2, task_packet_digest: payloadDigest(packet) },
       })),
       ev(4, "claude-login", makeEvent({
         sequence: 3, actor_role: "implementer", github_actor: "claude-login",
@@ -403,7 +469,8 @@ describe("R4 — audit reference binding and record consistency", () => {
       ev(5, "claude-login", makeEvent({
         sequence: 4, actor_role: "implementer", github_actor: "claude-login",
         event_type: "implementer.completed", prior_state: "claude-working",
-        lease_id: "lease-claude-1", head_sha: HEAD_SHA, refs: { pr_number: 120 },
+        lease_id: "lease-claude-1", head_sha: HEAD_SHA, head_branch: WORKING_BRANCH,
+        refs: { pr_number: 120 },
       })),
       ev(6, "codex-login", makeEvent({
         sequence: 5, actor_role: "auditor", github_actor: "codex-login",
@@ -412,54 +479,73 @@ describe("R4 — audit reference binding and record consistency", () => {
       })),
     ];
   }
-  const metaCtx = { now: NOW, pr_metadata: liveMeta() };
+  function completionEvent(record: Record<string, any>, refsOver: Record<string, any> = {}) {
+    return makeEvent({
+      sequence: 6, actor_role: "auditor", github_actor: "codex-login",
+      event_type: "auditor.audit_completed", prior_state: "codex-working",
+      lease_id: "lease-codex-1", audited_sha: HEAD_SHA, verdict: "ACCEPT",
+      refs: { audit_comment_id: 7, pr_number: 120, audit_digest: payloadDigest(record), ...refsOver },
+    });
+  }
 
   it("a FUTURE audit comment reference does not bind (audit event refused)", () => {
+    const record = makeAuditRecord();
     const comments = [
       ...upToAuditLease(),
-      ev(8, "codex-login", makeEvent({
-        sequence: 6, actor_role: "auditor", github_actor: "codex-login",
-        event_type: "auditor.audit_completed", prior_state: "codex-working",
-        lease_id: "lease-codex-1", audited_sha: HEAD_SHA, verdict: "ACCEPT",
-        refs: { audit_comment_id: 99, pr_number: 120 }, // 99 is later than 8
-      })),
-      auditC(99, "codex-login", makeAuditRecord()),
+      ev(8, "codex-login", completionEvent(record, { audit_comment_id: 99 })), // 99 is later than 8
+      auditC(99, "codex-login", record),
     ];
-    const out = reconstructLane({ issue_body: genesis(), comments, policy, context: metaCtx });
+    const out = reconstructLane({ issue_body: genesis(), comments, policy, context: { now: NOW } });
     expect(out.lane?.state).toBe("codex-working"); // did not advance
     const d = out.dispositions.find((x) => x.comment_id === 8);
     expect(d?.refusal).toBe("audit-record-invalid");
   });
 
-  it("a changed audit comment body breaks the binding", () => {
+  it("an EDITED audit comment routes the lane to operator-required (documented mutation posture)", () => {
+    const record = makeAuditRecord();
     const comments = [
       ...upToAuditLease(),
-      auditC(7, "codex-login", makeAuditRecord(), { updated_at: "2026-07-16T14:00:00Z" }), // edited
-      ev(8, "codex-login", makeEvent({
-        sequence: 6, actor_role: "auditor", github_actor: "codex-login",
-        event_type: "auditor.audit_completed", prior_state: "codex-working",
-        lease_id: "lease-codex-1", audited_sha: HEAD_SHA, verdict: "ACCEPT",
-        refs: { audit_comment_id: 7, pr_number: 120 },
-      })),
+      auditC(7, "codex-login", record, { updated_at: "2026-07-16T14:00:00Z" }), // edited
+      ev(8, "codex-login", completionEvent(record)),
     ];
-    const out = reconstructLane({ issue_body: genesis(), comments, policy, context: metaCtx });
+    const out = reconstructLane({ issue_body: genesis(), comments, policy, context: { now: NOW } });
+    // The edited AUDIT comment is itself a protocol comment: reconstruction
+    // refuses it AND routes the lane to operator-required — mutation of any
+    // authoritative comment is an operator matter, not a silent unbind.
+    const edited = out.dispositions.find((x) => x.comment_id === 7);
+    expect(edited?.refusal).toBe("protocol-comment-edited");
+    const completion = out.dispositions.find((x) => x.comment_id === 8);
+    expect(completion?.status).toBe("refused");
+    expect(out.lane?.state).toBe("operator-required");
+  });
+
+  it("a MUTATED audit body is caught by the durable digest even when edit metadata is absent", () => {
+    // The audit comment body was swapped post-hoc but the adapter lost the
+    // updated_at signal (older adapter / API gap). The completion event's
+    // DECLARED digest still refuses the binding — digest pinning is durable
+    // and independent of edit metadata.
+    const original = makeAuditRecord();
+    const mutated = makeAuditRecord({ validation_summary: "swapped after the fact" });
+    const comments = [
+      ...upToAuditLease(),
+      auditC(7, "codex-login", mutated), // body now differs from what was digested
+      ev(8, "codex-login", completionEvent(original)), // declared digest = original
+    ];
+    const out = reconstructLane({ issue_body: genesis(), comments, policy, context: { now: NOW } });
     const d = out.dispositions.find((x) => x.comment_id === 8);
     expect(d?.status).toBe("refused");
+    expect(d?.refusal).toBe("audit-digest-mismatch");
     expect(out.lane?.state).toBe("codex-working");
   });
 
   it("wrong audit author (implementer authored the audit) does not bind", () => {
+    const record = makeAuditRecord();
     const comments = [
       ...upToAuditLease(),
-      auditC(7, "claude-login", makeAuditRecord()), // authored by the implementer
-      ev(8, "codex-login", makeEvent({
-        sequence: 6, actor_role: "auditor", github_actor: "codex-login",
-        event_type: "auditor.audit_completed", prior_state: "codex-working",
-        lease_id: "lease-codex-1", audited_sha: HEAD_SHA, verdict: "ACCEPT",
-        refs: { audit_comment_id: 7, pr_number: 120 },
-      })),
+      auditC(7, "claude-login", record), // authored by the implementer
+      ev(8, "codex-login", completionEvent(record)),
     ];
-    const out = reconstructLane({ issue_body: genesis(), comments, policy, context: metaCtx });
+    const out = reconstructLane({ issue_body: genesis(), comments, policy, context: { now: NOW } });
     const d = out.dispositions.find((x) => x.comment_id === 8);
     expect(d?.refusal).toBe("audit-record-invalid");
   });
@@ -470,14 +556,20 @@ describe("R4 — audit reference binding and record consistency", () => {
     })).ok).toBe(false);
   });
 
-  it("verdict/next_actor contradiction is rejected (ACCEPT must route to operator)", () => {
+  it("verdict/next_actor contradiction is rejected (ACCEPT routes to system)", () => {
     expect(validateAuditRecord(makeAuditRecord({ verdict: "ACCEPT", next_actor: "coordinator" })).ok).toBe(false);
+    expect(validateAuditRecord(makeAuditRecord({ verdict: "ACCEPT", next_actor: "operator" })).ok).toBe(false);
     expect(validateAuditRecord(makeAuditRecord({ verdict: "PATCH", next_actor: "operator", concerns: [{ severity: "high", location: "x", description: "y" }] })).ok).toBe(false);
   });
 
   it("audit reference missing → audit-completed refused", () => {
-    const out = reduce(laneCodexWorking(), auditEvent({ refs: { pr_number: 120 } }), policy, {
-      now: NOW, comment_author: "codex-login", pr_metadata: liveMeta(),
+    const out = reduce(laneCodexWorking(), makeEvent({
+      sequence: 6, actor_role: "auditor", github_actor: "codex-login",
+      event_type: "auditor.audit_completed", prior_state: "codex-working",
+      lease_id: "lease-codex-1", audited_sha: HEAD_SHA, verdict: "ACCEPT",
+      refs: { pr_number: 120 },
+    }), policy, {
+      now: NOW, comment_author: "codex-login",
       // no audit_record supplied (adapter could not bind)
     });
     expect(out.ok).toBe(false);
@@ -497,35 +589,27 @@ describe("R4 — audit reference binding and record consistency", () => {
     expect(readme).toMatch(/Canonical location: a comment\s+on the LANE ISSUE/i);
   });
 
-  it("a trailing junk comment does NOT shift the audit frontier off a genuine ACCEPT", () => {
-    // The frontier is the last-APPLIED event, found by a metadata-free
-    // pre-pass — not merely the newest event-marker comment. A stranger's
-    // trailing wrong-lane event (refused) must not downgrade the audit's
-    // live-metadata binding to the recorded-head fallback.
-    const comments = [
+  it("a trailing junk comment cannot alter how the audit binds (no frontier to shift)", () => {
+    // The audit binds to the lane's DURABLY RECORDED head on every replay —
+    // there is no live-metadata frontier whose position a trailing stranger
+    // comment could shift. The audit applies identically with junk appended.
+    const record = makeAuditRecord();
+    const base = [
       ...upToAuditLease(),
-      auditC(7, "codex-login", makeAuditRecord()),
-      ev(8, "codex-login", makeEvent({
-        sequence: 6, actor_role: "auditor", github_actor: "codex-login",
-        event_type: "auditor.audit_completed", prior_state: "codex-working",
-        lease_id: "lease-codex-1", audited_sha: HEAD_SHA, verdict: "ACCEPT",
-        refs: { audit_comment_id: 7, pr_number: 120 },
-      })),
-      // Trailing junk: a stranger posts a wrong-lane event AFTER the audit.
-      ev(99, "random-user", makeEvent({
-        sequence: 6, event_id: "evt-junk", lane_id: "lane-phase-49q",
-        actor_role: "coordinator", github_actor: "random-user", event_type: "lane.activated",
-        prior_state: "planning",
-      })),
+      auditC(7, "codex-login", record),
+      ev(8, "codex-login", completionEvent(record)),
     ];
-    // Live head MOVED vs the audited HEAD_SHA. If the frontier had shifted to
-    // comment 99, the audit would use the recorded head and wrongly ACCEPT;
-    // with the two-pass frontier it stays on comment 8 and is refused.
-    const out = reconstructLane({ issue_body: genesis(), comments, policy, context: { now: NOW, pr_metadata: liveMeta({ head_sha: OTHER_SHA }) } });
-    const d = out.dispositions.find((x) => x.comment_id === 8);
+    const junk = ev(99, "random-user", makeEvent({
+      sequence: 6, event_id: "evt-junk", lane_id: "lane-phase-49q",
+      actor_role: "coordinator", github_actor: "random-user", event_type: "lane.activated",
+      prior_state: "planning",
+    }));
+    const clean = reconstructLane({ issue_body: genesis(), comments: base, policy, context: { now: NOW } });
+    const withJunk = reconstructLane({ issue_body: genesis(), comments: [...base, junk], policy, context: { now: NOW } });
+    expect(clean.lane?.state).toBe("eligibility-pending");
+    expect(withJunk.lane).toEqual(clean.lane);
+    const d = withJunk.dispositions.find((x) => x.comment_id === 99);
     expect(d?.status).toBe("refused");
-    expect(d?.refusal).toBe("audit-stale-head");
-    expect(out.lane?.state).toBe("codex-working");
   });
 });
 

@@ -6,8 +6,8 @@
 import { describe, it, expect } from "vitest";
 import { reduce } from "../../.straylight/lib/reducer.mjs";
 import {
-  makeLane, makeEvent, makePolicy, makeTaskPacket,
-  NOW, BASE_SHA, OTHER_SHA,
+  makeLane, makeEvent, makePolicy, makeTaskPacket, payloadDigest,
+  NOW, BASE_SHA, OTHER_SHA, WORKING_BRANCH,
 } from "./_fixtures.js";
 
 const ctx = { now: NOW };
@@ -23,17 +23,22 @@ describe("allowed transitions", () => {
     }
   });
 
-  it("advances ready-for-coordinator → ready-for-claude on a valid task packet", () => {
+  it("advances ready-for-coordinator → ready-for-claude on a valid task packet, establishing the working branch", () => {
     const lane = makeLane({ state: "ready-for-coordinator", event_sequence: 1 });
+    const packet = makeTaskPacket();
     const event = makeEvent({
       sequence: 2,
       event_type: "coordinator.task_packet_posted",
       prior_state: "ready-for-coordinator",
-      refs: { task_packet_comment_id: 42 },
+      refs: { task_packet_comment_id: 42, task_packet_digest: payloadDigest(packet) },
     });
-    const out = reduce(lane, event, makePolicy(), { ...ctx, task_packet: makeTaskPacket() });
+    const out = reduce(lane, event, makePolicy(), { ...ctx, task_packet: packet });
     expect(out.ok).toBe(true);
-    if (out.ok) expect(out.lane.state).toBe("ready-for-claude");
+    if (out.ok) {
+      expect(out.lane.state).toBe("ready-for-claude");
+      // The INITIAL packet establishes the lane working branch.
+      expect(out.lane.working_branch).toBe(WORKING_BRANCH);
+    }
   });
 });
 
@@ -259,12 +264,14 @@ describe("task packets", () => {
 describe("patch-cycle maximum escalation", () => {
   it("routes to operator-required past maximum_patch_cycles", () => {
     const lane = makeLane({ state: "patch-required", event_sequence: 10, patch_cycle: 3, verdict: "PATCH" });
+    const packet = makeTaskPacket({ packet_kind: "patch", patch_cycle: 4 });
     const event = makeEvent({
       sequence: 11, event_type: "coordinator.patch_packet_posted",
-      prior_state: "patch-required", refs: { task_packet_comment_id: 99 },
+      prior_state: "patch-required",
+      refs: { task_packet_comment_id: 99, task_packet_digest: payloadDigest(packet) },
     });
     const out = reduce(lane, event, makePolicy({ maximum_patch_cycles: 3 }), {
-      ...ctx, task_packet: makeTaskPacket({ packet_kind: "patch", patch_cycle: 4 }),
+      ...ctx, task_packet: packet,
     });
     expect(out.ok).toBe(true);
     if (out.ok) {
@@ -275,12 +282,14 @@ describe("patch-cycle maximum escalation", () => {
 
   it("permits patch cycles inside the budget", () => {
     const lane = makeLane({ state: "patch-required", event_sequence: 10, patch_cycle: 1, verdict: "PATCH" });
+    const packet = makeTaskPacket({ packet_kind: "patch", patch_cycle: 2 });
     const event = makeEvent({
       sequence: 11, event_type: "coordinator.patch_packet_posted",
-      prior_state: "patch-required", refs: { task_packet_comment_id: 99 },
+      prior_state: "patch-required",
+      refs: { task_packet_comment_id: 99, task_packet_digest: payloadDigest(packet) },
     });
     const out = reduce(lane, event, makePolicy(), {
-      ...ctx, task_packet: makeTaskPacket({ packet_kind: "patch", patch_cycle: 2 }),
+      ...ctx, task_packet: packet,
     });
     expect(out.ok).toBe(true);
     if (out.ok) {
