@@ -399,50 +399,47 @@ describe("B9 — merge guard fails closed on the check-status unknowns", () => {
   });
   it("zero check runs is ineligible (was fail-open)", () => {
     const out = evaluate(eligibleLane, policy, {
-      pr_head_sha: HEAD_SHA,
+      pr_metadata: liveMeta(),
       checks: { check_runs_total: 0, check_run_conclusions: [], commit_statuses_total: 0, commit_status_state: "pending" },
     });
     expect(out.eligible).toBe(false);
   });
   it("a pre-cooked boolean is no longer accepted as evidence", () => {
-    const out = evaluate(eligibleLane, policy, { pr_head_sha: HEAD_SHA, required_checks_passed: true } as any);
+    const out = evaluate(eligibleLane, policy, { pr_metadata: liveMeta(), required_checks_passed: true } as any);
     expect(out.eligible).toBe(false);
   });
   it("a failing legacy combined status blocks even with passing check runs", () => {
     const out = evaluate(eligibleLane, policy, {
-      pr_head_sha: HEAD_SHA,
+      pr_metadata: liveMeta(),
       checks: { check_runs_total: 3, check_run_conclusions: ["success", "success", "success"], commit_statuses_total: 1, commit_status_state: "failure" },
     });
     expect(out.eligible).toBe(false);
   });
   it("passing check runs with no legacy statuses (and an open, non-draft, non-merged, on-base PR) is eligible", () => {
     const out = evaluate(eligibleLane, policy, {
-      pr_head_sha: HEAD_SHA,
+      pr_metadata: liveMeta(),
       checks: { check_runs_total: 2, check_run_conclusions: ["success", "skipped"], commit_statuses_total: 0, commit_status_state: "pending" },
-      pr_state: "open", pr_draft: false, pr_merged: false, pr_base_ref: "main",
     });
     expect(out.eligible).toBe(true);
   });
   it("a closed, draft, merged, or retargeted PR fails the guard closed (R3 regression)", () => {
     const liveChecks = { check_runs_total: 2, check_run_conclusions: ["success", "success"], commit_statuses_total: 0, commit_status_state: "pending" };
-    const base = { pr_head_sha: HEAD_SHA, checks: liveChecks, pr_state: "open", pr_draft: false, pr_merged: false, pr_base_ref: "main" };
-    expect(evaluate(eligibleLane, policy, { ...base, pr_state: "closed" }).eligible).toBe(false);
-    expect(evaluate(eligibleLane, policy, { ...base, pr_draft: true }).eligible).toBe(false);
-    expect(evaluate(eligibleLane, policy, { ...base, pr_merged: true }).eligible).toBe(false);
-    expect(evaluate(eligibleLane, policy, { ...base, pr_base_ref: "release-x" }).eligible).toBe(false);
-    expect(evaluate(eligibleLane, policy, { pr_head_sha: HEAD_SHA, checks: liveChecks }).eligible).toBe(false); // no liveness info → closed
+    expect(evaluate(eligibleLane, policy, { checks: liveChecks, pr_metadata: liveMeta({ state: "closed" }) }).eligible).toBe(false);
+    expect(evaluate(eligibleLane, policy, { checks: liveChecks, pr_metadata: liveMeta({ draft: true }) }).eligible).toBe(false);
+    expect(evaluate(eligibleLane, policy, { checks: liveChecks, pr_metadata: liveMeta({ merged: true }) }).eligible).toBe(false);
+    expect(evaluate(eligibleLane, policy, { checks: liveChecks, pr_metadata: liveMeta({ base_branch: "release-x" }) }).eligible).toBe(false);
+    expect(evaluate(eligibleLane, policy, { checks: liveChecks }).eligible).toBe(false); // no PR metadata → closed
   });
   it("a conclusion list that disagrees with the API total fails closed (dropped page)", () => {
     // total_count says 150 runs but only page 1 (100 conclusions) arrived:
     // the guard must treat this as partial evidence, never as passing.
     const out = evaluate(eligibleLane, policy, {
-      pr_head_sha: HEAD_SHA,
+      pr_metadata: liveMeta(),
       checks: {
         check_runs_total: 150,
         check_run_conclusions: Array.from({ length: 100 }, () => "success"),
         commit_statuses_total: 0, commit_status_state: "pending",
       },
-      pr_state: "open", pr_draft: false, pr_merged: false, pr_base_ref: "main",
     });
     expect(out.eligible).toBe(false);
   });

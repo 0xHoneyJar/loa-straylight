@@ -194,15 +194,17 @@ describe("C2 — missing draft/merged PR metadata fails closed as unknown", () =
       state: "ready-for-merge", event_sequence: 7,
       pr_number: 120, pr_head_sha: HEAD_SHA, audited_sha: HEAD_SHA, verdict: "ACCEPT",
     });
-    const base = {
-      pr_head_sha: HEAD_SHA,
-      checks: { check_runs_total: 1, check_run_conclusions: ["success"], commit_statuses_total: 0, commit_status_state: "pending" },
-      pr_state: "open", pr_base_ref: "main",
-    };
-    // draft known-false but merged unknown → ineligible; and vice versa.
-    expect(evaluate(lane, policy, { ...base, pr_draft: false }).eligible).toBe(false);
-    expect(evaluate(lane, policy, { ...base, pr_merged: false }).eligible).toBe(false);
-    expect(evaluate(lane, policy, { ...base, pr_draft: false, pr_merged: false }).eligible).toBe(true);
+    const checks = { check_runs_total: 1, check_run_conclusions: ["success"], commit_statuses_total: 0, commit_status_state: "pending" };
+    // A metadata record missing draft (or merged) is structurally invalid
+    // (unknown is preserved as unknown) → ineligible; the complete record
+    // is eligible.
+    const noDraft: Record<string, any> = liveMeta();
+    delete noDraft.draft;
+    const noMerged: Record<string, any> = liveMeta();
+    delete noMerged.merged;
+    expect(evaluate(lane, policy, { checks, pr_metadata: noDraft } as any).eligible).toBe(false);
+    expect(evaluate(lane, policy, { checks, pr_metadata: noMerged } as any).eligible).toBe(false);
+    expect(evaluate(lane, policy, { checks, pr_metadata: liveMeta() }).eligible).toBe(true);
   });
 
   it("workflows forward draft/merged only as OBSERVED booleans (no // false defaulting)", () => {
@@ -211,11 +213,16 @@ describe("C2 — missing draft/merged PR metadata fails closed as unknown", () =
     expect(reducer).not.toMatch(/\.merged\s*\/\/\s*false/);
     expect(reducer).toMatch(/\(\$p\.draft\|type\) == "boolean"/);
     expect(reducer).toMatch(/\(\$p\.merged\|type\) == "boolean"/);
+    // The merge-guard workflow normalizes with the SAME complete-record jq
+    // (fetch_ok collapses to false unless every field is present and typed).
     const guard = readFileSync(".github/workflows/straylight-merge-guard.yml", "utf8");
     expect(guard).not.toMatch(/\.draft\s*\/\/\s*false/);
     expect(guard).not.toMatch(/\.merged\s*\/\/\s*false/);
-    expect(guard).toMatch(/if \(\.draft\|type\) == "boolean" then \{pr_draft: \.draft\}/);
-    expect(guard).toMatch(/if \(\.merged\|type\) == "boolean" then \{pr_merged: \.merged\}/);
+    expect(guard).toMatch(/\(\$p\.draft\|type\) == "boolean"/);
+    expect(guard).toMatch(/\(\$p\.merged\|type\) == "boolean"/);
+    expect(guard).toMatch(/fetch_ok: false/);
+    // No loose single-field forwarding survives anywhere in the workflow.
+    expect(guard).not.toMatch(/pr_draft|pr_merged|pr_state|pr_base_ref|pr_head_sha/);
   });
 });
 
@@ -605,7 +612,7 @@ describe("C11 — two-page check-run aggregation", () => {
     state: "ready-for-merge", event_sequence: 7,
     pr_number: 120, pr_head_sha: HEAD_SHA, audited_sha: HEAD_SHA, verdict: "ACCEPT",
   });
-  const liveBase = { pr_head_sha: HEAD_SHA, pr_state: "open", pr_draft: false, pr_merged: false, pr_base_ref: "main" };
+  const liveBase = { pr_metadata: liveMeta() };
 
   it("150 runs across two pages, all passing → eligible (aggregation honored)", () => {
     const out = evaluate(lane, policy, {

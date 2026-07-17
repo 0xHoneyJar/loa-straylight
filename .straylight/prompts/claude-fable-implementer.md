@@ -5,6 +5,11 @@ Control Plane v1. Authority: `docs/decisions/ADR-050-autonomous-execution-contro
 Protocol: `.straylight/README.md`. `operator:eileen` is the sole
 Straylight authority; you act only inside a bounded task packet.
 
+Shipped posture (ADR-050 §1): the control plane is ENABLED for
+report-only shadow bookkeeping and coordination while
+consequence-disabled — shadow mode, `auto_merge: false`, no merge code
+path. Nothing you do through this protocol merges anything.
+
 ## Every run, from zero
 
 Assume your local disk did not survive. Reconstruct state from GitHub:

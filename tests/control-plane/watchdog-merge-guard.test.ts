@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { scan } from "../../.straylight/lib/watchdog.mjs";
 import { evaluate } from "../../.straylight/lib/merge-guard.mjs";
 import {
-  makeLane, makePolicy, makeLease, laneClaudeWorking,
+  makeLane, makePolicy, makeLease, laneClaudeWorking, liveMeta,
   NOW, AFTER_EXPIRY, HEAD_SHA, OTHER_SHA,
 } from "./_fixtures.js";
 
@@ -112,12 +112,13 @@ describe("shadow merge guard", () => {
     check_runs_total: 1, check_run_conclusions: ["success"],
     commit_statuses_total: 0, commit_status_state: "pending",
   };
-  // A fully-live context: passing checks, matching head, open non-draft
-  // non-merged PR on the lane's base branch. Individual tests override one
-  // field to prove closure.
+  // A fully-live context: passing checks plus the COMPLETE normalized live
+  // PR metadata record (open non-draft non-merged PR, right repository /
+  // number / base / branches, head on the audited SHA). Individual tests
+  // override one field to prove closure.
   const liveCtx = {
-    pr_head_sha: HEAD_SHA, checks: passingChecks,
-    pr_state: "open", pr_draft: false, pr_merged: false, pr_base_ref: "main",
+    checks: passingChecks,
+    pr_metadata: liveMeta(),
   };
 
   it("reports eligible for a fully satisfied lane — as a report only", () => {
@@ -129,13 +130,13 @@ describe("shadow merge guard", () => {
   });
 
   it("reports ineligible on head mismatch, missing verdict, wrong state, pause, or failing checks", () => {
-    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_head_sha: OTHER_SHA }).eligible).toBe(false);
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_metadata: liveMeta({ head_sha: OTHER_SHA }) }).eligible).toBe(false);
     expect(evaluate({ ...eligibleLane, verdict: "PATCH" }, policy, liveCtx).eligible).toBe(false);
     expect(evaluate({ ...eligibleLane, state: "codex-working", next_actor: "auditor" }, policy, liveCtx).eligible).toBe(false);
     expect(evaluate({ ...eligibleLane, operator_pause: true }, policy, liveCtx).eligible).toBe(false);
     // Failing check run → ineligible.
     expect(evaluate(eligibleLane, policy, { ...liveCtx, checks: { ...passingChecks, check_runs_total: 2, check_run_conclusions: ["success", "failure"] } }).eligible).toBe(false);
-    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_head_sha: undefined }).eligible).toBe(false); // unknown head fails closed
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_metadata: undefined }).eligible).toBe(false); // unknown PR fails closed
   });
 
   it("fails closed on the check-status unknowns that used to fail open (B9)", () => {
@@ -156,14 +157,16 @@ describe("shadow merge guard", () => {
   });
 
   it("fails closed on a closed, draft, merged, or retargeted PR (R3)", () => {
-    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_state: "closed" }).eligible).toBe(false);
-    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_state: undefined }).eligible).toBe(false);
-    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_draft: true }).eligible).toBe(false);
-    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_draft: undefined }).eligible).toBe(false);
-    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_merged: true }).eligible).toBe(false);
-    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_merged: undefined }).eligible).toBe(false);
-    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_base_ref: "some-other-branch" }).eligible).toBe(false);
-    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_base_ref: undefined }).eligible).toBe(false);
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_metadata: liveMeta({ state: "closed" }) }).eligible).toBe(false);
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_metadata: liveMeta({ draft: true }) }).eligible).toBe(false);
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_metadata: liveMeta({ merged: true }) }).eligible).toBe(false);
+    expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_metadata: liveMeta({ base_branch: "some-other-branch" }) }).eligible).toBe(false);
+    // A record missing any field is structurally invalid → ineligible.
+    for (const missing of ["state", "draft", "merged", "base_branch", "base_sha", "head_branch", "head_sha", "repository", "pr_number"]) {
+      const meta: Record<string, any> = liveMeta();
+      delete meta[missing];
+      expect(evaluate(eligibleLane, policy, { ...liveCtx, pr_metadata: meta } as any).eligible, missing).toBe(false);
+    }
   });
 
   it("reports ineligible when the kill switch is off", () => {
@@ -176,7 +179,7 @@ describe("shadow merge guard", () => {
     // 1. The pure module exposes only evaluate(); its result action is the
     //    constant "report-only" in every case.
     const results = [
-      evaluate(eligibleLane, policy, { pr_head_sha: HEAD_SHA, checks: passingChecks }),
+      evaluate(eligibleLane, policy, { pr_metadata: liveMeta(), checks: passingChecks }),
       evaluate(eligibleLane, policy, {}),
       evaluate(null, policy, {}),
       evaluate(eligibleLane, null, {}),
@@ -206,6 +209,7 @@ describe("shadow merge guard", () => {
       ".straylight/bin/watchdog-scan.mjs",
       ".straylight/bin/merge-guard-check.mjs",
       ".straylight/bin/validate-protocol.mjs",
+      ".straylight/bin/lane-scan.mjs",
     ];
     const allCpWorkflows = [
       ".github/workflows/straylight-reducer.yml",

@@ -7,6 +7,11 @@ Execution Control Plane v1. Authority:
 is the sole acceptance authority. Your `ACCEPT` records merge
 *eligibility* evidence, nothing more.
 
+Shipped posture (ADR-050 §1): the control plane is ENABLED for
+report-only shadow bookkeeping and coordination while
+consequence-disabled — shadow mode, `auto_merge: false`, no merge code
+path. Nothing you do through this protocol merges anything.
+
 ## Every run, from zero
 
 Your environment resets (assume a hard reset every ~5 hours and plan to

@@ -2,9 +2,15 @@
 
 **Authority**: [ADR-050](../docs/decisions/ADR-050-autonomous-execution-control-plane.md).
 **Mode**: shadow (default and only mode in v1). **Auto-merge**: forbidden.
+**Shipped posture**: the committed policy is **enabled** (`"enabled": true`)
+for report-only shadow bookkeeping and coordination while
+consequence-disabled — the reducer, watchdog, and merge guard run and
+record, and nothing merges, deploys, releases, or mutates anything beyond
+lane issue comments and derived labels.
 **Kill switch**: set `"enabled": false` in [`automation-policy.json`](./automation-policy.json)
-(global), or post an `operator.paused` event on a lane (per-lane; the
-`cp-paused` label is the derived projection of that state, not the switch).
+(global — suspends even the report-only bookkeeping), or post an
+`operator.paused` event on a lane (per-lane; the `cp-paused` label is the
+derived projection of that state, not the switch).
 
 This directory is the canonical, normative protocol. Everything else
 (labels, issue text, dashboards, prompts) is derived from or points at it.
@@ -184,6 +190,23 @@ Universal fail-closed rules enforced by the reducer:
 - a lane whose phase is outside `authorized_corridor` escalates to
   `operator-required`;
 - exceeding `maximum_patch_cycles` escalates to `operator-required`;
+- EVERY escalation to `operator-required` — reducer verdicts, corridor
+  escalations, watchdog escalations, and reconstruction's edited-comment
+  routing alike — clears any active lease: a lease carried into
+  `operator-required` would be a cross-state lease, making the escalated
+  lane structurally invalid and unrecoverable. An escalated lane is always
+  a valid lane the operator can act on with `operator.decision`;
+- the genesis lane record must be TRULY initial: `state: planning`,
+  `event_sequence: 0`, and null/zero for `working_branch`, `pr_number`,
+  `pr_head_sha`, `audited_sha`, `verdict`, `lease`, `attempt`,
+  `patch_cycle`, `audit_retry`, `last_lease_role`, with `operator_pause`
+  false. A genesis that preseeds any of them (e.g. a preselected
+  `working_branch`) is refused (`genesis-not-initial`) — in-flight state
+  is established only by applied events;
+- protocol timestamps are strict UTC calendar instants with at most
+  MILLISECOND (3-digit) fractional precision; a finer fraction is rejected
+  everywhere (never rounded), so two distinct instants can never collapse
+  into one and strict ordering is preserved;
 - malformed anything (lane, event, packet, audit, policy) → no advance;
 - `policy.enabled: false` (kill switch) → every event refused;
 - `operator_pause: true` → only operator events accepted.
@@ -221,11 +244,21 @@ conditions, whether a PR may be opened, `merge_forbidden` (always `true`
 in v1), and the expected next actor.
 
 **Working-branch establishment**: the INITIAL packet's `target_branch`
-becomes the lane's `working_branch` when the packet event applies. Every
-later packet must name that exact branch; the implementer's completion
-must declare `head_branch` equal to it; the audit's `head_branch` must
-equal it; and the eligibility confirmation's live `head_branch` must
-equal it. No packet may name the lane's base branch as its target.
+becomes the lane's `working_branch` when the packet event applies —
+UNCONDITIONALLY. An initial packet applies only to a lane whose
+`working_branch` is null (a genesis cannot preseed one — reconstruction
+refuses it as `genesis-not-initial` — and an initial packet on a lane
+with an established branch is refused as
+`working-branch-already-established`), so the establishing branch always
+comes from the packet itself, never from a pre-existing lane field. When
+the operator routes a lane back to coordination (`operator.decision` →
+`planning`/`ready-for-coordinator`), the establishment resets:
+`working_branch` clears and the next initial packet establishes it anew.
+Every later packet must name that exact branch; the implementer's
+completion must declare `head_branch` equal to it; the audit's
+`head_branch` must equal it; and the eligibility confirmation's live
+`head_branch` must equal it. No packet may name the lane's base branch
+as its target.
 
 The packet-posting event must declare `refs.task_packet_digest` — the
 canonical content digest of the packet payload. The reducer recomputes the
@@ -309,8 +342,8 @@ control-plane workflow holds `contents: write`.
 |---|---|---|---|
 | `straylight-reducer.yml` | `issues`, `issue_comment` on `cp-lane` issues; manual | fetch issue + comments, run `reduce-issue.mjs`, sync derived labels, post reducer result; for an `eligibility-pending` lane, fetch the live PR and post the durable `system.eligibility_confirmed` event (metadata embedded; nothing posted on a failed/partial fetch) | evaluate comment content as shell; call model APIs; write repo contents |
 | `straylight-watchdog.yml` | cron (off-minute) + manual | reconstruct all lanes, run `watchdog-scan.mjs`, post deduped recovery events / escalations (a failed lane enumeration aborts the sweep — never treated as zero lanes) | duplicate a recovery event (dedupe keys); merge |
-| `straylight-merge-guard.yml` | manual `workflow_dispatch` (lane issue number) | reconstruct lane, gather live PR facts (draft/merged forwarded only as OBSERVED booleans) and the complete all-pages check-run conclusion list, run `merge-guard-check.mjs`, post shadow eligibility comment | merge (no merge API call exists in the workflow or CLI) |
-| `straylight-bootstrap.yml` | manual `workflow_dispatch` | idempotently create the single Phase 49P shadow lane issue (a failed existence-check enumeration aborts — never treated as "no existing lane") | implement 49P, open its PR, call a model API, merge |
+| `straylight-merge-guard.yml` | manual `workflow_dispatch` (lane issue number) | reconstruct lane, normalize ONE fetch of the live PR into the complete `pr_metadata` record (the same validatePrMetadata shape the reducer embeds durably; any missing/mistyped field collapses it to `fetch_ok: false`), gather the complete all-pages check-run conclusion list, run `merge-guard-check.mjs` (fails closed unless EVERY metadata field corresponds exactly with the lane and audited target), post shadow eligibility comment | merge (no merge API call exists in the workflow or CLI); forward loose single PR fields |
+| `straylight-bootstrap.yml` | manual `workflow_dispatch` | idempotently create the single Phase 49P shadow lane issue — existing-lane detection parses every cp-lane issue body through the canonical protocol parser (`lane-scan.mjs`), so a genesis in ANY valid JSON formatting (compact included) is found; a failed enumeration OR any unparseable lane-marker body aborts (never treated as "no existing lane") | implement 49P, open its PR, call a model API, merge; detect lanes by raw-substring matching |
 
 All workflows: least-privilege permissions (`contents: read` +
 `issues: write` and/or `pull-requests: read`), actions pinned to

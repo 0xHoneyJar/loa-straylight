@@ -66,7 +66,7 @@ jobs:
           node .straylight/bin/reduce-issue.mjs --input /tmp/reduce-input.json > /tmp/lane-result.json
           jq '.lane' /tmp/lane-result.json > /tmp/lane.json
 
-      - name: Gather PR head and check status (fail closed on absence)
+      - name: Gather complete live PR metadata and check status (fail closed on absence)
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -74,26 +74,39 @@ jobs:
           set -euo pipefail
           PRNUM=$(jq -r '.pr_number // empty' /tmp/lane.json)
           HEAD=""
-          PR_STATE=""
-          PR_BASE=""
-          # RAW evidence only: emit the observed per-run conclusion list and
-          # the API totals, and let the pure module decide (it fails closed on
-          # any unknown). No "no checks configured => passing" fail-open
-          # branch: zero check runs is ineligible. Unknown-preserving: draft
-          # and merged are forwarded ONLY when the API returned a literal
-          # boolean; a missing field stays absent (unknown), never becomes
-          # false. Both come from ONE fetch of the PR object, so they cannot
-          # disagree with each other or with head/state/base.
+          # COMPLETE normalized metadata only: one fetch of the PR object is
+          # normalized into the same validatePrMetadata record the reducer
+          # workflow embeds in system.eligibility_confirmed events. Every
+          # field must be PRESENT with its expected type (draft/merged as
+          # literal booleans, never defaulted) or the record collapses to
+          # {fetch_ok:false} and the pure module fails closed. No loose
+          # single-field forwarding: partial evidence is unknown, and
+          # unknown is ineligible.
           CHECKS_JSON="null"
-          PR_FLAGS="{}"
+          PR_META='{"fetch_ok": false}'
           if [[ "$PRNUM" =~ ^[0-9]+$ ]]; then
             if gh api "repos/${REPO}/pulls/${PRNUM}" > /tmp/pr.json 2>/dev/null; then
-              PR_STATE=$(jq -r '.state // empty' /tmp/pr.json)
-              PR_BASE=$(jq -r '.base.ref // empty' /tmp/pr.json)
-              HEAD=$(jq -r '.head.sha // empty' /tmp/pr.json)
-              PR_FLAGS=$(jq '{}
-                + (if (.draft|type) == "boolean" then {pr_draft: .draft} else {} end)
-                + (if (.merged|type) == "boolean" then {pr_merged: .merged} else {} end)' /tmp/pr.json)
+              PR_META=$(jq --arg repo "$REPO" '
+                . as $p
+                | if (($p.draft|type) == "boolean" and ($p.merged|type) == "boolean"
+                      and (($p.number)|type) == "number" and (($p.state)|type) == "string"
+                      and (($p.base.ref)|type) == "string" and (($p.base.sha)|type) == "string"
+                      and (($p.head.ref)|type) == "string" and (($p.head.sha)|type) == "string")
+                  then {
+                    fetch_ok: true,
+                    repository: $repo,
+                    pr_number: $p.number,
+                    state: $p.state,
+                    draft: $p.draft,
+                    merged: $p.merged,
+                    base_branch: $p.base.ref,
+                    base_sha: $p.base.sha,
+                    head_branch: $p.head.ref,
+                    head_sha: $p.head.sha
+                  }
+                  else { fetch_ok: false }
+                  end' /tmp/pr.json)
+              HEAD=$(jq -r 'if .fetch_ok == true then .head_sha else "" end' <<< "$PR_META")
             fi
             if [[ "$HEAD" =~ ^[0-9a-f]{40}$ ]]; then
               # Modern check runs on the head: aggregate EVERY page's runs into
@@ -120,14 +133,11 @@ jobs:
               fi
             fi
           fi
-          jq -n --slurpfile lane /tmp/lane.json --arg head "$HEAD" --argjson checks "$CHECKS_JSON" \
-            --arg prstate "$PR_STATE" --arg prbase "$PR_BASE" --argjson prflags "$PR_FLAGS" \
+          jq -n --slurpfile lane /tmp/lane.json --argjson checks "$CHECKS_JSON" \
+            --argjson prmeta "$PR_META" \
             '{lane: $lane[0],
               context: ((if $checks != null then {checks: $checks} else {} end)
-                        + (if $head != "" then {pr_head_sha: $head} else {} end)
-                        + (if $prstate != "" then {pr_state: $prstate} else {} end)
-                        + (if $prbase != "" then {pr_base_ref: $prbase} else {} end)
-                        + $prflags)}' \
+                        + {pr_metadata: $prmeta})}' \
             > /tmp/guard-input.json
 
       - name: Evaluate shadow eligibility
@@ -145,7 +155,7 @@ jobs:
           set -euo pipefail
           ELIGIBLE=$(jq -r '.eligible' /tmp/guard-result.json)
           SEQ=$(jq -r '.event_sequence // "na"' /tmp/lane.json)
-          HEAD=$(jq -r '.context.pr_head_sha // "unknown"' /tmp/guard-input.json)
+          HEAD=$(jq -r '.context.pr_metadata.head_sha // "unknown"' /tmp/guard-input.json)
           DEDUPE="merge-guard:${SEQ}:${HEAD}:${ELIGIBLE}"
           # Only a genuine bot-authored merge-guard-result comment counts as
           # "already posted" — restrict the scan to github-actions[bot]

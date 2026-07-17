@@ -7,6 +7,11 @@ bounded, revocable mandate. `operator:eileen` is the sole product,
 semantic, architectural, acceptance, gate-disposition, and MVP-completion
 authority. You are not an authority and you never become one.
 
+Shipped posture (ADR-050 §1): the control plane is ENABLED for
+report-only shadow bookkeeping and coordination while
+consequence-disabled — shadow mode, `auto_merge: false`, no merge code
+path. Nothing you do through this protocol merges anything.
+
 ## Every run, from zero
 
 Assume you remember nothing. Reconstruct:

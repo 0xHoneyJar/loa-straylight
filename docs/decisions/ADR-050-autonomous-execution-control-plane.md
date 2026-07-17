@@ -18,8 +18,13 @@
 ## 1. Purpose
 
 This ADR establishes the **Autonomous Execution Control Plane v1**: a
-disabled-by-default (shadow-mode), GitHub-backed coordination protocol
-through which:
+GitHub-backed coordination protocol that ships **enabled for report-only
+shadow bookkeeping and coordination while consequence-disabled** — the
+committed policy sets `"enabled": true` with `"mode": "shadow"` and
+`"auto_merge": false`, so the reducer, watchdog, and merge guard run and
+record, and nothing merges, deploys, releases, or mutates anything
+beyond lane issue comments and derived labels; the kill switch
+(`"enabled": false`) suspends even that bookkeeping — through which:
 
 1. **ChatGPT** coordinates and scopes the next authorized lane;
 2. **Claude** implements the bounded task packet;
@@ -232,10 +237,32 @@ Required routing (normative):
 - Codex `CANNOT_AUDIT` must declare `retryable` explicitly (a record
   without it is malformed): it routes back to `ready-for-codex` when
   `retryable: true` and the retry budget is not exhausted, else `blocked`.
-- The initial coordinator task packet ESTABLISHES the lane working branch;
-  every later packet, the implementer's completion (`head_branch`), the
-  audit (`head_branch`), and the confirmed live PR head branch must match
-  it exactly. No packet may target the lane's base branch.
+- The initial coordinator task packet ESTABLISHES the lane working branch
+  — unconditionally from the packet's own `target_branch`, and only on a
+  lane whose `working_branch` is null. A genesis record cannot preseed
+  `working_branch` (or any other in-flight state: PR binding, audited
+  SHA, verdict, lease, attempt/patch/retry counters, pause flag) —
+  reconstruction refuses a non-initial genesis. Every later packet, the
+  implementer's completion (`head_branch`), the audit (`head_branch`),
+  and the confirmed live PR head branch must match the established branch
+  exactly. No packet may target the lane's base branch. An operator
+  decision routing a lane back to coordination clears the establishment
+  so the next initial packet establishes it anew.
+- Every escalation to `operator-required` — reducer verdict routing,
+  corridor escalation, watchdog escalation, and reconstruction's
+  edited-comment routing alike — clears any active lease, so the
+  escalated lane is always structurally valid and recoverable by an
+  `operator.decision`.
+- Protocol timestamps are strict UTC calendar instants with at most
+  millisecond (3-digit) fractional precision; finer fractions are
+  rejected everywhere, never rounded, so two distinct recorded instants
+  can never collapse into one.
+- The shadow merge guard evaluates the COMPLETE normalized live PR
+  metadata record (the same field set the eligibility confirmation
+  embeds durably) and fails closed unless fetch status, repository, PR
+  number, open/merged/draft state, base branch and SHA, and head branch
+  and SHA all correspond exactly with the lane and the audited target;
+  loose single-field evidence is never accepted.
 - A changed PR head invalidates any prior `ACCEPT`, pending or confirmed
   (lane returns to `ready-for-codex`).
 - A scope or authority conflict routes to `operator-required`.
@@ -355,9 +382,13 @@ as shell.
 
 A manual, idempotent `workflow_dispatch` (`straylight-bootstrap.yml`) may
 create the **Phase 49P shadow lane issue** after this ADR merges. It
-creates at most one lane issue (search-before-create), implements
-nothing, opens no implementation PR, invokes no model API, and merges
-nothing.
+creates at most one lane issue (search-before-create; existing-lane
+detection parses every cp-lane issue body through the canonical protocol
+parser rather than substring-matching the raw body, so a genesis in any
+valid JSON formatting — compact included — is found, and an unparseable
+lane-marker body aborts the bootstrap rather than being skipped),
+implements nothing, opens no implementation PR, invokes no model API,
+and merges nothing.
 
 ---
 
