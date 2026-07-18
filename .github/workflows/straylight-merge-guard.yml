@@ -192,11 +192,41 @@ jobs:
           # authorship AND the merge-guard-result marker so a third party
           # cannot suppress this shadow report by planting the dedupe string
           # in an ordinary comment (B8 uniform hardening).
-          if gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate \
-              --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | test("<!-- straylight:merge-guard-result:v1 -->")) | .body' \
-              | grep -qF "dedupe:${DEDUPE}"; then
+          #
+          # FAIL CLOSED, MATERIALIZED READ: this read GUARDS the result
+          # write. Never a `gh api | grep -q` pipeline — an API failure
+          # mid-stream (or grep exiting early on first match, SIGPIPE-ing
+          # gh) would be indistinguishable from "not found" and fall through
+          # to a duplicate write. Fetch to a local file, verify the API exit
+          # status, validate the shape, then search ONLY the local file. A
+          # read or parse failure fails the job; it is never converted into
+          # "not yet posted".
+          if ! gh api --paginate "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" > /tmp/dedupe-pages.json; then
+            echo "::error::result dedupe read failed (gh api non-zero); failing before any write — NOT treating as 'not yet posted'"
+            exit 1
+          fi
+          jq -s -e 'map(type == "array") | all' /tmp/dedupe-pages.json >/dev/null || {
+            echo "::error::result dedupe pages malformed; failing before any write"
+            exit 1
+          }
+          # An unexpected comment shape makes this jq error and (set -e)
+          # fail the job — shape surprises never read as "not found".
+          jq -s '[.[][] | select(.user.login == "github-actions[bot]")
+                        | select(.body | test("<!-- straylight:merge-guard-result:v1 -->"))
+                        | .body]' /tmp/dedupe-pages.json > /tmp/dedupe-bodies.json
+          # jq 'any' decides found/not-found on the LOCAL file: exit 0 =
+          # found (skip), exit 1 = valid no-match (post), exit >1 = error
+          # (fail). No pipeline ambiguity.
+          set +e
+          jq -e --arg d "dedupe:${DEDUPE}" 'any(.[]; contains($d))' /tmp/dedupe-bodies.json >/dev/null
+          FOUND=$?
+          set -e
+          if [[ "$FOUND" -eq 0 ]]; then
             echo "already posted ${DEDUPE}; skipping"
             exit 0
+          elif [[ "$FOUND" -ne 1 ]]; then
+            echo "::error::result dedupe search failed (jq exit ${FOUND}); failing before any write"
+            exit 1
           fi
           {
             echo "## Straylight merge guard — SHADOW RESULT (cannot merge)"

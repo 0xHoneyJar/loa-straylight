@@ -85,21 +85,71 @@ jobs:
           set -euo pipefail
           NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           echo '{"lanes": [], "context": {"pr_heads": {}, "pr_head_unresolved": [], "last_activity": {}}}' > /tmp/scan-input.json
-          # --paginate: never silently drop lanes past page 1. With >100 open
-          # cp-lane issues, an un-paginated fetch would leave later lanes
-          # unrecovered forever (R4).
+          # DISCOVERY IS LABEL-INDEPENDENT: enumerate ALL open issues — the
+          # cp-lane label is a derived projection, never discovery authority
+          # (ADR-050 §1.1). A lane whose label was removed (or never synced)
+          # must not vanish from recovery; lane issues are identified ONLY
+          # through the canonical marker parser (lane-scan.mjs).
+          # --paginate: never silently drop lanes past page 1 (R4).
           #
           # FAIL CLOSED on enumeration failure: a failed listing API call must
           # abort the sweep loudly, never be mistaken for "zero lanes" (an
           # empty successful query). Capture the exit status explicitly —
           # mapfile over a failed process substitution would swallow it.
-          if ! gh api --paginate "repos/${REPO}/issues?labels=cp-lane&state=open&per_page=100" -q '.[].number' > /tmp/lane-numbers.txt; then
+          if ! gh api --paginate "repos/${REPO}/issues?state=open&per_page=100" > /tmp/issue-pages.json; then
             echo "::error::lane enumeration failed (gh api non-zero); aborting sweep — NOT treating as zero lanes"
             exit 1
           fi
-          mapfile -t ISSUES < /tmp/lane-numbers.txt
+          # Flattening, page well-formedness, marker parsing, and
+          # pull-request exclusion (the issues listing includes PRs; a PR
+          # body embedding a lane-like payload is never a lane issue) all
+          # happen inside the scanner and FAIL CLOSED (exit 2): a malformed
+          # page or entry aborts the sweep instead of reading as zero lanes.
+          if ! node .straylight/bin/lane-scan.mjs --pages /tmp/issue-pages.json --all-lanes > /tmp/lane-discovery.json; then
+            echo "::error::lane discovery failed (flattening/parse error); aborting sweep — NOT treating as zero lanes"
+            cat /tmp/lane-discovery.json
+            exit 1
+          fi
+          jq -e '.ok == true' /tmp/lane-discovery.json >/dev/null || {
+            echo "::error::lane discovery not ok; aborting sweep"; exit 1; }
+          echo "discovered $(jq '.lanes | length' /tmp/lane-discovery.json) lane issue(s)," \
+               "$(jq '.unreadable | length' /tmp/lane-discovery.json) unreadable marker-bearing issue(s)," \
+               "$(jq '.excluded_prs | length' /tmp/lane-discovery.json) PR(s) excluded"
+          # Materialize the discovery lists to files and cross-check counts:
+          # a silently truncated extraction must never shrink the sweep.
+          jq -e '.unreadable | all(.number != null)' /tmp/lane-discovery.json >/dev/null || {
+            echo "::error::discovery reported an unreadable entry without an issue number; aborting sweep"; exit 1; }
+          jq -r '.lanes[] | [.number, .lane_id] | @tsv' /tmp/lane-discovery.json > /tmp/discovered-lanes.tsv
+          jq -r '.unreadable[] | [.number, .reason] | @tsv' /tmp/lane-discovery.json > /tmp/unreadable.tsv
+          [[ "$(wc -l < /tmp/discovered-lanes.tsv)" -eq "$(jq '.lanes | length' /tmp/lane-discovery.json)" ]] || {
+            echo "::error::lane list extraction count mismatch; aborting sweep"; exit 1; }
+          [[ "$(wc -l < /tmp/unreadable.tsv)" -eq "$(jq '.unreadable | length' /tmp/lane-discovery.json)" ]] || {
+            echo "::error::unreadable list extraction count mismatch; aborting sweep"; exit 1; }
           : > /tmp/lane-issues.tsv
-          for N in "${ISSUES[@]:-}"; do
+          # UNREADABLE marker-bearing issues: the payload cannot be parsed,
+          # so the lane cannot be reconstructed — but it must NOT disappear
+          # from the sweep as though it did not exist. Feed the scanner a
+          # stub that fails lane validation, producing its supported
+          # explicit escalate-malformed-lane finding, and map a synthetic
+          # per-issue lane id to the issue so the finding posts THERE.
+          # (event_sequence = issue number keeps the dedupe key unique per
+          # issue.) The synthetic id deliberately VIOLATES the canonical
+          # lane-id pattern (no "lane-" prefix): a real lane can never
+          # carry it (validateLane enforces the pattern), so it can never
+          # collide with a genuine lane_id in the issue mapping.
+          # Loops read on FD 3, not stdin: a command inside the body that
+          # consumed stdin would silently eat lane rows — a vanishing lane.
+          while IFS=$'\t' read -r -u 3 N REASON; do
+            [[ -z "$N" ]] && continue
+            SYN="unreadable-issue-${N}"
+            printf '%s\t%s\n' "$SYN" "$N" >> /tmp/lane-issues.tsv
+            jq --arg id "$SYN" --argjson n "$N" \
+              '.lanes += [{lane_id: $id, event_sequence: $n}]' \
+              /tmp/scan-input.json > /tmp/scan-input2.json
+            mv /tmp/scan-input2.json /tmp/scan-input.json
+            echo "::warning::issue #${N} carries an unparseable lane payload (${REASON}); surfacing as a malformed-lane finding"
+          done 3< /tmp/unreadable.tsv
+          while IFS=$'\t' read -r -u 3 N LANE_ID; do
             [[ -z "$N" ]] && continue
             gh api "repos/${REPO}/issues/${N}" > /tmp/issue.json
             gh api "repos/${REPO}/issues/${N}/comments" --paginate > /tmp/comments.json
@@ -107,33 +157,70 @@ jobs:
               '{issue_body: $issue[0].body,
                 comments: ($comments | add // [] | map({id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}))}' \
               > /tmp/reduce-input.json
-            node .straylight/bin/reduce-issue.mjs --input /tmp/reduce-input.json > /tmp/lane.json || continue
-            # Only an authoritative reconstruction feeds the scan: ok LITERAL
-            # boolean true AND frozen LITERAL boolean false (jq == is
-            # type-strict; the string "true" never passes).
-            jq -e '(.ok == true) and (.frozen == false)' /tmp/lane.json >/dev/null || continue
-            LAST=$(jq -r '[.comments[].id] | max // 0' /tmp/reduce-input.json)
-            LAST_TS=$(gh api "repos/${REPO}/issues/${N}" -q '.updated_at')
-            LANE_ID=$(jq -r '.lane.lane_id' /tmp/lane.json)
-            PRNUM=$(jq -r '.lane.pr_number // empty' /tmp/lane.json)
-            HEAD=""
-            if [[ "$PRNUM" =~ ^[0-9]+$ ]]; then
-              HEAD=$(gh api "repos/${REPO}/pulls/${PRNUM}" -q '.head.sha' 2>/dev/null || true)
+            # Only an authoritative reconstruction feeds the scan as a REAL
+            # lane: reduce-issue exit 0 AND ok LITERAL boolean true AND
+            # frozen LITERAL boolean false (jq == is type-strict; the
+            # string "true" never passes). Anything else is NEVER silently
+            # continued past — it either aborts the sweep or becomes an
+            # explicit malformed-lane finding on the issue.
+            if node .straylight/bin/reduce-issue.mjs --input /tmp/reduce-input.json > /tmp/lane.json \
+                && jq -e '(.ok == true) and (.frozen == false)' /tmp/lane.json >/dev/null; then
+              # Map the healthy lane to its issue so the scanner's findings
+              # for it post there. (Malformed paths write their own
+              # synthetic per-issue mapping below.)
+              printf '%s\t%s\n' "$LANE_ID" "$N" >> /tmp/lane-issues.tsv
+              LAST_TS=$(jq -r '.updated_at // empty' /tmp/issue.json)
+              [[ -n "$LAST_TS" ]] || {
+                echo "::error::issue #${N} lacks updated_at; aborting sweep (stuck-lane detection would be blind)"; exit 1; }
+              PRNUM=$(jq -r '.lane.pr_number // empty' /tmp/lane.json)
+              HEAD=""
+              if [[ "$PRNUM" =~ ^[0-9]+$ ]]; then
+                # A failed head fetch is captured as UNRESOLVED below —
+                # never as "no PR"; the scanner fails closed on it (B8).
+                if gh api "repos/${REPO}/pulls/${PRNUM}" > /tmp/pr.json 2>/dev/null; then
+                  HEAD=$(jq -r '.head.sha // empty' /tmp/pr.json)
+                  [[ "$HEAD" =~ ^[0-9a-f]{40}$ ]] || HEAD=""
+                fi
+              fi
+              jq --slurpfile lane /tmp/lane.json \
+                 --arg laneid "$LANE_ID" --arg ts "$LAST_TS" --arg pr "$PRNUM" --arg head "$HEAD" \
+                 '.lanes += [$lane[0].lane]
+                  | .context.last_activity[$laneid] = $ts
+                  | (if ($pr != "" and $head != "") then .context.pr_heads[$pr] = $head
+                     elif ($pr != "" and $head == "") then .context.pr_head_unresolved += [$pr]
+                     else . end)' \
+                 /tmp/scan-input.json > /tmp/scan-input2.json
+              mv /tmp/scan-input2.json /tmp/scan-input.json
+            else
+              # policy-unreadable is a checkout problem, not a lane problem:
+              # mislabeling it would hide it. Abort the whole sweep.
+              if REFUSAL=$(jq -r '.refusal // empty' /tmp/lane.json 2>/dev/null) \
+                  && [[ "$REFUSAL" == "policy-unreadable" ]]; then
+                echo "::error::committed policy unreadable during reconstruction; aborting sweep"
+                exit 1
+              fi
+              # ok:true but frozen: the gate just proved the committed
+              # policy valid + enabled from this same checkout, so this is
+              # an inconsistent policy state, not a lane defect — abort
+              # loudly BEFORE any recovery writes rather than mislabel it.
+              if jq -e '.ok == true' /tmp/lane.json >/dev/null 2>&1; then
+                echo "::error::lane issue #${N} reconstructed frozen under an enabled policy gate; aborting sweep before any recovery writes"
+                exit 1
+              fi
+              echo "::warning::lane issue #${N} (${LANE_ID}) failed reconstruction; surfacing as a malformed-lane finding"
+              # Synthetic per-issue lane id (as in the unreadable path): the
+              # PARSED lane_id may collide with a healthy lane on another
+              # issue, and the first-match issue mapping would then post
+              # this finding on the wrong issue. Pattern-violating on
+              # purpose — no real lane can ever carry it.
+              SYN="malformed-issue-${N}"
+              printf '%s\t%s\n' "$SYN" "$N" >> /tmp/lane-issues.tsv
+              jq --arg id "$SYN" --argjson n "$N" \
+                '.lanes += [{lane_id: $id, event_sequence: $n}]' \
+                /tmp/scan-input.json > /tmp/scan-input2.json
+              mv /tmp/scan-input2.json /tmp/scan-input.json
             fi
-            printf '%s\t%s\n' "$LANE_ID" "$N" >> /tmp/lane-issues.tsv
-            # A PR that was named but whose head did NOT resolve is recorded
-            # as unresolved so the scanner can fail closed on a ready-for-merge
-            # lane whose eligibility can no longer be verified (B8).
-            jq --slurpfile lane /tmp/lane.json \
-               --arg laneid "$LANE_ID" --arg ts "$LAST_TS" --arg pr "$PRNUM" --arg head "$HEAD" \
-               '.lanes += [$lane[0].lane]
-                | .context.last_activity[$laneid] = $ts
-                | (if ($pr != "" and $head != "") then .context.pr_heads[$pr] = $head
-                   elif ($pr != "" and $head == "") then .context.pr_head_unresolved += [$pr]
-                   else . end)' \
-               /tmp/scan-input.json > /tmp/scan-input2.json
-            mv /tmp/scan-input2.json /tmp/scan-input.json
-          done
+          done 3< /tmp/discovered-lanes.tsv
           jq --arg now "$NOW" '.context.now = $now' /tmp/scan-input.json > /tmp/scan-input2.json
           mv /tmp/scan-input2.json /tmp/scan-input.json
           node .straylight/bin/watchdog-scan.mjs --input /tmp/scan-input.json > /tmp/scan-result.json
@@ -154,8 +241,13 @@ jobs:
             LANE_ID=$(jq -r '.lane_id' /tmp/action.json)
             DEDUPE=$(jq -r '.dedupe_key' /tmp/action.json)
             TYPE=$(jq -r '.type' /tmp/action.json)
-            ISSUE=$(awk -F'\t' -v id="$LANE_ID" '$1 == id {print $2}' /tmp/lane-issues.tsv | head -1)
-            [[ -n "$ISSUE" ]] || { echo "no issue for ${LANE_ID}; skipping"; continue; }
+            # First-match via awk's own exit — no `| head -1`, whose early
+            # pipe close could SIGPIPE awk under pipefail.
+            ISSUE=$(awk -F'\t' -v id="$LANE_ID" '$1 == id {print $2; exit}' /tmp/lane-issues.tsv)
+            [[ -n "$ISSUE" ]] || {
+              echo "::error::no issue mapping for ${LANE_ID}; failing the sweep (a finding must never be dropped silently)"
+              exit 1
+            }
             # Idempotency: never post the same recovery twice — but only a
             # genuine bot-authored recovery/result comment counts as "already
             # posted". Scanning ALL comment bodies let any actor suppress a
@@ -163,11 +255,41 @@ jobs:
             # string. Restrict to github-actions[bot] authorship AND require a
             # straylight machine marker so a stray bot comment cannot suppress
             # either (defense in depth).
-            if gh api "repos/${REPO}/issues/${ISSUE}/comments" --paginate \
-                --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | test("<!-- straylight:(event|watchdog-result):v1 -->")) | .body' \
-                | grep -qF "dedupe:${DEDUPE}"; then
+            #
+            # FAIL CLOSED, MATERIALIZED READ: this read GUARDS a write. It
+            # must never run as a `gh api | grep -q` pipeline — an API
+            # failure mid-stream (or grep exiting early on first match,
+            # SIGPIPE-ing gh) would be indistinguishable from "not found"
+            # and fall through to a duplicate write. Fetch to a local file,
+            # verify the API exit status, validate the shape, then search
+            # ONLY the local file. A read or parse failure aborts the job;
+            # it is never converted into "not posted yet".
+            if ! gh api --paginate "repos/${REPO}/issues/${ISSUE}/comments" > /tmp/dedupe-pages.json; then
+              echo "::error::dedupe comment read failed for issue #${ISSUE} (gh api non-zero); aborting before any write — NOT treating as 'not yet posted'"
+              exit 1
+            fi
+            jq -s -e 'map(type == "array") | all' /tmp/dedupe-pages.json >/dev/null || {
+              echo "::error::dedupe comment pages malformed for issue #${ISSUE}; aborting before any write"
+              exit 1
+            }
+            # An unexpected comment shape makes this jq error and (set -e)
+            # fail the job — shape surprises never read as "not found".
+            jq -s '[.[][] | select(.user.login == "github-actions[bot]")
+                          | select(.body | test("<!-- straylight:(event|watchdog-result):v1 -->"))
+                          | .body]' /tmp/dedupe-pages.json > /tmp/dedupe-bodies.json
+            # jq 'any' decides found/not-found on the LOCAL file: exit 0 =
+            # found (skip), exit 1 = valid no-match (post), exit >1 = error
+            # (abort). No pipeline ambiguity.
+            set +e
+            jq -e --arg d "dedupe:${DEDUPE}" 'any(.[]; contains($d))' /tmp/dedupe-bodies.json >/dev/null
+            FOUND=$?
+            set -e
+            if [[ "$FOUND" -eq 0 ]]; then
               echo "already posted ${DEDUPE}; skipping"
               continue
+            elif [[ "$FOUND" -ne 1 ]]; then
+              echo "::error::dedupe search failed (jq exit ${FOUND}) for issue #${ISSUE}; aborting before any write"
+              exit 1
             fi
             if [[ "$TYPE" == "post-event" ]]; then
               # event_id comes from the pure scanner: "evt-" + sha256 of the

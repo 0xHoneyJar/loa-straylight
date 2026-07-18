@@ -495,7 +495,9 @@ describe("D5 — bootstrap existing-lane detection uses the canonical parser (co
 
   it("the workflow routes detection through lane-scan.mjs and aborts on unreadable bodies", () => {
     const wf = readFileSync(".github/workflows/straylight-bootstrap.yml", "utf8");
-    expect(wf).toMatch(/node \.straylight\/bin\/lane-scan\.mjs --input \/tmp\/issues\.json --lane-id lane-phase-49p/);
+    // Round 9: the raw --paginate page stream feeds the scanner directly
+    // (--pages), which flattens + excludes PRs fail-closed itself.
+    expect(wf).toMatch(/node \.straylight\/bin\/lane-scan\.mjs --pages \/tmp\/issue-pages\.json --lane-id lane-phase-49p/);
     expect(wf).toMatch(/unreadable/);
     expect(wf).toMatch(/refusing to bootstrap until they are resolved/);
     // The whitespace-sensitive substring detector is gone.

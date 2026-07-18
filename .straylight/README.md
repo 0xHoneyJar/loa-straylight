@@ -364,9 +364,9 @@ control-plane workflow holds `contents: write`.
 | Workflow | Trigger | Does | Never |
 |---|---|---|---|
 | `straylight-reducer.yml` | `issues`, `issue_comment` on `cp-lane` issues; manual | fetch issue + comments, run `reduce-issue.mjs`, sync derived labels, post reducer result; for an `eligibility-pending` lane, fetch the live PR and post the durable `system.eligibility_confirmed` event (metadata embedded; nothing posted on a failed/partial fetch) | evaluate comment content as shell; call model APIs; write repo contents |
-| `straylight-watchdog.yml` | cron (off-minute) + manual | reconstruct all lanes, run `watchdog-scan.mjs`, post deduped recovery events / escalations (a failed lane enumeration aborts the sweep — never treated as zero lanes) | duplicate a recovery event (dedupe keys); merge |
+| `straylight-watchdog.yml` | cron (off-minute) + manual | enumerate ALL open issues label-independently and identify lanes solely through the canonical marker parser (`lane-scan.mjs --all-lanes`; the `cp-lane` label is a derived projection, never discovery authority — an unlabeled lane is still swept), reconstruct each, run `watchdog-scan.mjs`, post deduped recovery events / escalations (a failed enumeration or flattening aborts the sweep — never treated as zero lanes; a marker-bearing issue whose lane cannot be reconstructed surfaces as an explicit malformed-lane finding, never silently skipped; every dedupe read is materialized to a local file and fails the job on read/parse error rather than reading as "not yet posted") | duplicate a recovery event (dedupe keys); hide a lane because its label was removed; drop a malformed lane from the sweep; merge |
 | `straylight-merge-guard.yml` | manual `workflow_dispatch` (lane issue number) | reconstruct lane, normalize ONE fetch of the live PR into the complete `pr_metadata` record (the same validatePrMetadata shape the reducer embeds durably; any missing/mistyped field collapses it to `fetch_ok: false`), gather the complete all-pages check-run conclusion list, run `merge-guard-check.mjs` (fails closed unless EVERY metadata field corresponds exactly with the lane and audited target), post shadow eligibility comment | merge (no merge API call exists in the workflow or CLI); forward loose single PR fields |
-| `straylight-bootstrap.yml` | manual `workflow_dispatch` | idempotently create the single Phase 49P shadow lane issue — existing-lane detection parses every cp-lane issue body through the canonical protocol parser (`lane-scan.mjs`), so a genesis in ANY valid JSON formatting (compact included) is found; a failed enumeration OR any unparseable lane-marker body aborts (never treated as "no existing lane") | implement 49P, open its PR, call a model API, merge; detect lanes by raw-substring matching |
+| `straylight-bootstrap.yml` | manual `workflow_dispatch` | idempotently create the single Phase 49P shadow lane issue — existing-lane detection enumerates ALL issues (open AND closed, label-independently: the `cp-lane` label is a derived projection, never discovery authority, so a lane whose label was removed still blocks duplication) and parses every body through the canonical protocol parser (`lane-scan.mjs`), so a genesis in ANY valid JSON formatting (compact included) is found and pull requests with lane-like bodies are excluded; a failed enumeration, a malformed page, OR any unparseable lane-marker body aborts (never treated as "no existing lane") | implement 49P, open its PR, call a model API, merge; detect lanes by raw-substring matching or by label |
 
 All workflows: least-privilege permissions (`contents: read` +
 `issues: write` and/or `pull-requests: read`), actions pinned to
@@ -391,7 +391,10 @@ cosmetic.
 Any actor, on any run, can rebuild everything from GitHub:
 
 1. read `automation-policy.json` at the merged main HEAD;
-2. list open `cp-lane` issues;
+2. enumerate all open issues and identify lane issues through the
+   canonical marker parser (`node .straylight/bin/lane-scan.mjs
+   --all-lanes`) — the `cp-lane` label is a derived convenience
+   projection, never discovery authority;
 3. for each: fetch issue body + comments, run the reducer
    (`node .straylight/bin/reduce-issue.mjs`);
 4. the resulting lane record names the current state and `next_actor` —

@@ -212,11 +212,41 @@ jobs:
           # dedupe key (never a truncation of it).
           EVENT_ID="evt-$(printf '%s' "$DEDUPE" | sha256sum | cut -c1-48)"
           # Idempotency: only a bot-authored event-marker comment counts.
-          if gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate \
-              --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | test("<!-- straylight:event:v1 -->")) | .body' \
-              | grep -qF "dedupe:${DEDUPE}"; then
+          #
+          # FAIL CLOSED, MATERIALIZED READ: this read GUARDS the confirmation
+          # write. Never a `gh api | grep -q` pipeline — an API failure
+          # mid-stream (or grep exiting early on first match, SIGPIPE-ing
+          # gh) would be indistinguishable from "not found" and fall through
+          # to a duplicate confirmation. Fetch to a local file, verify the
+          # API exit status, validate the shape, then search ONLY the local
+          # file. A read or parse failure fails the job; it is never
+          # converted into "not yet posted".
+          if ! gh api --paginate "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" > /tmp/dedupe-pages.json; then
+            echo "::error::confirmation dedupe read failed (gh api non-zero); failing before any write — NOT treating as 'not yet posted'"
+            exit 1
+          fi
+          jq -s -e 'map(type == "array") | all' /tmp/dedupe-pages.json >/dev/null || {
+            echo "::error::confirmation dedupe pages malformed; failing before any write"
+            exit 1
+          }
+          # An unexpected comment shape makes this jq error and (set -e)
+          # fail the job — shape surprises never read as "not found".
+          jq -s '[.[][] | select(.user.login == "github-actions[bot]")
+                        | select(.body | test("<!-- straylight:event:v1 -->"))
+                        | .body]' /tmp/dedupe-pages.json > /tmp/dedupe-bodies.json
+          # jq 'any' decides found/not-found on the LOCAL file: exit 0 =
+          # found (skip), exit 1 = valid no-match (post), exit >1 = error
+          # (fail). No pipeline ambiguity.
+          set +e
+          jq -e --arg d "dedupe:${DEDUPE}" 'any(.[]; contains($d))' /tmp/dedupe-bodies.json >/dev/null
+          FOUND=$?
+          set -e
+          if [[ "$FOUND" -eq 0 ]]; then
             echo "confirmation already posted for ${DEDUPE}; skipping"
             exit 0
+          elif [[ "$FOUND" -ne 1 ]]; then
+            echo "::error::confirmation dedupe search failed (jq exit ${FOUND}); failing before any write"
+            exit 1
           fi
           jq -n --slurpfile meta /tmp/pr-meta.json \
             --arg id "$EVENT_ID" --arg lane "$LANE_ID" --argjson seq "$NEXT" --arg now "$NOW" '
@@ -295,12 +325,37 @@ jobs:
           jq -e '(.ok == true) and (.frozen == false)' /tmp/reducer-result.json >/dev/null || {
             echo "reconstruction not ok/unfrozen; labels untouched (fail closed)"; exit 0; }
           # Desired cp-* labels come from the pure deriveLabels projection.
+          # Shape-check first: a missing/non-array labels projection must
+          # fail loudly, never read as "no labels wanted" (which would strip
+          # every derived label).
+          jq -e '.labels | type == "array"' /tmp/reducer-result.json >/dev/null || {
+            echo "::error::reducer result lacks a labels array; failing before any label write"; exit 1; }
           mapfile -t WANT < <(jq -r '.labels[]' /tmp/reducer-result.json)
-          mapfile -t HAVE < <(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/labels" \
-            -q '.[].name' | grep -E '^cp-' || true)
+          # FAIL CLOSED, MATERIALIZED READ: the current-label read GUARDS
+          # the add/remove writes below — a failed read must never be
+          # mistaken for "no labels" (which would re-add every label and
+          # skip every removal). Fetch ALL pages to a local file, verify
+          # the API exit status, validate the shape, then extract locally.
+          # No `|| true`, no process substitution swallowing the status.
+          if ! gh api --paginate "repos/${REPO}/issues/${ISSUE_NUMBER}/labels" > /tmp/label-pages.json; then
+            echo "::error::current-label read failed (gh api non-zero); failing before any label write — NOT treating as 'no labels'"
+            exit 1
+          fi
+          jq -s -e 'map(type == "array") | all' /tmp/label-pages.json >/dev/null || {
+            echo "::error::label pages malformed; failing before any label write"
+            exit 1
+          }
+          # An unexpected label shape makes this jq error and (set -e) fail
+          # the job — shape surprises never read as "no labels".
+          jq -s -r '.[][] | .name | select(startswith("cp-"))' /tmp/label-pages.json > /tmp/have-labels.txt
+          mapfile -t HAVE < /tmp/have-labels.txt
+          # Membership checks run grep against local FILES (never a
+          # pipeline): exit 0 = found, exit 1 = valid no-match, and there is
+          # no upstream writer whose failure could masquerade as either.
+          printf '%s\n' "${WANT[@]:-}" > /tmp/want-labels.txt
           for l in "${HAVE[@]:-}"; do
             [[ -z "$l" || "$l" == "cp-lane" ]] && continue
-            if ! printf '%s\n' "${WANT[@]}" | grep -qxF -- "$l"; then
+            if ! grep -qxF -- "$l" /tmp/want-labels.txt; then
               # Labels are derived projections, never authority. If someone
               # hand-added cp-paused expecting it to pause the lane, warn
               # loudly before stripping it: pausing requires an
@@ -315,7 +370,7 @@ jobs:
           done
           for l in "${WANT[@]:-}"; do
             [[ -z "$l" ]] && continue
-            printf '%s\n' "${HAVE[@]:-}" | grep -qxF -- "$l" || \
+            grep -qxF -- "$l" /tmp/have-labels.txt || \
               gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/labels" \
                 --input <(jq -n --arg l "$l" '{labels: [$l]}') || true
           done
@@ -343,11 +398,41 @@ jobs:
           # github-actions[bot] authorship AND the reducer-result marker so a
           # third party cannot suppress result posting by planting the dedupe
           # string in an ordinary comment (B8 uniform hardening).
-          if gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate \
-              --jq '.[] | select(.user.login == "github-actions[bot]") | select(.body | test("<!-- straylight:reducer-result:v1 -->")) | .body' \
-              | grep -qF "dedupe:${DEDUPE}"; then
+          #
+          # FAIL CLOSED, MATERIALIZED READ: this read GUARDS the result
+          # write. Never a `gh api | grep -q` pipeline — an API failure
+          # mid-stream (or grep exiting early on first match, SIGPIPE-ing
+          # gh) would be indistinguishable from "not found" and fall through
+          # to a duplicate write. Fetch to a local file, verify the API exit
+          # status, validate the shape, then search ONLY the local file. A
+          # read or parse failure fails the job; it is never converted into
+          # "not yet posted".
+          if ! gh api --paginate "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" > /tmp/dedupe-pages.json; then
+            echo "::error::result dedupe read failed (gh api non-zero); failing before any write — NOT treating as 'not yet posted'"
+            exit 1
+          fi
+          jq -s -e 'map(type == "array") | all' /tmp/dedupe-pages.json >/dev/null || {
+            echo "::error::result dedupe pages malformed; failing before any write"
+            exit 1
+          }
+          # An unexpected comment shape makes this jq error and (set -e)
+          # fail the job — shape surprises never read as "not found".
+          jq -s '[.[][] | select(.user.login == "github-actions[bot]")
+                        | select(.body | test("<!-- straylight:reducer-result:v1 -->"))
+                        | .body]' /tmp/dedupe-pages.json > /tmp/dedupe-bodies.json
+          # jq 'any' decides found/not-found on the LOCAL file: exit 0 =
+          # found (skip), exit 1 = valid no-match (post), exit >1 = error
+          # (fail). No pipeline ambiguity.
+          set +e
+          jq -e --arg d "dedupe:${DEDUPE}" 'any(.[]; contains($d))' /tmp/dedupe-bodies.json >/dev/null
+          FOUND=$?
+          set -e
+          if [[ "$FOUND" -eq 0 ]]; then
             echo "result already posted for ${DEDUPE}; skipping"
             exit 0
+          elif [[ "$FOUND" -ne 1 ]]; then
+            echo "::error::result dedupe search failed (jq exit ${FOUND}); failing before any write"
+            exit 1
           fi
           {
             echo "## Straylight reducer result (shadow mode)"

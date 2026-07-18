@@ -383,9 +383,12 @@ as shell.
 A manual, idempotent `workflow_dispatch` (`straylight-bootstrap.yml`) may
 create the **Phase 49P shadow lane issue** after this ADR merges. It
 creates at most one lane issue (search-before-create; existing-lane
-detection parses every cp-lane issue body through the canonical protocol
-parser rather than substring-matching the raw body, so a genesis in any
-valid JSON formatting — compact included — is found, and an unparseable
+detection enumerates every issue — open and closed, label-independently,
+because labels are derived projections and never discovery authority —
+and parses each body through the canonical protocol parser rather than
+substring-matching the raw body, so a genesis in any valid JSON
+formatting — compact included — is found, pull requests with lane-like
+bodies are excluded, and a failed enumeration or an unparseable
 lane-marker body aborts the bootstrap rather than being skipped),
 implements nothing, opens no implementation PR, invokes no model API,
 and merges nothing.

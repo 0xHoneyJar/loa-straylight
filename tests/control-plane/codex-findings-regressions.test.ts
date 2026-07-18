@@ -577,14 +577,16 @@ describe("C8 — recovery event IDs cannot collide across long lane IDs / recove
 describe("C9 — a failed watchdog lane enumeration aborts the sweep", () => {
   const wf = readFileSync(".github/workflows/straylight-watchdog.yml", "utf8");
   it("the lane listing checks the API exit status explicitly and exits non-zero", () => {
-    expect(wf).toMatch(/if ! gh api --paginate "repos\/\$\{REPO\}\/issues\?labels=cp-lane&state=open&per_page=100"/);
+    // Round 9 widened the enumeration to be label-independent (no
+    // labels=cp-lane filter); the fail-closed posture is unchanged.
+    expect(wf).toMatch(/if ! gh api --paginate "repos\/\$\{REPO\}\/issues\?state=open&per_page=100"/);
     expect(wf).toMatch(/lane enumeration failed[\s\S]{0,160}exit 1/);
   });
   it("the listing is never piped through a failure-swallowing construct", () => {
     // No `mapfile -t ISSUES < <(gh api ...)` (process substitution swallows
     // the exit status) and no `|| true` on the listing call.
     expect(wf).not.toMatch(/mapfile -t ISSUES < <\(gh api/);
-    expect(wf).not.toMatch(/issues\?labels=cp-lane&state=open[^\n]*\|\|\s*true/);
+    expect(wf).not.toMatch(/issues\?state=open[^\n]*\|\|\s*true/);
   });
 });
 
@@ -594,7 +596,9 @@ describe("C9 — a failed watchdog lane enumeration aborts the sweep", () => {
 describe("C10 — a failed bootstrap existence check aborts (never 'no existing lane')", () => {
   const wf = readFileSync(".github/workflows/straylight-bootstrap.yml", "utf8");
   it("the existence check verifies the API exit status and refuses to bootstrap on failure", () => {
-    expect(wf).toMatch(/if ! gh api --paginate "repos\/\$\{REPO\}\/issues\?labels=cp-lane&state=all[^"]*"/);
+    // Round 9 widened the enumeration to be label-independent (no
+    // labels=cp-lane filter); the fail-closed posture is unchanged.
+    expect(wf).toMatch(/if ! gh api --paginate "repos\/\$\{REPO\}\/issues\?state=all[^"]*"/);
     expect(wf).toMatch(/refusing to bootstrap[\s\S]{0,120}exit 1/);
   });
   it("the count no longer swallows the API status with a trailing || true on the pipeline", () => {
