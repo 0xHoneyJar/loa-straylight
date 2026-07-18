@@ -39,7 +39,7 @@
 // breaks the binding mechanically, independent of GitHub edit metadata.
 
 import { MARKERS, extractPayload, hasMarker } from "./markers.mjs";
-import { validateLane, parseIsoInstant } from "./validate.mjs";
+import { validateLane, validatePolicy, parseIsoInstant } from "./validate.mjs";
 import { reduce } from "./reducer.mjs";
 import { nextActorFor } from "./state-machine.mjs";
 
@@ -54,11 +54,21 @@ export function reconstructLane(input) {
   // event and the lane would collapse back to state=planning/seq=0, which is
   // a rewind, not a freeze. So during replay we use a policy with the kill
   // switch forced on, and expose `frozen` so the sole consumer (the reducer
-  // workflow) takes NO new action while disabled. A structurally invalid
-  // policy is NOT forced enabled — it still fails closed inside reduce().
-  const policyIsObject = policy !== null && typeof policy === "object";
-  const frozen = !policyIsObject || policy.enabled !== true;
-  const replayPolicy = frozen && policyIsObject ? { ...policy, enabled: true } : policy;
+  // workflow) takes NO new action while disabled.
+  //
+  // Force-enablement is gated on FULL structural validation of the ORIGINAL
+  // policy, and applies only when its `enabled` field is the literal boolean
+  // false — the one value the kill switch legitimately produces. Any other
+  // non-true `enabled` (missing, null, the string "false", a number, an
+  // object) is a MALFORMED policy, not an engaged kill switch: rewriting it
+  // to `enabled: true` would launder the invalid field into a passing one
+  // and replay history under a policy that never validly existed. A policy
+  // that fails validation is passed through UNCHANGED so reduce() refuses
+  // every event with its normal fail-closed policy-invalid error and the
+  // lane never advances past genesis.
+  const pv = validatePolicy(policy ?? null);
+  const frozen = !pv.ok || policy.enabled !== true;
+  const replayPolicy = pv.ok && policy.enabled === false ? { ...policy, enabled: true } : policy;
 
   // Genesis: the issue body must contain exactly one lane payload.
   const genesis = extractPayload(issue_body, MARKERS.lane);
