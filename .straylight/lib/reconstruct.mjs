@@ -62,10 +62,16 @@ export function reconstructLane(input) {
   // non-true `enabled` (missing, null, the string "false", a number, an
   // object) is a MALFORMED policy, not an engaged kill switch: rewriting it
   // to `enabled: true` would launder the invalid field into a passing one
-  // and replay history under a policy that never validly existed. A policy
-  // that fails validation is passed through UNCHANGED so reduce() refuses
-  // every event with its normal fail-closed policy-invalid error and the
-  // lane never advances past genesis.
+  // and replay history under a policy that never validly existed.
+  //
+  // INVALID-POLICY PRECEDENCE: a policy that fails validation authorizes
+  // NOTHING — not reduction, and not the comment-level handling either. The
+  // comment loop below refuses EVERY protocol comment as policy-invalid
+  // BEFORE the edited-comment check runs, so an edited event / task-packet /
+  // audit comment can never invoke toOperatorRequired (or any other lane
+  // change) under a policy that never validated. The lane stays exactly at
+  // its genesis state and event sequence, and the derived labels are the
+  // genesis labels — no label from a changed lane is ever produced.
   const pv = validatePolicy(policy ?? null);
   const frozen = !pv.ok || policy.enabled !== true;
   const replayPolicy = pv.ok && policy.enabled === false ? { ...policy, enabled: true } : policy;
@@ -126,6 +132,23 @@ export function reconstructLane(input) {
       hasMarker(comment.body, MARKERS.taskPacket) ||
       hasMarker(comment.body, MARKERS.audit);
     if (!isProtocolComment) continue; // prose / workflow-result comment
+
+    // INVALID-POLICY PRECEDENCE (G1): a policy that failed validation
+    // authorizes NOTHING — including the comment-level handling below. This
+    // refusal runs BEFORE the edited-comment (R5) check, so an edited
+    // protocol comment can never invoke toOperatorRequired — and before the
+    // identity/artifact/event paths, so no route can move the lane off its
+    // genesis state or event sequence. Every protocol comment is refused
+    // with the reducer's own policy-invalid code naming the bad field(s).
+    if (!pv.ok) {
+      dispositions.push({
+        comment_id: comment.id,
+        status: "refused",
+        refusal: "policy-invalid",
+        detail: pv.errors.join("; "),
+      });
+      continue;
+    }
 
     // Comment-mutation posture (R5): the event record is append-oriented, but
     // GitHub comments are editable/deletable. An EDITED protocol comment —

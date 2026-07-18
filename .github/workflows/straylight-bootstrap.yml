@@ -43,11 +43,26 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Kill switch check
+      # POLICY AUTHORITY: the canonical executable gate (policy-gate.mjs →
+      # validatePolicy) validates the COMPLETE committed policy and decides
+      # on LITERAL BOOLEANS — jq raw textual output is never policy
+      # authority (it prints the STRING "true" identically to the boolean).
+      # Bootstrap MUTATES (creates a label and a lane issue), so ONLY exit 0
+      # (valid policy, enabled boolean true) may proceed: a valid kill switch
+      # (exit 3) refuses, and a malformed policy (any other exit) fails
+      # closed — it is neither enabled nor a valid kill switch.
+      - name: Kill switch check (canonical policy gate)
         run: |
           set -euo pipefail
-          if [[ "$(jq -r '.enabled' .straylight/automation-policy.json)" != "true" ]]; then
-            echo "Automation disabled (kill switch). Refusing to bootstrap."
+          set +e
+          node .straylight/bin/policy-gate.mjs
+          GATE=$?
+          set -e
+          if [[ "$GATE" -eq 3 ]]; then
+            echo "Automation disabled (valid kill switch). Refusing to bootstrap."
+            exit 1
+          elif [[ "$GATE" -ne 0 ]]; then
+            echo "::error::automation policy failed validation (policy-gate exit ${GATE}); refusing to bootstrap — a malformed policy is neither enabled nor a valid kill switch"
             exit 1
           fi
 

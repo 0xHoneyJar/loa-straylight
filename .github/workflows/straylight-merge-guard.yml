@@ -50,6 +50,27 @@ jobs:
         with:
           node-version: "22"
 
+      # POLICY AUTHORITY: the canonical executable gate (policy-gate.mjs →
+      # validatePolicy) validates the COMPLETE committed policy on LITERAL
+      # BOOLEANS before this workflow performs any network or mutation
+      # action (it posts a shadow-result comment). Exit 0 = valid + enabled
+      # → proceed. Exit 3 = valid kill switch → take no action (post
+      # nothing). Anything else = malformed policy → FAIL CLOSED loudly.
+      - name: Kill switch check (canonical policy gate)
+        run: |
+          set -euo pipefail
+          set +e
+          node .straylight/bin/policy-gate.mjs
+          GATE=$?
+          set -e
+          if [[ "$GATE" -eq 3 ]]; then
+            echo "Automation disabled (valid kill switch). Merge guard taking no action."
+            exit 1
+          elif [[ "$GATE" -ne 0 ]]; then
+            echo "::error::automation policy failed validation (policy-gate exit ${GATE}); failing closed — a malformed policy is neither enabled nor a valid kill switch"
+            exit 1
+          fi
+
       - name: Reconstruct lane
         env:
           GH_TOKEN: ${{ github.token }}

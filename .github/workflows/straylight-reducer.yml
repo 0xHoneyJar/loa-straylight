@@ -77,15 +77,33 @@ jobs:
       # already refuses every event; reconstruct replays history faithfully
       # and returns frozen:true. This gate ensures the workflow does not even
       # publish that frozen projection as if it were live activity.)
-      - name: Kill switch check
+      #
+      # POLICY AUTHORITY: the canonical executable gate (policy-gate.mjs →
+      # validatePolicy) validates the COMPLETE committed policy and decides
+      # on LITERAL BOOLEANS. jq raw textual output is never policy
+      # authority: it prints the STRING "true" identically to the boolean
+      # true, and inspects nothing else about the policy.
+      # Exit 0 = valid policy, enabled boolean true → proceed.
+      # Exit 3 = valid policy, enabled boolean false → valid kill switch,
+      #          take no action.
+      # Any other exit = malformed policy → FAIL CLOSED loudly; a malformed
+      # policy is neither enabled nor a valid kill switch.
+      - name: Kill switch check (canonical policy gate)
         id: killswitch
         run: |
           set -euo pipefail
-          if [[ "$(jq -r '.enabled' .straylight/automation-policy.json)" != "true" ]]; then
-            echo "Automation disabled (kill switch). Reducer taking no action; projection frozen."
+          set +e
+          node .straylight/bin/policy-gate.mjs
+          GATE=$?
+          set -e
+          if [[ "$GATE" -eq 0 ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$GATE" -eq 3 ]]; then
+            echo "Automation disabled (valid kill switch). Reducer taking no action; projection frozen."
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "::error::automation policy failed validation (policy-gate exit ${GATE}); failing closed — a malformed policy is neither enabled nor a valid kill switch"
+            exit 1
           fi
 
       - name: Fetch lane content (untrusted, to file)
@@ -137,6 +155,13 @@ jobs:
           # Fail closed: a failed fetch, a non-boolean draft/merged, or any
           # missing field posts NOTHING (the lane stays eligibility-pending;
           # the watchdog escalates it if it stays stuck).
+          #
+          # MUTATION GUARD: posting a confirmation requires an authoritative
+          # reconstruction — ok LITERAL boolean true AND frozen LITERAL
+          # boolean false (jq == is type-strict: the string "true" never
+          # passes). A failed or frozen reconstruction confirms nothing.
+          jq -e '(.ok == true) and (.frozen == false)' /tmp/reducer-result.json >/dev/null || {
+            echo "reconstruction not ok/unfrozen; posting no confirmation (fail closed)"; exit 0; }
           STATE=$(jq -r '.lane.state // empty' /tmp/reducer-result.json)
           [[ "$STATE" == "eligibility-pending" ]] || { echo "lane not eligibility-pending; no confirmation to post"; exit 0; }
           LANE_ID=$(jq -r '.lane.lane_id' /tmp/reducer-result.json)
@@ -255,8 +280,13 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          OK=$(jq -r '.ok' /tmp/reducer-result.json)
-          [[ "$OK" == "true" ]] || { echo "reduction failed closed; labels untouched"; exit 0; }
+          # MUTATION GUARD: labels are synced only from an authoritative
+          # reconstruction — ok LITERAL boolean true AND frozen LITERAL
+          # boolean false (jq == is type-strict). A failed reconstruction has
+          # no trustworthy projection; a frozen one must not be republished
+          # as live activity.
+          jq -e '(.ok == true) and (.frozen == false)' /tmp/reducer-result.json >/dev/null || {
+            echo "reconstruction not ok/unfrozen; labels untouched (fail closed)"; exit 0; }
           # Desired cp-* labels come from the pure deriveLabels projection.
           mapfile -t WANT < <(jq -r '.labels[]' /tmp/reducer-result.json)
           mapfile -t HAVE < <(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/labels" \
@@ -291,6 +321,12 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          # MUTATION GUARD: a result comment is published only from an
+          # authoritative reconstruction — ok LITERAL boolean true AND frozen
+          # LITERAL boolean false (jq == is type-strict). A malformed or
+          # frozen reconstruction publishes nothing.
+          jq -e '(.ok == true) and (.frozen == false)' /tmp/reducer-result.json >/dev/null || {
+            echo "reconstruction not ok/unfrozen; posting no result (fail closed)"; exit 0; }
           SEQ=$(jq -r '.lane.event_sequence // "invalid"' /tmp/reducer-result.json)
           STATE=$(jq -r '.lane.state // "invalid"' /tmp/reducer-result.json)
           DEDUPE="reducer-result:${SEQ}:${STATE}"

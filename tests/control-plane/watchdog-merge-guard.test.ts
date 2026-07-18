@@ -210,6 +210,7 @@ describe("shadow merge guard", () => {
       ".straylight/bin/merge-guard-check.mjs",
       ".straylight/bin/validate-protocol.mjs",
       ".straylight/bin/lane-scan.mjs",
+      ".straylight/bin/policy-gate.mjs",
     ];
     const allCpWorkflows = [
       ".github/workflows/straylight-reducer.yml",

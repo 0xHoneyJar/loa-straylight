@@ -68,6 +68,12 @@ that nothing merges.
     watchdog-scan.mjs
     merge-guard-check.mjs
     validate-protocol.mjs
+    lane-scan.mjs
+    policy-gate.mjs          ← canonical workflow policy gate (exit 0 =
+                               valid policy + enabled boolean true; exit 3 =
+                               valid kill switch; exit 2 = malformed policy
+                               → fail closed, never enabled, never a valid
+                               kill switch)
   prompts/                   ← permanent actor prompts
     chatgpt-coordinator.md
     claude-fable-implementer.md
@@ -208,7 +214,19 @@ Universal fail-closed rules enforced by the reducer:
   everywhere (never rounded), so two distinct instants can never collapse
   into one and strict ordering is preserved;
 - malformed anything (lane, event, packet, audit, policy) → no advance;
+- an INVALID policy takes precedence over every comment-level handling
+  path in reconstruction: each protocol comment is refused as
+  `policy-invalid` before the edited-comment check (or any identity/
+  artifact/event route) can change lane state, so the lane stays at its
+  genesis state and event sequence;
 - `policy.enabled: false` (kill switch) → every event refused;
+- workflows consult the canonical executable gate
+  (`.straylight/bin/policy-gate.mjs` → `validatePolicy`) before any
+  network or mutation action — literal boolean `true` proceeds, literal
+  boolean `false` is a valid kill switch (no action), anything else
+  (string `"true"`/`"false"`, null, missing, number, array, object, or
+  any other invalid field) fails closed; `jq` textual output is never
+  policy authority;
 - `operator_pause: true` → only operator events accepted.
 
 Determinism invariant: the reducer and reconstruction consult NO transient

@@ -43,15 +43,28 @@ jobs:
         with:
           node-version: "22"
 
-      - name: Kill switch check
+      # POLICY AUTHORITY: the canonical executable gate (policy-gate.mjs →
+      # validatePolicy) validates the COMPLETE committed policy and decides
+      # on LITERAL BOOLEANS — jq raw textual output is never policy
+      # authority (it prints the STRING "true" identically to the boolean).
+      # Exit 0 = valid + enabled → sweep. Exit 3 = valid kill switch → no
+      # action. Anything else = malformed policy → FAIL CLOSED loudly.
+      - name: Kill switch check (canonical policy gate)
         id: killswitch
         run: |
           set -euo pipefail
-          if [[ "$(jq -r '.enabled' .straylight/automation-policy.json)" != "true" ]]; then
-            echo "Automation disabled (kill switch). Watchdog exiting."
+          set +e
+          node .straylight/bin/policy-gate.mjs
+          GATE=$?
+          set -e
+          if [[ "$GATE" -eq 0 ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$GATE" -eq 3 ]]; then
+            echo "Automation disabled (valid kill switch). Watchdog exiting."
             echo "enabled=false" >> "$GITHUB_OUTPUT"
           else
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "::error::automation policy failed validation (policy-gate exit ${GATE}); failing closed — a malformed policy is neither enabled nor a valid kill switch"
+            exit 1
           fi
 
       - name: Reconstruct all lanes and scan
@@ -86,7 +99,10 @@ jobs:
                 comments: ($comments | add // [] | map({id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}))}' \
               > /tmp/reduce-input.json
             node .straylight/bin/reduce-issue.mjs --input /tmp/reduce-input.json > /tmp/lane.json || continue
-            [[ "$(jq -r '.ok' /tmp/lane.json)" == "true" ]] || continue
+            # Only an authoritative reconstruction feeds the scan: ok LITERAL
+            # boolean true AND frozen LITERAL boolean false (jq == is
+            # type-strict; the string "true" never passes).
+            jq -e '(.ok == true) and (.frozen == false)' /tmp/lane.json >/dev/null || continue
             LAST=$(jq -r '[.comments[].id] | max // 0' /tmp/reduce-input.json)
             LAST_TS=$(gh api "repos/${REPO}/issues/${N}" -q '.updated_at')
             LANE_ID=$(jq -r '.lane.lane_id' /tmp/lane.json)
