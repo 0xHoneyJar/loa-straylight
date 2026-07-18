@@ -71,9 +71,11 @@ that nothing merges.
     lane-scan.mjs
     policy-gate.mjs          ← canonical workflow policy gate (exit 0 =
                                valid policy + enabled boolean true; exit 3 =
-                               valid kill switch; exit 2 = malformed policy
-                               → fail closed, never enabled, never a valid
-                               kill switch)
+                               valid kill switch; exit 2 = malformed policy,
+                               including ANY duplicate JSON key — the policy
+                               text is parsed by strict-json.mjs, never
+                               JSON.parse → fail closed, never enabled,
+                               never a valid kill switch)
   prompts/                   ← permanent actor prompts
     chatgpt-coordinator.md
     claude-fable-implementer.md
@@ -221,12 +223,15 @@ Universal fail-closed rules enforced by the reducer:
   genesis state and event sequence;
 - `policy.enabled: false` (kill switch) → every event refused;
 - workflows consult the canonical executable gate
-  (`.straylight/bin/policy-gate.mjs` → `validatePolicy`) before any
-  network or mutation action — literal boolean `true` proceeds, literal
-  boolean `false` is a valid kill switch (no action), anything else
-  (string `"true"`/`"false"`, null, missing, number, array, object, or
-  any other invalid field) fails closed; `jq` textual output is never
-  policy authority;
+  (`.straylight/bin/policy-gate.mjs` → strict duplicate-key-rejecting
+  JSON parse → `validatePolicy`) before any network or mutation action —
+  literal boolean `true` proceeds, literal boolean `false` is a valid
+  kill switch (no action), anything else (string `"true"`/`"false"`,
+  null, missing, number, array, object, any other invalid field, or a
+  policy text with ANY duplicate object key anywhere — a contradictory
+  duplicate `enabled` is ambiguous, never "last wins") fails closed;
+  `jq` textual output is never policy authority, and `JSON.parse` is
+  never the policy's parsing authority;
 - `operator_pause: true` → only operator events accepted.
 
 Determinism invariant: the reducer and reconstruction consult NO transient
@@ -365,9 +370,13 @@ control-plane workflow holds `contents: write`.
 
 All workflows: least-privilege permissions (`contents: read` +
 `issues: write` and/or `pull-requests: read`), actions pinned to
-immutable commit SHAs, concurrency groups so two runs cannot move the
-same lane simultaneously, payloads passed to Node via files/stdin — never
-interpolated into shell.
+immutable commit SHAs, checkout pinned to `ref: main` (with recursive
+submodules) so the canonical policy gate, the committed automation
+policy, and all protocol/reconstruction code are loaded from CURRENT
+MAIN — a manual dispatch selecting an older or non-main ref never
+evaluates an older enabled policy or older control-plane code —
+concurrency groups so two runs cannot move the same lane simultaneously,
+payloads passed to Node via files/stdin — never interpolated into shell.
 
 Known eventual-consistency wrinkle (accepted for v1): the reducer skips
 comments posted by `github-actions[bot]` to prevent trigger loops, so an

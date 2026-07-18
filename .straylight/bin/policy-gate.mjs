@@ -14,11 +14,20 @@
 //   exit 0  policy valid AND enabled === true  (boolean) → actions permitted
 //   exit 3  policy valid AND enabled === false (boolean) → VALID kill
 //           switch: take no new action (not an error; freeze, not failure)
-//   exit 2  anything else — unreadable file, or ANY structural invalidity:
-//           enabled as the string "true"/"false", null, missing, a number,
-//           an array, an object, or a boolean paired with any other invalid
-//           policy field → FAIL CLOSED: never treated as enabled, never
-//           treated as a valid kill switch
+//   exit 2  anything else — unreadable file, malformed JSON, ANY duplicate
+//           object key anywhere in the document, or ANY structural
+//           invalidity: enabled as the string "true"/"false", null, missing,
+//           a number, an array, an object, or a boolean paired with any
+//           other invalid policy field → FAIL CLOSED: never treated as
+//           enabled, never treated as a valid kill switch
+//
+// PARSING AUTHORITY: the policy text goes through parseStrict (the same
+// duplicate-key-rejecting RFC 8259 parser the protocol markers use), NEVER
+// JSON.parse. JSON.parse silently keeps the LAST duplicate key, so a policy
+// text reading {"enabled": false, ..., "enabled": true} — which a human
+// reviewing the kill switch reads as DISABLED — would have validated as an
+// ENABLED policy. A contradictory policy is ambiguous, and ambiguity fails
+// closed: duplicate keys (top-level or nested) exit 2.
 //
 // Usage:
 //   node .straylight/bin/policy-gate.mjs [--policy <policy.json>]
@@ -28,6 +37,7 @@
 import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseStrict } from "../lib/strict-json.mjs";
 import { validatePolicy } from "../lib/validate.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -42,13 +52,23 @@ function emit(result, code) {
   process.exit(code);
 }
 
-let policy;
+let policyText;
 try {
   const policyPath = arg("--policy") ?? resolve(here, "..", "automation-policy.json");
-  policy = JSON.parse(readFileSync(policyPath, "utf8"));
+  policyText = readFileSync(policyPath, "utf8");
 } catch (e) {
   emit({ ok: false, refusal: "policy-unreadable", detail: String(e?.message ?? e) }, 2);
 }
+
+// Strict parse: rejects malformed JSON AND any duplicate object key anywhere
+// (a duplicate `enabled` — false-then-true or true-then-false — is a
+// contradictory kill switch and must never be accepted; JSON.parse would
+// silently keep whichever occurrence came last).
+const parsed = parseStrict(policyText);
+if (!parsed.ok) {
+  emit({ ok: false, refusal: "policy-unreadable", detail: `strict JSON parse failed: ${parsed.reason}` }, 2);
+}
+const policy = parsed.value;
 
 const pv = validatePolicy(policy ?? null);
 if (!pv.ok) {

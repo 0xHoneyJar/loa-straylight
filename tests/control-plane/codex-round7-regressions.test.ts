@@ -361,11 +361,13 @@ describe("G2 — policy-gate.mjs is the single type-strict workflow policy autho
     expect(JSON.parse(stdout)).toEqual({ ok: true, enabled: true });
   });
 
-  it("the gate is dependency-free: only node: builtins and the canonical validator", () => {
+  it("the gate is dependency-free: only node: builtins and the canonical lib modules", () => {
     const src = readFileSync(GATE, "utf8");
     const imports = [...src.matchAll(/from "([^"]+)"/g)].map((m) => m[1] ?? "");
     expect(imports.length).toBeGreaterThan(0);
-    expect(imports.every((s) => s.startsWith("node:") || s === "../lib/validate.mjs")).toBe(true);
+    expect(imports.every((s) =>
+      s.startsWith("node:") || s === "../lib/validate.mjs" || s === "../lib/strict-json.mjs",
+    )).toBe(true);
     expect(src).toMatch(/validatePolicy/);
     expect(src).toMatch(/policy\.enabled === true/);
     expect(src).toMatch(/policy\.enabled === false/);

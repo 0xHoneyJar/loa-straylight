@@ -62,6 +62,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          # Pin to main, NOT the dispatched ref: the canonical policy gate,
+          # the committed automation policy, and all protocol/reconstruction
+          # code must come from CURRENT MAIN. A manual dispatch selecting an
+          # older or non-main ref must never make this workflow evaluate an
+          # older enabled policy or older control-plane code (same posture
+          # as bootstrap's B10 hardening).
+          ref: main
           # Repo convention (issue #669): keep recursive submodule checkout
           # so .claude symlinks into .loa never dangle on runners.
           submodules: recursive
