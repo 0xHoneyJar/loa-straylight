@@ -37,6 +37,14 @@ const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 // strict ordering. Sub-millisecond precision is therefore REJECTED
 // everywhere (fail closed), not rounded. The fraction is decoded by exact
 // digit-padding ("1"→100ms, "12"→120ms, "123"→123ms) — no float rounding.
+//
+// YEAR RANGE: every four-digit year the published schema pattern accepts
+// (0000–9999) is a distinct instant. The UTC instant is constructed via
+// setUTCFullYear — NEVER Date.UTC, whose legacy two-digit-year remapping
+// silently maps years 0–99 onto 1900–1999 (0099 and 1999 would collapse to
+// the SAME epoch value, breaking strict ordering). Every calendar field is
+// then round-trip-read back from the constructed instant; any disagreement
+// (overflow, normalization, host quirk) fails closed as null.
 export function parseIsoInstant(s) {
   if (typeof s !== "string") return null;
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(\.\d{1,3})?Z$/.exec(s);
@@ -48,8 +56,20 @@ export function parseIsoInstant(s) {
   const daysInMonth = [31, isLeap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
   if (day < 1 || day > daysInMonth[month - 1]) return null;
   const millis = m[7] ? Number(m[7].slice(1).padEnd(3, "0")) : 0; // exact integer millis
-  const t = Date.UTC(year, month - 1, day, hour, min, sec) + millis;
-  return Number.isNaN(t) ? null : t;
+  const d = new Date(0);
+  d.setUTCFullYear(year, month - 1, day);
+  d.setUTCHours(hour, min, sec, millis);
+  const t = d.getTime();
+  if (Number.isNaN(t)) return null;
+  if (
+    d.getUTCFullYear() !== year || d.getUTCMonth() !== month - 1 ||
+    d.getUTCDate() !== day || d.getUTCHours() !== hour ||
+    d.getUTCMinutes() !== min || d.getUTCSeconds() !== sec ||
+    d.getUTCMilliseconds() !== millis
+  ) {
+    return null;
+  }
+  return t;
 }
 
 // Validate a field as a strict UTC calendar instant (see parseIsoInstant).

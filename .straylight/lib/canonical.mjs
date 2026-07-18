@@ -22,7 +22,15 @@ export function canonicalize(value) {
 function sortKeys(value) {
   if (Array.isArray(value)) return value.map(sortKeys);
   if (value !== null && typeof value === "object") {
-    const out = {};
+    // NULL-PROTOTYPE accumulator: on a plain `{}` the key "__proto__" hits
+    // the Object.prototype accessor, so assignment would REWIRE the
+    // accumulator's prototype instead of creating an own property — the key
+    // silently vanishes from the canonical output, and two payloads
+    // differing only by an own "__proto__" property would collide on the
+    // SAME digest (an undetectable artifact mutation). With no prototype
+    // there is no accessor: every key, "__proto__" included, becomes an
+    // ordinary own property, serializes, and changes the digest.
+    const out = Object.create(null);
     for (const k of Object.keys(value).sort()) {
       out[k] = sortKeys(value[k]);
     }
