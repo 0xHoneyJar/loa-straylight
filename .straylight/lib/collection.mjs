@@ -120,19 +120,21 @@ export function validateIssueSlotsDocument(doc) {
 // final planner's independent re-derivation)
 // ---------------------------------------------------------------------------
 
-// Reconstruct every lane from the RAW enumeration + per-issue raw bytes.
-// `issueEvidence` maps issue_number → { issueBytes, commentBytes } (decoded
-// buffers of the raw single-issue fetch and the raw comment page stream).
-// Returns per-issue outcomes; a missing or unparseable raw file for a
-// discovered lane is a refusal — PR slots are derivable ONLY after the
-// complete issue/comment evidence for that same collection exists.
+// Reconstruct the collection world from the RAW enumeration + per-issue
+// raw bytes. `issueEvidence` maps issue_number → { issueBytes,
+// commentBytes } (decoded buffers of the raw single-issue fetch and the
+// raw comment page stream). EVERY enumerated (non-PR) issue slot requires
+// its complete issue/comment evidence — the S2→S3 fetch transition covers
+// every slot, and dedupe proofs for findings on non-lane issues (e.g. a
+// malformed genesis) need that issue's comment stream. A missing or
+// unparseable raw file is a refusal — PR slots are derivable ONLY after
+// the complete issue/comment evidence for that same collection exists.
 export function reconstructCollectionLanes(enumerationBytes, issueEvidence, { repository, policy, now }) {
   const enumParsed = parseIssuePages(enumerationBytes.toString("utf8"), { repository, requireTimestamps: true });
   if (!enumParsed.ok) return enumParsed;
   const scanned = scanLanes(enumParsed.issues);
   if (!scanned.ok) return bad("lane-scan-failed", scanned.reason);
 
-  const lanes = [];
   const laneIdsSeen = new Map();
   for (const { number, lane_id } of scanned.lanes) {
     const list = laneIdsSeen.get(lane_id) ?? [];
@@ -147,7 +149,9 @@ export function reconstructCollectionLanes(enumerationBytes, issueEvidence, { re
     }
   }
 
-  for (const { number, lane_id } of scanned.lanes) {
+  // Parse issue + comment evidence for EVERY slot.
+  const issueRecords = new Map();
+  for (const { number } of enumParsed.issues) {
     const evidence = issueEvidence.get(number);
     if (evidence === undefined || evidence.issueBytes === undefined || evidence.commentBytes === undefined) {
       return bad("missing-issue-evidence", `issue #${number}: raw issue/comment evidence not fetched in this collection`);
@@ -156,17 +160,23 @@ export function reconstructCollectionLanes(enumerationBytes, issueEvidence, { re
     if (!issueParsed.ok) return bad("issue-evidence-invalid", `issue #${number}: ${issueParsed.reason}`);
     const commentsParsed = parseCommentPages(evidence.commentBytes.toString("utf8"), { repository, issue_number: number });
     if (!commentsParsed.ok) return bad("comment-evidence-invalid", `issue #${number}: ${commentsParsed.reason}`);
+    issueRecords.set(number, { issue: issueParsed.issue, comments: commentsParsed.comments });
+  }
+
+  const lanes = [];
+  for (const { number, lane_id } of scanned.lanes) {
+    const record = issueRecords.get(number);
     const result = reconstructLane({
-      issue_body: issueParsed.issue.body ?? "",
-      comments: commentsParsed.comments,
+      issue_body: record.issue.body ?? "",
+      comments: record.comments,
       policy,
       context: { now },
     });
     lanes.push({
       issue_number: number,
       lane_id,
-      issue: issueParsed.issue,
-      comments: commentsParsed.comments,
+      issue: record.issue,
+      comments: record.comments,
       reconstruction: result,
     });
   }
@@ -174,6 +184,7 @@ export function reconstructCollectionLanes(enumerationBytes, issueEvidence, { re
     ok: true,
     lanes,
     issues: enumParsed.issues,
+    issueRecords,
     unreadable: scanned.unreadable,
     excluded_prs: enumParsed.excluded_prs,
   };
@@ -568,11 +579,29 @@ export function verifyAndProjectCollection({
   }
   laneProjections.sort((a, b) => a.issue_number - b.issue_number);
 
+  // Per-issue evidence digests for EVERY enumerated slot (lane or not):
+  // dedupe proofs for findings on non-lane issues (e.g. a malformed
+  // genesis) are planning-relevant, so their comment streams must be part
+  // of the A/B equivalence surface too.
+  const issueEvidenceDigests = {};
+  for (const [number, record] of world.issueRecords) {
+    issueEvidenceDigests[String(number)] = {
+      comment_evidence_digest: payloadDigest(
+        record.comments
+          .slice()
+          .sort((a, b) => a.id - b.id)
+          .map((c) => ({ id: c.id, user: c.user, body: c.body, created_at: c.created_at, updated_at: c.updated_at })),
+      ),
+      updated_at: record.issue.updated_at,
+    };
+  }
+
   const projection = {
     issue_slots: issueSlots,
     unreadable: world.unreadable.slice().sort((a, b) => a.number - b.number),
     excluded_prs: world.excluded_prs.slice().sort((a, b) => a - b),
     lanes: laneProjections,
+    issue_evidence: issueEvidenceDigests,
     pr_slots: prSlots,
     pr_outcomes: prOutcomes,
   };

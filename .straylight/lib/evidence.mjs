@@ -479,6 +479,57 @@ export function parseCheckRunPages(text, { repository, sha }) {
 }
 
 // ---------------------------------------------------------------------------
+// Label pages (repos/{repo}/issues/{n}/labels or repos/{repo}/labels)
+// ---------------------------------------------------------------------------
+
+// N1: label IDs and names unique across the complete stream. N2: every
+// label binds to the expected repository by strict EXACT-PREFIX URL
+// parsing — the remainder after the fixed prefix must decode to exactly
+// the label's own name (GitHub encodes some bytes in the url field;
+// exact-prefix + decode-identity accepts both encodings while refusing
+// any foreign repository). The consumed profile is the name set.
+export function parseLabelPages(text, { repository }) {
+  const r = checkExpectedRepository(repository);
+  if (!r.ok) return r;
+  const stream = parsePageStream(text);
+  if (!stream.ok) return stream;
+  const names = [];
+  const seenIds = new Set();
+  const seenNames = new Set();
+  const prefix = `${API_ROOT}/repos/${repository}/labels/`;
+  for (const page of stream.pages) {
+    if (!Array.isArray(page)) return bad("page-not-array", "a label page is not an array");
+    for (const item of page) {
+      if (!isPlainObject(item)) return bad("entry-not-object", "a label entry is not an object");
+      if (!Number.isInteger(item.id) || item.id < 1) {
+        return bad("label-invalid", "a label entry lacks a positive integer id");
+      }
+      if (seenIds.has(item.id)) return bad("duplicate-label-id", `label ${item.id} appears more than once`);
+      seenIds.add(item.id);
+      if (typeof item.name !== "string" || item.name.length === 0) {
+        return bad("label-invalid", `label ${item.id}: name is not a non-empty string`);
+      }
+      if (seenNames.has(item.name)) return bad("duplicate-label-name", item.name);
+      seenNames.add(item.name);
+      if (typeof item.url !== "string" || !item.url.startsWith(prefix)) {
+        return bad("binding-url-mismatch", `label ${JSON.stringify(item.name)}: url does not begin with ${prefix}`);
+      }
+      let decoded;
+      try {
+        decoded = decodeURIComponent(item.url.slice(prefix.length));
+      } catch {
+        return bad("binding-url-mismatch", `label ${JSON.stringify(item.name)}: url remainder does not decode`);
+      }
+      if (decoded !== item.name) {
+        return bad("binding-url-mismatch", `label ${JSON.stringify(item.name)}: url remainder does not equal the label name`);
+      }
+      names.push(item.name);
+    }
+  }
+  return { ok: true, labels: names };
+}
+
+// ---------------------------------------------------------------------------
 // Combined commit status (repos/{repo}/commits/{sha}/status)
 // ---------------------------------------------------------------------------
 

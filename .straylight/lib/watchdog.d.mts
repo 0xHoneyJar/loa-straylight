@@ -2,6 +2,14 @@
 export interface WatchdogAction {
   /** "post-event" | "escalate-malformed-lane" | "flag-unverifiable-head" | "flag-unverifiable-activity". */
   type: string;
+  /**
+   * ISSUE-KEYED ACTION CONTRACT (C8): present whenever the lane entry
+   * carried the issue number it was reconstructed from. Callers key
+   * posting and dedupe by it — never by a first-match lane-id → issue
+   * mapping, which could post a finding on the wrong issue when a parsed
+   * lane_id collides with a healthy lane elsewhere.
+   */
+  issue_number?: number;
   lane_id: string;
   dedupe_key: string;
   detail: string;

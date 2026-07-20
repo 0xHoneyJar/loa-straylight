@@ -54,7 +54,9 @@ const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 // space could never be a full-line identity match target).
 const DEDUPE_KEY_RE = /^[\x21-\x7E]{1,200}$/;
 const LABEL_COLOR_RE = /^[0-9a-f]{6}$/;
-const LANE_ISSUE_TITLE_RE = /^CP lane: [\x20-\x7E]{1,180}$/;
+// Printable (no control bytes); the canonical Phase 49P title carries an
+// em dash, so this is not ASCII-only.
+const LANE_ISSUE_TITLE_RE = /^CP lane: [^\x00-\x1f\x7f]{1,180}$/;
 
 const MAX_OPERATIONS = 64;
 const MAX_COMMENT_BODY_BYTES = 65536;

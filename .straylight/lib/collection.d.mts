@@ -75,6 +75,8 @@ export interface PlanningProjection {
   unreadable: Array<{ number: number; reason: string }>;
   excluded_prs: number[];
   lanes: LaneProjection[];
+  /** Per-issue evidence digests for EVERY enumerated slot (lane or not). */
+  issue_evidence: Record<string, { comment_evidence_digest: string; updated_at: string }>;
   pr_slots: PrSlot[];
   pr_outcomes: Record<
     string,
@@ -97,7 +99,17 @@ export declare function reconstructCollectionLanes(
   enumerationBytes: Buffer,
   issueEvidence: Map<number, { issueBytes?: Buffer; commentBytes?: Buffer }>,
   options: { repository: string; policy: unknown; now: string }
-): { ok: true; lanes: unknown[]; issues: unknown[]; unreadable: unknown[]; excluded_prs: number[] } | CollectionFailure;
+):
+  | {
+      ok: true;
+      lanes: unknown[];
+      issues: unknown[];
+      /** Parsed issue + comment evidence for EVERY enumerated slot. */
+      issueRecords: Map<number, { issue: unknown; comments: unknown[] }>;
+      unreadable: unknown[];
+      excluded_prs: number[];
+    }
+  | CollectionFailure;
 
 export declare function derivePrSlots(
   enumerationBytes: Buffer,

@@ -44,17 +44,29 @@ export function scan(lanes, policy, context = {}) {
   }
 
   const actions = [];
-  for (const lane of Array.isArray(lanes) ? lanes : []) {
+  for (const entry of Array.isArray(lanes) ? lanes : []) {
+    // ISSUE-KEYED ACTION CONTRACT (C8): a lane entry may carry the issue
+    // number it was reconstructed from; every action for that lane then
+    // carries `issue_number`, and callers key posting/dedupe by it —
+    // never by a first-match lane-id → issue mapping.
+    const issueNumber =
+      Number.isInteger(entry?.issue_number) && entry.issue_number >= 1 ? entry.issue_number : null;
+    const withIssue = (action) => (issueNumber !== null ? { issue_number: issueNumber, ...action } : action);
+    const lane = entry;
     const lv = validateLane(lane);
     if (!lv.ok) {
       // A malformed lane is itself a finding — but the watchdog cannot
-      // guess a recovery, so it routes to the operator.
-      actions.push({
+      // guess a recovery, so it routes to the operator. When the entry is
+      // issue-keyed, the finding identity IS the issue number: no
+      // synthetic lane identity exists to collide or mis-map.
+      actions.push(withIssue({
         type: "escalate-malformed-lane",
         lane_id: lane?.lane_id ?? "unknown",
-        dedupe_key: `malformed:${lane?.lane_id ?? "unknown"}:${lane?.event_sequence ?? "na"}`,
+        dedupe_key: issueNumber !== null
+          ? `malformed:issue:${issueNumber}`
+          : `malformed:${lane?.lane_id ?? "unknown"}:${lane?.event_sequence ?? "na"}`,
         detail: lv.errors.join("; "),
-      });
+      }));
       continue;
     }
     if (lane.operator_pause === true) continue;
@@ -63,7 +75,7 @@ export function scan(lanes, policy, context = {}) {
     //    comparison: validateLane guarantees expires_at parses.
     if (lane.lease && parseIsoInstant(lane.lease.expires_at) <= nowMs) {
       const dedupe = `lease-expired:${lane.lane_id}:${lane.lease.lease_id}:${lane.event_sequence}`;
-      actions.push({
+      actions.push(withIssue({
         type: "post-event",
         event_type: "system.lease_expired",
         event_id: recoveryEventId(dedupe),
@@ -75,7 +87,7 @@ export function scan(lanes, policy, context = {}) {
         // once the lane advances, instead of being deduped away forever.
         dedupe_key: dedupe,
         detail: `lease ${lane.lease.lease_id} expired ${lane.lease.expires_at}`,
-      });
+      }));
       continue; // one recovery step per lane per sweep
     }
 
@@ -92,7 +104,7 @@ export function scan(lanes, policy, context = {}) {
           ? "ready-for-claude"
           : (lane.pr_number != null && lane.pr_head_sha ? "ready-for-codex" : "ready-for-claude");
       const dedupe = `requeue:${lane.lane_id}:${lane.event_sequence}`;
-      actions.push({
+      actions.push(withIssue({
         type: "post-event",
         event_type: "system.requeued",
         event_id: recoveryEventId(dedupe),
@@ -102,7 +114,7 @@ export function scan(lanes, policy, context = {}) {
         requested_state: target,
         dedupe_key: dedupe,
         detail: `requeue to ${target}`,
-      });
+      }));
       continue;
     }
 
@@ -112,7 +124,7 @@ export function scan(lanes, policy, context = {}) {
       const currentHead = context.pr_heads?.[String(lane.pr_number)] ?? null;
       if (currentHead && currentHead !== lane.audited_sha) {
         const dedupe = `head-moved:${lane.lane_id}:${currentHead}:${lane.event_sequence}`;
-        actions.push({
+        actions.push(withIssue({
           type: "post-event",
           event_type: "system.head_moved",
           event_id: recoveryEventId(dedupe),
@@ -122,7 +134,7 @@ export function scan(lanes, policy, context = {}) {
           head_sha: currentHead, // recorded in the event for replay determinism
           dedupe_key: dedupe,
           detail: `head ${currentHead} != audited ${lane.audited_sha}`,
-        });
+        }));
         continue;
       }
       // Fail closed on an UNVERIFIABLE head: if the adapter could not resolve
@@ -135,12 +147,12 @@ export function scan(lanes, policy, context = {}) {
         ? context.pr_head_unresolved.map(String)
         : [];
       if (!currentHead && lane.pr_number != null && unresolved.includes(String(lane.pr_number))) {
-        actions.push({
+        actions.push(withIssue({
           type: "flag-unverifiable-head",
           lane_id: lane.lane_id,
           dedupe_key: `head-unverifiable:${lane.lane_id}:${lane.audited_sha}:${lane.event_sequence}`,
           detail: `${lane.state} but PR #${lane.pr_number} head could not be resolved; ACCEPT eligibility is UNCONFIRMED (fail closed)`,
-        });
+        }));
         continue;
       }
     }
@@ -154,18 +166,18 @@ export function scan(lanes, policy, context = {}) {
       if (lastMs === null) {
         // A timestamp we cannot parse means we cannot prove the lane is NOT
         // stuck. Fail closed by surfacing it, never by silently skipping.
-        actions.push({
+        actions.push(withIssue({
           type: "flag-unverifiable-activity",
           lane_id: lane.lane_id,
           dedupe_key: `activity-unverifiable:${lane.lane_id}:${lane.event_sequence}`,
           detail: `last-activity timestamp unparseable (${String(context.last_activity[lane.lane_id]).slice(0, 40)}); stuck-lane check cannot run (fail closed)`,
-        });
+        }));
         continue;
       }
       const idleHours = (nowMs - lastMs) / 3_600_000;
       if (idleHours >= policy.stuck_lane_threshold_hours) {
         const dedupe = `stuck:${lane.lane_id}:${lane.event_sequence}`;
-        actions.push({
+        actions.push(withIssue({
           type: "post-event",
           event_type: "system.escalated",
           event_id: recoveryEventId(dedupe),
@@ -174,7 +186,7 @@ export function scan(lanes, policy, context = {}) {
           prior_state: lane.state,
           dedupe_key: dedupe,
           detail: `idle ${Math.floor(idleHours)}h in ${lane.state} (threshold ${policy.stuck_lane_threshold_hours}h)`,
-        });
+        }));
       }
     }
   }

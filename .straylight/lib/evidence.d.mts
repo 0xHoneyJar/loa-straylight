@@ -75,6 +75,11 @@ export declare function parsePr(
   expectation: { repository: string; pr_number: number }
 ): EvidenceResult<{ pr: PrRecord }>;
 
+export declare function parseLabelPages(
+  text: string,
+  expectation: { repository: string }
+): EvidenceResult<{ labels: string[] }>;
+
 export declare function parseCheckRunPages(
   text: string,
   expectation: { repository: string; sha: string }
