@@ -8,11 +8,35 @@
 # machine-readable reducer result. Makes NO semantic decisions, calls NO
 # model API, and holds NO contents:write.
 #
+# WORKFLOW-BOUNDARY CONTRACT (rev. 3 §8, §11): the job is TWO strictly
+# ordered stages, each with its own fresh evidence, proof, plan, and
+# single executor invocation:
+#
+#   STAGE A — eligibility confirmation (state-advancing, TERMINAL):
+#     two-read stable gather → planner --probe (derived state; decides
+#     whether/which PR to fetch) → planner --stage a (lane-target proof,
+#     exact dedupe, carried dry-run, at most ONE confirmation operation)
+#     → one executor invocation. After the confirmation posts, nothing
+#     derived from the pre-write reconstruction may execute — Stage A's
+#     plan contains nothing else, and the executor's structural terminal
+#     barrier independently forbids same-issue operations after it.
+#
+#   STAGE B — projections and publication (non-state-advancing):
+#     a COMPLETELY FRESH two-read stable gather (never Stage A's
+#     evidence, even when Stage A posted nothing) → planner --stage b
+#     (derived labels vs parsed label evidence, the §9 warning-gated
+#     cp-paused pair, the exact-deduped reducer result; never a
+#     state-advancing operation) → one executor invocation.
+#
+# Bash is confined to fetching bytes to files, switching on validated
+# exit codes, and invoking the planner/executor. Bash never constructs a
+# write request, never interprets evidence content, and never calls
+# `gh api -X POST/PATCH/DELETE` directly.
+#
 # Security posture:
-#   - permissions: contents:read + issues:write + pull-requests:read only
-#     (documented below);
-#   - issue/comment bodies are UNTRUSTED: they travel API -> jq -> file ->
-#     Node JSON.parse; they are never interpolated into shell commands;
+#   - permissions: contents:read + issues:write + pull-requests:read only;
+#   - issue/comment bodies are UNTRUSTED: they travel API -> file ->
+#     strict Node parsers; they are never interpolated into shell;
 #   - first-party actions pinned to immutable commit SHAs;
 #   - triggers avoid the privileged PR-target event class entirely;
 #   - concurrency per issue so two reducer runs cannot race one lane.
@@ -32,7 +56,8 @@ on:
 
 # contents:read       — checkout of .straylight/ protocol code (and .loa
 #                       submodule for repo consistency; no Loa script runs).
-# issues:write        — sync derived cp-* labels + post the reducer result.
+# issues:write        — sync derived cp-* labels + post the reducer result
+#                       (used ONLY through the shared executor).
 # pull-requests:read  — read the lane PR's live head SHA for exact-SHA audit
 #                       binding (read-only; the reducer fails closed without
 #                       it, but head verification then cannot function).
@@ -80,16 +105,11 @@ jobs:
 
       # Kill switch (ADR-050 §4): while automation is disabled the reducer
       # takes NO action — it posts no result and syncs no labels, so the
-      # published projection is FROZEN exactly as it was. (The pure reducer
-      # already refuses every event; reconstruct replays history faithfully
-      # and returns frozen:true. This gate ensures the workflow does not even
-      # publish that frozen projection as if it were live activity.)
+      # published projection is FROZEN exactly as it was.
       #
       # POLICY AUTHORITY: the canonical executable gate (policy-gate.mjs →
       # validatePolicy) validates the COMPLETE committed policy and decides
-      # on LITERAL BOOLEANS. jq raw textual output is never policy
-      # authority: it prints the STRING "true" identically to the boolean
-      # true, and inspects nothing else about the policy.
+      # on LITERAL BOOLEANS.
       # Exit 0 = valid policy, enabled boolean true → proceed.
       # Exit 3 = valid policy, enabled boolean false → valid kill switch,
       #          take no action.
@@ -113,269 +133,126 @@ jobs:
             exit 1
           fi
 
-      - name: Fetch lane content (untrusted, to file)
+      # ============================ STAGE A ============================
+      # FETCH ONLY, TWICE: two complete independent reads (the stability
+      # fence). The live-PR fetch target is the planner's DERIVED probe
+      # output — bash never extracts a field from raw evidence.
+      - name: Stage A — gather evidence twice (raw bytes to files)
+        id: gather_a
         if: steps.killswitch.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
           REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
-          # Bodies go straight from the API into JSON files. No body content
-          # is ever expanded by the shell.
-          gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" > /tmp/issue.json
-          gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate > /tmp/comments.json
-          # created_at + updated_at both captured: an edited protocol comment
-          # (updated_at > created_at) is routed to operator-required (R5).
-          jq -n \
-            --slurpfile issue /tmp/issue.json \
-            --slurpfile comments /tmp/comments.json \
-            '{
-              issue_body: $issue[0].body,
-              comments: ($comments | add // [] | map({id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}))
-            }' > /tmp/reducer-input.json
-
-      - name: Reduce lane
-        id: reduce
-        if: steps.killswitch.outputs.enabled == 'true'
-        run: |
-          set -euo pipefail
-          node .straylight/bin/reduce-issue.mjs --input /tmp/reducer-input.json > /tmp/reducer-result.json || true
-          cat /tmp/reducer-result.json
-
-      - name: Confirm eligibility with durable live PR metadata
-        if: steps.killswitch.outputs.enabled == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          # An ACCEPT audit parks the lane in eligibility-pending. This step is
-          # the ONLY producer of ready-for-merge: it fetches the complete live
-          # PR metadata and posts a system.eligibility_confirmed EVENT with the
-          # checked metadata EMBEDDED DURABLY in the event payload. The pure
-          # reducer re-validates every embedded field against the lane on every
-          # replay, so metadata-free replay can never mint ready-for-merge and
-          # a confirmation is exactly as trustworthy as its durable record.
-          #
-          # Fail closed: a failed fetch, a non-boolean draft/merged, or any
-          # missing field posts NOTHING (the lane stays eligibility-pending;
-          # the watchdog escalates it if it stays stuck).
-          #
-          # MUTATION GUARD: posting a confirmation requires an authoritative
-          # reconstruction — ok LITERAL boolean true AND frozen LITERAL
-          # boolean false (jq == is type-strict: the string "true" never
-          # passes). A failed or frozen reconstruction confirms nothing.
-          jq -e '(.ok == true) and (.frozen == false)' /tmp/reducer-result.json >/dev/null || {
-            echo "reconstruction not ok/unfrozen; posting no confirmation (fail closed)"; exit 0; }
-          STATE=$(jq -r '.lane.state // empty' /tmp/reducer-result.json)
-          [[ "$STATE" == "eligibility-pending" ]] || { echo "lane not eligibility-pending; no confirmation to post"; exit 0; }
-          LANE_ID=$(jq -r '.lane.lane_id' /tmp/reducer-result.json)
-          SEQ=$(jq -r '.lane.event_sequence' /tmp/reducer-result.json)
-          PR=$(jq -r '.lane.pr_number // empty' /tmp/reducer-result.json)
-          [[ "$PR" =~ ^[0-9]+$ ]] || { echo "no PR recorded; cannot confirm (fail closed)"; exit 0; }
-          if ! gh api "repos/${REPO}/pulls/${PR}" > /tmp/pr.json 2>/dev/null; then
-            echo "live PR fetch failed; posting nothing (fail closed, lane stays pending)"
-            exit 0
-          fi
-          # Normalize WITHOUT defaulting: draft/merged must be OBSERVED
-          # booleans. A missing/non-boolean field yields fetch_ok:false and
-          # nothing is posted — unknown is preserved as unknown, never
-          # converted to false.
-          jq --arg repo "$REPO" '
-            . as $p
-            | if (($p.draft|type) == "boolean" and ($p.merged|type) == "boolean"
-                  and (($p.number)|type) == "number" and (($p.state)|type) == "string"
-                  and (($p.base.ref)|type) == "string" and (($p.base.sha)|type) == "string"
-                  and (($p.head.ref)|type) == "string" and (($p.head.sha)|type) == "string")
-              then {
-                fetch_ok: true,
-                repository: $repo,
-                pr_number: $p.number,
-                state: $p.state,
-                draft: $p.draft,
-                merged: $p.merged,
-                base_branch: $p.base.ref,
-                base_sha: $p.base.sha,
-                head_branch: $p.head.ref,
-                head_sha: $p.head.sha
-              }
-              else { fetch_ok: false }
-              end' /tmp/pr.json > /tmp/pr-meta.json
-          [[ "$(jq -r '.fetch_ok' /tmp/pr-meta.json)" == "true" ]] || {
-            echo "live PR metadata incomplete; posting nothing (fail closed)"; exit 0; }
-          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          NEXT=$((SEQ + 1))
-          DEDUPE="eligibility-confirmed:${LANE_ID}:${SEQ}"
-          # Collision-resistant deterministic event id: sha256 over the FULL
-          # dedupe key (never a truncation of it).
-          EVENT_ID="evt-$(printf '%s' "$DEDUPE" | sha256sum | cut -c1-48)"
-          # Idempotency: only a bot-authored event-marker comment counts.
-          #
-          # FAIL CLOSED, MATERIALIZED READ: this read GUARDS the confirmation
-          # write. Never a `gh api | grep -q` pipeline — an API failure
-          # mid-stream (or grep exiting early on first match, SIGPIPE-ing
-          # gh) would be indistinguishable from "not found" and fall through
-          # to a duplicate confirmation. Fetch to a local file, verify the
-          # API exit status, validate the shape, then search ONLY the local
-          # file. A read or parse failure fails the job; it is never
-          # converted into "not yet posted".
-          if ! gh api --paginate "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" > /tmp/dedupe-pages.json; then
-            echo "::error::confirmation dedupe read failed (gh api non-zero); failing before any write — NOT treating as 'not yet posted'"
-            exit 1
-          fi
-          jq -s -e 'map(type == "array") | all' /tmp/dedupe-pages.json >/dev/null || {
-            echo "::error::confirmation dedupe pages malformed; failing before any write"
-            exit 1
-          }
-          # An unexpected comment shape makes this jq error and (set -e)
-          # fail the job — shape surprises never read as "not found".
-          jq -s '[.[][] | select(.user.login == "github-actions[bot]")
-                        | select(.body | test("<!-- straylight:event:v1 -->"))
-                        | .body]' /tmp/dedupe-pages.json > /tmp/dedupe-bodies.json
-          # jq 'any' decides found/not-found on the LOCAL file: exit 0 =
-          # found (skip), exit 1 = valid no-match (post), exit >1 = error
-          # (fail). No pipeline ambiguity.
-          set +e
-          jq -e --arg d "dedupe:${DEDUPE}" 'any(.[]; contains($d))' /tmp/dedupe-bodies.json >/dev/null
-          FOUND=$?
-          set -e
-          if [[ "$FOUND" -eq 0 ]]; then
-            echo "confirmation already posted for ${DEDUPE}; skipping"
-            exit 0
-          elif [[ "$FOUND" -ne 1 ]]; then
-            echo "::error::confirmation dedupe search failed (jq exit ${FOUND}); failing before any write"
-            exit 1
-          fi
-          jq -n --slurpfile meta /tmp/pr-meta.json \
-            --arg id "$EVENT_ID" --arg lane "$LANE_ID" --argjson seq "$NEXT" --arg now "$NOW" '
-            {
-              schema: "straylight.event.v1",
-              event_id: $id,
-              lane_id: $lane,
-              sequence: $seq,
-              actor_role: "system",
-              github_actor: "github-actions[bot]",
-              event_type: "system.eligibility_confirmed",
-              prior_state: "eligibility-pending",
-              occurred_at: $now,
-              pr_metadata: $meta[0]
-            }' > /tmp/confirm-event.json
-          {
-            echo "## Straylight eligibility confirmation (shadow mode)"
-            echo ""
-            echo "dedupe:${DEDUPE}"
-            echo ""
-            echo "<!-- straylight:event:v1 -->"
-            echo '```json'
-            cat /tmp/confirm-event.json
-            echo '```'
-            echo ""
-            echo "_Live PR metadata checked and recorded durably above. Nothing merges; merge remains an exclusive operator action._"
-          } > /tmp/confirm-comment.md
-          # DRY-RUN before posting: append the candidate confirmation to the
-          # fetched stream and re-reduce. Post ONLY if the pure reducer would
-          # APPLY it. A confirmation that would be refused (draft PR, moved
-          # head, retargeted base…) is NOT posted — the lane stays pending and
-          # a LATER run retries with the same dedupe key once the PR is fixed.
-          # Posting a doomed event would permanently burn the dedupe key for
-          # this sequence and park the lane (liveness, not just safety).
-          MAXID=$(jq '[.comments[].id] | max // 0' /tmp/reducer-input.json)
-          jq --rawfile body /tmp/confirm-comment.md --argjson id "$((MAXID + 1))" --arg now "$NOW" \
-            '.comments += [{id: $id, user: "github-actions[bot]", body: $body, created_at: $now, updated_at: $now}]' \
-            /tmp/reducer-input.json > /tmp/dryrun-input.json
-          node .straylight/bin/reduce-issue.mjs --input /tmp/dryrun-input.json > /tmp/dryrun-result.json || true
-          DRYSTATE=$(jq -r '.lane.state // empty' /tmp/dryrun-result.json)
-          if [[ "$DRYSTATE" != "ready-for-merge" ]]; then
-            echo "dry-run: confirmation would be refused (lane stays ${DRYSTATE:-unreadable}); posting nothing (fail closed, retry next run)"
-            jq -r '.dispositions[-1] // empty' /tmp/dryrun-result.json || true
-            exit 0
-          fi
-          gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
-            --input <(jq -n --rawfile body /tmp/confirm-comment.md '{body: $body}')
-          echo "posted ${DEDUPE}"
-          # Re-fetch and re-reduce so this run's labels/result reflect the
-          # confirmation we just posted.
-          gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" > /tmp/issue.json
-          gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate > /tmp/comments.json
-          jq -n \
-            --slurpfile issue /tmp/issue.json \
-            --slurpfile comments /tmp/comments.json \
-            '{
-              issue_body: $issue[0].body,
-              comments: ($comments | add // [] | map({id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}))
-            }' > /tmp/reducer-input.json
-          node .straylight/bin/reduce-issue.mjs --input /tmp/reducer-input.json > /tmp/reducer-result.json || true
-          cat /tmp/reducer-result.json
-
-      - name: Sync derived labels
-        if: steps.killswitch.outputs.enabled == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          # MUTATION GUARD: labels are synced only from an authoritative
-          # reconstruction — ok LITERAL boolean true AND frozen LITERAL
-          # boolean false (jq == is type-strict). A failed reconstruction has
-          # no trustworthy projection; a frozen one must not be republished
-          # as live activity.
-          jq -e '(.ok == true) and (.frozen == false)' /tmp/reducer-result.json >/dev/null || {
-            echo "reconstruction not ok/unfrozen; labels untouched (fail closed)"; exit 0; }
-          # Desired cp-* labels come from the pure deriveLabels projection.
-          # Shape-check first: a missing/non-array labels projection must
-          # fail loudly, never read as "no labels wanted" (which would strip
-          # every derived label).
-          jq -e '.labels | type == "array"' /tmp/reducer-result.json >/dev/null || {
-            echo "::error::reducer result lacks a labels array; failing before any label write"; exit 1; }
-          mapfile -t WANT < <(jq -r '.labels[]' /tmp/reducer-result.json)
-          # FAIL CLOSED, MATERIALIZED READ: the current-label read GUARDS
-          # the add/remove writes below — a failed read must never be
-          # mistaken for "no labels" (which would re-add every label and
-          # skip every removal). Fetch ALL pages to a local file, verify
-          # the API exit status, validate the shape, then extract locally.
-          # No `|| true`, no process substitution swallowing the status.
-          if ! gh api --paginate "repos/${REPO}/issues/${ISSUE_NUMBER}/labels" > /tmp/label-pages.json; then
-            echo "::error::current-label read failed (gh api non-zero); failing before any label write — NOT treating as 'no labels'"
-            exit 1
-          fi
-          jq -s -e 'map(type == "array") | all' /tmp/label-pages.json >/dev/null || {
-            echo "::error::label pages malformed; failing before any label write"
-            exit 1
-          }
-          # An unexpected label shape makes this jq error and (set -e) fail
-          # the job — shape surprises never read as "no labels".
-          jq -s -r '.[][] | .name | select(startswith("cp-"))' /tmp/label-pages.json > /tmp/have-labels.txt
-          mapfile -t HAVE < /tmp/have-labels.txt
-          # Membership checks run grep against local FILES (never a
-          # pipeline): exit 0 = found, exit 1 = valid no-match, and there is
-          # no upstream writer whose failure could masquerade as either.
-          printf '%s\n' "${WANT[@]:-}" > /tmp/want-labels.txt
-          for l in "${HAVE[@]:-}"; do
-            [[ -z "$l" || "$l" == "cp-lane" ]] && continue
-            if ! grep -qxF -- "$l" /tmp/want-labels.txt; then
-              # Labels are derived projections, never authority. If someone
-              # hand-added cp-paused expecting it to pause the lane, warn
-              # loudly before stripping it: pausing requires an
-              # operator.paused EVENT (ADR-050 §4).
-              if [[ "$l" == "cp-paused" ]]; then
-                WARN="⚠️ The \`cp-paused\` label was added by hand but labels are derived state, not authority — it has been removed and the lane is NOT paused. To pause this lane, post an \`operator.paused\` event comment (see \`.straylight/README.md\`), or disable all automation via \`.straylight/automation-policy.json\` → \`enabled: false\`."
-                gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
-                  --input <(jq -n --arg body "$WARN" '{body: $body}') || true
-              fi
-              gh api -X DELETE "repos/${REPO}/issues/${ISSUE_NUMBER}/labels/$(jq -rn --arg v "$l" '$v|@uri')" || true
+          gather_once() {
+            local DIR="$1"
+            if ! gh api --paginate "repos/${REPO}/issues?state=open&per_page=100" > "${DIR}/enumeration.pages"; then
+              echo "::error::enumeration failed (gh api non-zero); aborting — NOT treating as zero lanes"
+              exit 1
             fi
-          done
-          for l in "${WANT[@]:-}"; do
-            [[ -z "$l" ]] && continue
-            grep -qxF -- "$l" /tmp/have-labels.txt || \
-              gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/labels" \
-                --input <(jq -n --arg l "$l" '{labels: [$l]}') || true
-          done
+            if ! gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" > "${DIR}/issue.json"; then
+              echo "::error::issue fetch failed; aborting"
+              exit 1
+            fi
+            if ! gh api --paginate "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" > "${DIR}/comments.pages"; then
+              echo "::error::comment fetch failed; aborting — NOT treating as zero comments"
+              exit 1
+            fi
+          }
+          G1=$(mktemp -d); G2=$(mktemp -d)
+          echo "g1=${G1}" >> "$GITHUB_OUTPUT"
+          echo "g2=${G2}" >> "$GITHUB_OUTPUT"
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "now=${NOW}" >> "$GITHUB_OUTPUT"
+          gather_once "${G1}"
+          gather_once "${G2}"
+          # DERIVED probe: reconstructed state + recorded PR number. A
+          # probe refusal (two-read instability, duplicate lane, …) fails
+          # the job closed before any write-relevant work.
+          set +e
+          PROBE=$(node .straylight/bin/plan-reducer-writes.mjs --stage a --probe \
+            --gather-1 "${G1}" --gather-2 "${G2}" \
+            --issue-number "${ISSUE_NUMBER}" \
+            --repository "${REPO}" --nonce "${NONCE}" --now "${NOW}")
+          PROBE_EXIT=$?
+          set -e
+          if [[ "$PROBE_EXIT" -ne 0 ]]; then
+            echo "::error::Stage A evidence probe refused (exit ${PROBE_EXIT}); failing closed"
+            echo "$PROBE"
+            exit 1
+          fi
+          STATE=$(echo "$PROBE" | jq -r '.state // empty')
+          PRNUM=$(echo "$PROBE" | jq -r '.pr_number // empty')
+          # The live PR is fetched ONLY when the derived state can consume
+          # it (eligibility-pending). A failed fetch is recorded by
+          # absence; the planner then no-ops (fail closed, retry later).
+          if [[ "$STATE" == "eligibility-pending" && "$PRNUM" =~ ^[0-9]+$ ]]; then
+            gh api "repos/${REPO}/pulls/${PRNUM}" > "${G2}/pr.json" 2>/dev/null || rm -f "${G2}/pr.json"
+          fi
 
-      - name: Post reducer result (idempotent per event_sequence)
+      # PLAN Stage A: at most the single eligibility-confirmation
+      # operation. Exit 3 = valid no-op (not pending / already confirmed /
+      # dry-run refusal — retry next run); exit 2 = refusal, zero writes.
+      - name: Stage A — plan eligibility confirmation (planner authority)
+        id: plan_a
+        if: steps.killswitch.outputs.enabled == 'true'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          REQUEST_ROOT=$(mktemp -d)
+          echo "request_root=${REQUEST_ROOT}" >> "$GITHUB_OUTPUT"
+          set +e
+          node .straylight/bin/plan-reducer-writes.mjs --stage a \
+            --gather-1 "${{ steps.gather_a.outputs.g1 }}" \
+            --gather-2 "${{ steps.gather_a.outputs.g2 }}" \
+            --issue-number "${ISSUE_NUMBER}" \
+            --request-root "${REQUEST_ROOT}" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}" \
+            --now "${{ steps.gather_a.outputs.now }}"
+          PLAN=$?
+          set -e
+          if [[ "$PLAN" -eq 3 ]]; then
+            echo "Stage A: nothing to confirm (valid no-op)."
+            echo "outcome=noop" >> "$GITHUB_OUTPUT"
+          elif [[ "$PLAN" -eq 0 ]]; then
+            echo "outcome=plan" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Stage A planner refused (exit ${PLAN}); failing closed — zero writes"
+            exit 1
+          fi
+
+      # EXECUTE Stage A: one executor invocation; the plan is TERMINAL
+      # for its issue (single confirmation operation; the executor's
+      # structural rule independently rejects anything after it).
+      - name: Stage A — execute write plan (single shared executor)
+        if: steps.killswitch.outputs.enabled == 'true' && steps.plan_a.outputs.outcome == 'plan'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+          REQUEST_ROOT: ${{ steps.plan_a.outputs.request_root }}
+        run: |
+          set -euo pipefail
+          node .straylight/bin/execute-write-plan.mjs \
+            --plan "${REQUEST_ROOT}/plan.json" \
+            --request-root "${REQUEST_ROOT}" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}"
+
+      # ============================ STAGE B ============================
+      # NEWLY FETCHED STATE, UNCONDITIONALLY: a completely fresh two-read
+      # stable gather — never Stage A's evidence, even when Stage A posted
+      # nothing. The fresh reconstruction now includes Stage A's
+      # confirmation if one was posted.
+      - name: Stage B — gather fresh evidence twice (raw bytes to files)
+        id: gather_b
         if: steps.killswitch.outputs.enabled == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -383,68 +260,86 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # MUTATION GUARD: a result comment is published only from an
-          # authoritative reconstruction — ok LITERAL boolean true AND frozen
-          # LITERAL boolean false (jq == is type-strict). A malformed or
-          # frozen reconstruction publishes nothing.
-          jq -e '(.ok == true) and (.frozen == false)' /tmp/reducer-result.json >/dev/null || {
-            echo "reconstruction not ok/unfrozen; posting no result (fail closed)"; exit 0; }
-          SEQ=$(jq -r '.lane.event_sequence // "invalid"' /tmp/reducer-result.json)
-          STATE=$(jq -r '.lane.state // "invalid"' /tmp/reducer-result.json)
-          DEDUPE="reducer-result:${SEQ}:${STATE}"
-          # Idempotency: if a result for this exact sequence+state was already
-          # posted, do not post another. Only a genuine bot-authored
-          # reducer-result comment counts — restrict the scan to
-          # github-actions[bot] authorship AND the reducer-result marker so a
-          # third party cannot suppress result posting by planting the dedupe
-          # string in an ordinary comment (B8 uniform hardening).
-          #
-          # FAIL CLOSED, MATERIALIZED READ: this read GUARDS the result
-          # write. Never a `gh api | grep -q` pipeline — an API failure
-          # mid-stream (or grep exiting early on first match, SIGPIPE-ing
-          # gh) would be indistinguishable from "not found" and fall through
-          # to a duplicate write. Fetch to a local file, verify the API exit
-          # status, validate the shape, then search ONLY the local file. A
-          # read or parse failure fails the job; it is never converted into
-          # "not yet posted".
-          if ! gh api --paginate "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" > /tmp/dedupe-pages.json; then
-            echo "::error::result dedupe read failed (gh api non-zero); failing before any write — NOT treating as 'not yet posted'"
-            exit 1
-          fi
-          jq -s -e 'map(type == "array") | all' /tmp/dedupe-pages.json >/dev/null || {
-            echo "::error::result dedupe pages malformed; failing before any write"
-            exit 1
+          gather_once() {
+            local DIR="$1"
+            if ! gh api --paginate "repos/${REPO}/issues?state=open&per_page=100" > "${DIR}/enumeration.pages"; then
+              echo "::error::enumeration failed (gh api non-zero); aborting — NOT treating as zero lanes"
+              exit 1
+            fi
+            if ! gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" > "${DIR}/issue.json"; then
+              echo "::error::issue fetch failed; aborting"
+              exit 1
+            fi
+            if ! gh api --paginate "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" > "${DIR}/comments.pages"; then
+              echo "::error::comment fetch failed; aborting — NOT treating as zero comments"
+              exit 1
+            fi
+            # Label evidence GUARDS the label writes: a failed read aborts
+            # loudly — never "no labels" (which would re-add every label
+            # and skip every removal).
+            if ! gh api --paginate "repos/${REPO}/issues/${ISSUE_NUMBER}/labels" > "${DIR}/labels.pages"; then
+              echo "::error::label read failed (gh api non-zero); aborting — NOT treating as 'no labels'"
+              exit 1
+            fi
           }
-          # An unexpected comment shape makes this jq error and (set -e)
-          # fail the job — shape surprises never read as "not found".
-          jq -s '[.[][] | select(.user.login == "github-actions[bot]")
-                        | select(.body | test("<!-- straylight:reducer-result:v1 -->"))
-                        | .body]' /tmp/dedupe-pages.json > /tmp/dedupe-bodies.json
-          # jq 'any' decides found/not-found on the LOCAL file: exit 0 =
-          # found (skip), exit 1 = valid no-match (post), exit >1 = error
-          # (fail). No pipeline ambiguity.
+          G1=$(mktemp -d); G2=$(mktemp -d)
+          echo "g1=${G1}" >> "$GITHUB_OUTPUT"
+          echo "g2=${G2}" >> "$GITHUB_OUTPUT"
+          echo "now=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          gather_once "${G1}"
+          gather_once "${G2}"
+
+      # PLAN Stage B: derived-label convergence, the §9 warning-gated
+      # cp-paused pair, and the exact-deduped result comment — never a
+      # state-advancing operation.
+      - name: Stage B — plan projections and publication (planner authority)
+        id: plan_b
+        if: steps.killswitch.outputs.enabled == 'true'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          REQUEST_ROOT=$(mktemp -d)
+          echo "request_root=${REQUEST_ROOT}" >> "$GITHUB_OUTPUT"
           set +e
-          jq -e --arg d "dedupe:${DEDUPE}" 'any(.[]; contains($d))' /tmp/dedupe-bodies.json >/dev/null
-          FOUND=$?
+          node .straylight/bin/plan-reducer-writes.mjs --stage b \
+            --gather-1 "${{ steps.gather_b.outputs.g1 }}" \
+            --gather-2 "${{ steps.gather_b.outputs.g2 }}" \
+            --issue-number "${ISSUE_NUMBER}" \
+            --request-root "${REQUEST_ROOT}" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}" \
+            --now "${{ steps.gather_b.outputs.now }}"
+          PLAN=$?
           set -e
-          if [[ "$FOUND" -eq 0 ]]; then
-            echo "result already posted for ${DEDUPE}; skipping"
-            exit 0
-          elif [[ "$FOUND" -ne 1 ]]; then
-            echo "::error::result dedupe search failed (jq exit ${FOUND}); failing before any write"
+          if [[ "$PLAN" -eq 3 ]]; then
+            echo "Stage B: labels converged and result already posted (valid no-op)."
+            echo "outcome=noop" >> "$GITHUB_OUTPUT"
+          elif [[ "$PLAN" -eq 0 ]]; then
+            echo "outcome=plan" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Stage B planner refused (exit ${PLAN}); failing closed — zero writes"
             exit 1
           fi
-          {
-            echo "## Straylight reducer result (shadow mode)"
-            echo ""
-            echo "State: \`${STATE}\` · next actor: \`$(jq -r '.lane.next_actor // "n/a"' /tmp/reducer-result.json)\` · sequence: \`${SEQ}\`"
-            echo ""
-            echo "<!-- straylight:reducer-result:v1 -->"
-            echo '```json'
-            jq --arg d "dedupe:${DEDUPE}" '{dedupe: $d, ok, labels, lane: (.lane | {lane_id, state, next_actor, event_sequence, pr_number, pr_head_sha, audited_sha, verdict, patch_cycle, operator_pause}), dispositions}' /tmp/reducer-result.json
-            echo '```'
-            echo ""
-            echo "_Mechanical reduction only. No semantic decision. Nothing merges. Kill switch: \`.straylight/automation-policy.json\` → \`enabled: false\`._"
-          } > /tmp/result-comment.md
-          gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
-            --input <(jq -n --rawfile body /tmp/result-comment.md '{body: $body}')
+
+      # EXECUTE Stage B: one executor invocation. Label operations are
+      # warning-only BY KIND (they reconverge next run); the cp-paused
+      # warning and the result comment are fatal by kind; the cp-paused
+      # removal is structurally blocked until its warning succeeds or is
+      # proven already present (§9).
+      - name: Stage B — execute write plan (single shared executor)
+        if: steps.killswitch.outputs.enabled == 'true' && steps.plan_b.outputs.outcome == 'plan'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+          REQUEST_ROOT: ${{ steps.plan_b.outputs.request_root }}
+        run: |
+          set -euo pipefail
+          node .straylight/bin/execute-write-plan.mjs \
+            --plan "${REQUEST_ROOT}/plan.json" \
+            --request-root "${REQUEST_ROOT}" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}"

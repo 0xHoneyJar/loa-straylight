@@ -413,23 +413,27 @@ describe("G3 — mutation guards: ok:true AND frozen:false (type-strict) before 
   const reducer = readFileSync(".github/workflows/straylight-reducer.yml", "utf8");
 
   it("eligibility confirmation, label sync, and result publication each require .ok == true and .frozen == false", () => {
-    const GUARD = /jq -e '\(\.ok == true\) and \(\.frozen == false\)' \/tmp\/reducer-result\.json/g;
-    expect(reducer.match(GUARD) ?? []).toHaveLength(3);
-    // Each mutation step carries its own guard (defense in depth): confirm,
-    // label sync, result post.
-    for (const step of [
-      "Confirm eligibility with durable live PR metadata",
-      "Sync derived labels",
-      "Post reducer result",
-    ]) {
-      const start = reducer.indexOf(step);
-      expect(start, step).toBeGreaterThan(-1);
-      const nextStep = reducer.indexOf("- name:", start);
-      const body = reducer.slice(start, nextStep === -1 ? undefined : nextStep);
-      expect(body, step).toMatch(/\(\.ok == true\) and \(\.frozen == false\)/);
-    }
-    // The old loose textual check is gone.
+    // Workflow-boundary redesign: every reducer mutation flows through
+    // plan-reducer-writes.mjs, which refuses BOTH a failed reconstruction
+    // (reconstruction-failed) and a frozen one under an enabled gate
+    // (frozen-under-enabled-policy) BEFORE any plan is authored — the
+    // type-strict ok/frozen guard moved from workflow jq into planner
+    // code, shared by Stage A (confirmation) and Stage B (labels +
+    // result). Proven executably in planner-adversarial.test.ts; pinned
+    // here at the source level.
+    const planner = readFileSync(".straylight/bin/plan-reducer-writes.mjs", "utf8");
+    expect(planner).toMatch(/if \(!reconstruction\.ok\) \{/);
+    expect(planner).toMatch(/fail\("reconstruction-failed", reconstruction\.refusal\)/);
+    expect(planner).toMatch(/if \(reconstruction\.frozen === true\) \{/);
+    expect(planner).toMatch(/frozen-under-enabled-policy/);
+    // The workflow carries no reducer-result jq at all anymore; the old
+    // loose textual check cannot return.
     expect(reducer).not.toMatch(/OK=\$\(jq -r '\.ok'/);
+    expect(reducer).not.toMatch(/\/tmp\/reducer-result\.json/);
+    // Both mutation stages route through the planner + shared executor.
+    expect(reducer).toMatch(/plan-reducer-writes\.mjs --stage a/);
+    expect(reducer).toMatch(/plan-reducer-writes\.mjs --stage b/);
+    expect((reducer.match(/execute-write-plan\.mjs/g) ?? []).length).toBeGreaterThanOrEqual(2);
   });
 
   it("watchdog scan ingests ONLY ok:true, frozen:false reconstructions (type-strict jq)", () => {

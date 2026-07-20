@@ -375,7 +375,6 @@ describe("B8 — watchdog fails closed on an unverifiable ready-for-merge head",
     // let any actor suppress a recovery/result by posting the dedupe string.
     for (const [f, marker] of [
       [".github/workflows/straylight-watchdog.yml", /straylight:\(event\|watchdog-result\):v1/],
-      [".github/workflows/straylight-reducer.yml", /straylight:reducer-result:v1/],
     ] as const) {
       const wf = readFileSync(f, "utf8");
       expect(wf, f).toMatch(/select\(\.user\.login == "github-actions\[bot\]"\)/);
@@ -383,15 +382,20 @@ describe("B8 — watchdog fails closed on an unverifiable ready-for-merge head",
       // No raw all-author body scan immediately piped into a dedupe grep.
       expect(wf, f).not.toMatch(/--paginate -q '\.\[\]\.body'\s*\\?\s*\n\s*\| grep -qF "dedupe:/);
     }
-    // Merge-guard (converted to gather → plan → execute): the same
-    // restriction lives in plan-merge-guard-write.mjs — bot author +
-    // straylight:merge-guard-result:v1 marker + exact full-line identity
-    // over parsed comment evidence — proven executably in
-    // planner-adversarial.test.ts. Pin the planner's selector here.
-    const planner = readFileSync(".straylight/bin/plan-merge-guard-write.mjs", "utf8");
-    expect(planner).toMatch(/c\.user === BOT/);
-    expect(planner).toMatch(/MARKERS\.mergeGuardResult/);
-    expect(planner).toMatch(/hasFullLineDedupe/);
+    // Converted workflows (merge-guard, reducer): the same restriction
+    // lives in their planners — bot author + the machine marker + exact
+    // full-line identity over PARSED comment evidence — proven executably
+    // in planner-adversarial.test.ts (already-posted → exit 3; attacker
+    // comments and substring matches never suppress in
+    // watchdog-dual-collection.test.ts). Pin the planner selectors here.
+    const mergeGuardPlanner = readFileSync(".straylight/bin/plan-merge-guard-write.mjs", "utf8");
+    expect(mergeGuardPlanner).toMatch(/c\.user === BOT/);
+    expect(mergeGuardPlanner).toMatch(/MARKERS\.mergeGuardResult/);
+    expect(mergeGuardPlanner).toMatch(/hasFullLineDedupe/);
+    const reducerPlanner = readFileSync(".straylight/bin/plan-reducer-writes.mjs", "utf8");
+    expect(reducerPlanner).toMatch(/c\.user === BOT/);
+    expect(reducerPlanner).toMatch(/MARKERS\.reducerResult/);
+    expect(reducerPlanner).toMatch(/hasFullLineDedupe/);
   });
 });
 

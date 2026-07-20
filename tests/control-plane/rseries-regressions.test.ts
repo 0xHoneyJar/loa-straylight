@@ -645,19 +645,19 @@ describe("R5 — edited protocol comments route the lane to operator-required", 
 
   it("reconstruction input carries updated_at (workflows/parsers populate it)", () => {
     // Legacy-pattern workflows populate updated_at in their jq mapping;
-    // converted workflows (merge-guard) inherit it from parseCommentPages
-    // (evidence.mjs), which REQUIRES the chronological pair on every
-    // comment — proven executably in evidence.test.ts.
+    // converted workflows (merge-guard, reducer) inherit it from
+    // parseCommentPages (evidence.mjs), which REQUIRES the chronological
+    // pair on every comment — proven executably in evidence.test.ts.
     for (const f of [
-      ".github/workflows/straylight-reducer.yml",
       ".github/workflows/straylight-watchdog.yml",
     ]) {
       expect(readFileSync(f, "utf8"), f).toMatch(/updated_at: \.updated_at/);
     }
     const evidence = readFileSync(".straylight/lib/evidence.mjs", "utf8");
     expect(evidence).toMatch(/updated_at: item\.updated_at/);
-    const planner = readFileSync(".straylight/bin/plan-merge-guard-write.mjs", "utf8");
-    expect(planner).toMatch(/parseCommentPages/);
+    for (const p of [".straylight/bin/plan-merge-guard-write.mjs", ".straylight/bin/plan-reducer-writes.mjs"]) {
+      expect(readFileSync(p, "utf8"), p).toMatch(/parseCommentPages/);
+    }
   });
 
   it("no source claims comments are 'never edited or deleted' (honest posture)", () => {
