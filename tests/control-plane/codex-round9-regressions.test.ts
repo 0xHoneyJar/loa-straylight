@@ -200,12 +200,44 @@ describe("I1 — lane discovery never depends on the derived cp-lane label", () 
   });
 
   it("the shared adapter stays dependency-free, no-network, and routes through the canonical marker parser", () => {
+    // The adapter delegates to the shared in-repo authorities (evidence.mjs
+    // for the raw page stream, lane-target.mjs for genesis identification);
+    // only node: built-ins and .straylight/lib modules may be imported.
     const src = readFileSync(LANE_SCAN, "utf8");
     const imports = [...src.matchAll(/from "([^"]+)"/g)].map((m) => m[1] ?? "");
     expect(imports.length).toBeGreaterThan(0);
-    expect(imports.every((s) => s.startsWith("node:") || s === "../lib/markers.mjs")).toBe(true);
+    expect(imports.every((s) => s.startsWith("node:") || s.startsWith("../lib/"))).toBe(true);
     expect(src).not.toMatch(/fetch\(|https?:\/\/api\.github\.com/);
-    expect(src).toMatch(/extractPayload\(body, MARKERS\.lane\)/);
+    // The canonical marker parser remains the ONLY genesis identification
+    // path: the lane-target authority the adapter delegates to routes
+    // through extractPayload(…, MARKERS.lane) — proven executably below by
+    // a compact-but-valid genesis (whitespace-independent) and a
+    // marker-bearing-but-unreadable body (fail closed, never a clean miss).
+    const laneTarget = readFileSync(".straylight/lib/lane-target.mjs", "utf8");
+    expect(laneTarget).toMatch(/extractPayload\(body, MARKERS\.lane\)/);
+    const compact = scanPages(pages([{ number: 3, body: laneBody() }]));
+    expect(compact.out.matches).toEqual([3]);
+    const mangled = scanPages(pages([{ number: 4, body: "<!-- straylight:lane:v1 -->\n```json\n{ bad ]\n```" }]));
+    expect(mangled.out.matches).toEqual([]);
+    expect(mangled.out.unreadable).toEqual([{ number: 4, reason: "malformed-json" }]);
+  });
+
+  it("duplicate valid lane IDs are surfaced by the adapter for every writer to refuse (C1)", () => {
+    // Two issues both parsing as genesis for the same lane_id make every
+    // lane-addressed write ambiguous. The adapter reports the collision in
+    // both modes; writers (bootstrap included) must refuse on it.
+    const dup = scanPages(pages(
+      [{ number: 21, body: laneBody() }],
+      [{ number: 22, body: laneBody() }],
+    ));
+    expect(dup.status).toBe(0);
+    expect(dup.out.matches).toEqual([21, 22]);
+    expect(dup.out.duplicates).toEqual([{ lane_id: "lane-phase-49p", numbers: [21, 22] }]);
+    const all = scanPages(pages([
+      { number: 21, body: laneBody() },
+      { number: 22, body: laneBody() },
+    ]), ["--all-lanes"]);
+    expect(all.out.duplicates).toEqual([{ lane_id: "lane-phase-49p", numbers: [21, 22] }]);
   });
 });
 
