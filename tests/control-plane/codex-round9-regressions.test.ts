@@ -111,7 +111,7 @@ describe("I1 — lane discovery never depends on the derived cp-lane label", () 
     // collection / dual-collection suites.
     expect(bootstrap).toMatch(/node \.straylight\/bin\/plan-bootstrap-write\.mjs/);
     expect(bootstrap).toMatch(/--pages \/tmp\/issue-pages\.json/);
-    expect(watchdog).toMatch(/node \.straylight\/bin\/lane-scan\.mjs --pages \/tmp\/issue-pages\.json --all-lanes/);
+    expect(watchdog).toMatch(/node \.straylight\/bin\/collect-watchdog-evidence\.mjs --stage issue-slots/);
     // No workflow-side jq flattening of the page stream survives: the
     // shared parsers own flattening and fail closed on malformed pages.
     expect(bootstrap).not.toMatch(/jq -s '\[\.\[\]\[\] \| \{number/);
@@ -319,40 +319,31 @@ describe("I2 — a malformed / unreadable marker-bearing lane is visible, never 
     expect(bootstrap).toMatch(/planner refused \(exit \$\{PLAN\}\); failing closed/);
   });
 
-  it("the watchdog feeds UNREADABLE issues to the scanner as stubs mapped to their issue (never dropped)", () => {
-    const s = step(watchdog, "Reconstruct all lanes and scan");
-    // Stub construction with a synthetic per-issue lane id and the issue
-    // number as event_sequence (unique dedupe key per issue). Malformed-
-    // but-parseable lanes get their own synthetic id too, so a parsed
-    // lane_id colliding with a healthy lane can never post the finding on
-    // the wrong issue. Both ids deliberately violate the canonical
-    // lane-id pattern, so no REAL lane can ever collide with them.
-    expect(s).toMatch(/SYN="unreadable-issue-\$\{N\}"/);
-    expect(s).toMatch(/SYN="malformed-issue-\$\{N\}"/);
-    for (const syn of ["unreadable-issue-6", "malformed-issue-8"]) {
-      expect(syn).not.toMatch(/^lane-[a-z0-9][a-z0-9-]{1,62}$/);
-    }
-    expect(s).toMatch(/\.lanes \+= \[\{lane_id: \$id, event_sequence: \$n\}\]/);
-    expect(s).toMatch(/surfacing as a malformed-lane finding/);
-    // The issue mapping is written in every branch: unreadable stub,
-    // healthy lane, malformed synthetic.
-    const mapWrites = s.match(/>> \/tmp\/lane-issues\.tsv/g) ?? [];
-    expect(mapWrites.length).toBeGreaterThanOrEqual(3);
+  it("the watchdog feeds UNREADABLE issues to the planner as issue-keyed stubs (never dropped)", () => {
+    // Workflow-boundary redesign: unreadable marker-bearing issues are
+    // surfaced by watchdog-plan.mjs as validation-failing stubs KEYED BY
+    // ISSUE NUMBER (C8) — the finding identity is the issue itself
+    // (malformed:issue:<n>), so no synthetic lane identity exists to
+    // collide or mis-map. Proven executably in
+    // watchdog-dual-collection.test.ts ("an unreadable marker-bearing
+    // issue becomes an issue-keyed malformed-lane finding").
+    const plan = readFileSync(".straylight/lib/watchdog-plan.mjs", "utf8");
+    expect(plan).toMatch(/for \(const u of world\.unreadable\)/);
+    expect(plan).toMatch(/issue_number: u\.number/);
+    const wd = readFileSync(".straylight/lib/watchdog.mjs", "utf8");
+    expect(wd).toMatch(/malformed:issue:\$\{issueNumber\}/);
   });
 
-  it("a FAILED reconstruction (or ok !== true) is fed to the scanner as a malformed-lane stub, never `continue`d past", () => {
-    const s = step(watchdog, "Reconstruct all lanes and scan");
-    // The old silent-skip constructs are gone.
-    expect(s).not.toMatch(/reduce-issue\.mjs --input \/tmp\/reduce-input\.json > \/tmp\/lane\.json \|\| continue/);
-    expect(s).not.toMatch(/jq -e '\(\.ok == true\) and \(\.frozen == false\)' \/tmp\/lane\.json >\/dev\/null \|\| continue/);
-    // The authoritative branch requires literal ok:true AND frozen:false…
-    expect(s).toMatch(/jq -e '\(\.ok == true\) and \(\.frozen == false\)' \/tmp\/lane\.json/);
-    // …and the else branch surfaces the lane as a finding stub.
-    expect(s).toMatch(/failed reconstruction; surfacing as a malformed-lane finding/);
+  it("a FAILED reconstruction is fed to the planner as an issue-keyed malformed-lane stub, never `continue`d past", () => {
+    const plan = readFileSync(".straylight/lib/watchdog-plan.mjs", "utf8");
+    // The failed-reconstruction branch pushes a validation-failing stub
+    // keyed to its issue; the scan turns it into escalate-malformed-lane.
+    expect(plan).toMatch(/Failed reconstruction: a validation-failing stub/);
     // A frozen-but-ok reconstruction under an enabled gate is a policy
-    // inconsistency: the sweep aborts BEFORE any recovery writes.
-    expect(s).toMatch(/reconstructed frozen under an enabled policy gate; aborting sweep before any recovery writes/);
-    expect(s).toMatch(/policy unreadable during reconstruction; aborting sweep/);
+    // inconsistency: the sweep refuses BEFORE any recovery writes.
+    expect(plan).toMatch(/frozen-under-enabled-policy/);
+    // No silent-continue construct survives in the workflow.
+    expect(watchdog).not.toMatch(/\|\| continue/);
   });
 
   it("the scanner turns exactly such stubs into explicit escalate-malformed-lane findings with per-issue dedupe keys", () => {
@@ -372,16 +363,27 @@ describe("I2 — a malformed / unreadable marker-bearing lane is visible, never 
   });
 
   it("a finding whose lane has no issue mapping FAILS the sweep instead of being skipped", () => {
-    const s = step(watchdog, "Post deduped recovery events");
-    expect(s).not.toMatch(/no issue for \$\{LANE_ID\}; skipping/);
-    expect(s).toMatch(/no issue mapping for \$\{LANE_ID\}; failing the sweep[\s\S]{0,120}exit 1/);
+    // The issue-keyed contract (C8) made the mapping structural: every
+    // scan action carries the issue_number of the lane entry it came
+    // from, and the planner REFUSES an action it cannot key
+    // (action-issue-unkeyed / action-issue-unknown) — a finding can never
+    // be dropped silently.
+    const plan = readFileSync(".straylight/lib/watchdog-plan.mjs", "utf8");
+    expect(plan).toMatch(/action-issue-unkeyed/);
+    expect(plan).toMatch(/action-issue-unknown/);
+    expect(watchdog).not.toMatch(/no issue for \$\{LANE_ID\}; skipping/);
   });
 
   it("discovery-extraction integrity is cross-checked before the sweep uses it (no silent truncation)", () => {
-    const s = step(watchdog, "Reconstruct all lanes and scan");
-    expect(s).toMatch(/lane list extraction count mismatch; aborting sweep/);
-    expect(s).toMatch(/unreadable list extraction count mismatch; aborting sweep/);
-    expect(s).toMatch(/unreadable entry without an issue number; aborting sweep/);
+    // The seal stage's claims rule replaced the bash count cross-checks:
+    // issue_slots and pr_slots in the manifest must equal what the seal
+    // itself re-derives from raw bytes, and the final planner re-derives
+    // them AGAIN — a truncated or padded slot list refuses
+    // (claims-rule-violation / manifest-claims-mismatch), proven
+    // executably in collection.test.ts.
+    const collection = readFileSync(".straylight/lib/collection.mjs", "utf8");
+    expect(collection).toMatch(/claims-rule-violation/);
+    expect(collection).toMatch(/manifest-claims-mismatch/);
   });
 });
 
@@ -399,13 +401,10 @@ describe("I3 — guarded reads: materialized, shape-validated, never pipeline-am
     [BOOTSTRAP, readFileSync(BOOTSTRAP, "utf8")],
   ] as const;
 
-  // The guarded reads still performed as workflow bash (legacy pattern);
-  // workflows converted to the gather → plan → execute boundary carry
-  // their dedupe guarantees in planner code instead, proven executably
+  // All four workflows are converted to the gather → plan → execute
+  // boundary: dedupe guarantees live in planner code, proven executably
   // in planner-adversarial.test.ts / watchdog-dual-collection.test.ts.
-  const GUARDED = [
-    [watchdog, "Post deduped recovery events", "recovery dedupe"],
-  ] as const;
+  const GUARDED: ReadonlyArray<readonly [string, string, string]> = [];
 
   it("converted workflows own dedupe in the planner: reducer + merge-guard read ALL comment pages and dedupe on parsed evidence", () => {
     // Planners derive dedupe proofs from the complete parsed comment
@@ -450,42 +449,32 @@ describe("I3 — guarded reads: materialized, shape-validated, never pipeline-am
     }
   });
 
-  it("each dedupe read materializes ALL pages to a file, verifies the exit status, and aborts on failure", () => {
-    for (const [src, stepName] of GUARDED) {
-      const s = step(src, stepName);
-      expect(s, stepName).toMatch(/if ! gh api --paginate "repos\/\$\{REPO\}\/issues\/\$\{(ISSUE_NUMBER|ISSUE)\}\/comments" > \/tmp\/dedupe-pages\.json; then/);
-      expect(s, stepName).toMatch(/NOT treating as 'not yet posted'/);
-      expect(s, stepName).toMatch(/exit 1/);
+  it("every evidence fetch that guards a write materializes to a file, verifies the exit status, and aborts on failure", () => {
+    // The materialized-read discipline survives the conversion: every
+    // gather step checks the gh exit status explicitly and aborts loudly
+    // — a failed read is never converted into "not yet posted", "no
+    // labels", or "zero lanes".
+    for (const [f, src] of ALL) {
+      const code = src.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
+      expect(code, f).toMatch(/if ! gh api --paginate/);
+      expect(src, f).toMatch(/NOT treating as/);
     }
   });
 
-  it("each dedupe read validates the page shape before searching, and searches ONLY the local file", () => {
-    for (const [src, stepName] of GUARDED) {
-      const s = step(src, stepName);
-      expect(s, stepName).toMatch(/jq -s -e 'map\(type == "array"\) \| all' \/tmp\/dedupe-pages\.json/);
-      expect(s, stepName).toMatch(/dedupe pages malformed|comment pages malformed/);
-      // found/not-found decided by jq exit code on the local bodies file.
-      expect(s, stepName).toMatch(/jq -e --arg d "dedupe:\$\{DEDUPE\}" 'any\(\.\[\]; contains\(\$d\)\)' \/tmp\/dedupe-bodies\.json/);
-      expect(s, stepName).toMatch(/FOUND=\$\?/);
-      // exit 0 → skip; exit 1 → valid no-match falls through to post;
-      // anything else → abort. All three arms present.
-      expect(s, stepName).toMatch(/"\$FOUND" -eq 0/);
-      expect(s, stepName).toMatch(/"\$FOUND" -ne 1[\s\S]{0,240}exit 1/);
+  it("dedupe decisions happen over parsed local evidence in planner code — no workflow-side dedupe search remains", () => {
+    for (const [f, src] of ALL) {
+      const code = src.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
+      expect(code, f).not.toMatch(/dedupe-pages\.json|dedupe-bodies\.json/);
+      expect(code, f).not.toMatch(/grep -qF "dedupe:/);
     }
   });
 
-  it("bot-author + machine-marker restriction and pagination are preserved on every dedupe read", () => {
-    for (const [src, stepName, marker] of [
-      [watchdog, "Post deduped recovery events", "straylight:(event|watchdog-result):v1"],
-    ] as const) {
-      const s = step(src, stepName);
-      expect(s, stepName).toMatch(/select\(\.user\.login == "github-actions\[bot\]"\)/);
-      expect(s, stepName).toContain(marker);
-      expect(s, stepName).toMatch(/gh api --paginate/);
-    }
-    // Converted workflows: the same restriction lives in the planners
-    // (bot author + the machine marker + exact full-line identity),
-    // proven executably in planner-adversarial.
+  it("bot-author + machine-marker restriction is preserved on every dedupe decision (planner authority)", () => {
+    // The restriction lives in the planners (bot author + the machine
+    // marker + exact full-line identity over PARSED comment evidence),
+    // proven executably in planner-adversarial and
+    // watchdog-dual-collection (attacker comments / substring matches
+    // never suppress).
     const mergeGuardPlanner = readFileSync(".straylight/bin/plan-merge-guard-write.mjs", "utf8");
     expect(mergeGuardPlanner).toMatch(/MARKERS\.mergeGuardResult/);
     expect(mergeGuardPlanner).toMatch(/c\.user === BOT/);
@@ -493,6 +482,10 @@ describe("I3 — guarded reads: materialized, shape-validated, never pipeline-am
     expect(reducerPlanner).toMatch(/MARKERS\.event/);
     expect(reducerPlanner).toMatch(/MARKERS\.reducerResult/);
     expect(reducerPlanner).toMatch(/c\.user === BOT/);
+    const watchdogPlan = readFileSync(".straylight/lib/watchdog-plan.mjs", "utf8");
+    expect(watchdogPlan).toMatch(/MARKERS\.event/);
+    expect(watchdogPlan).toMatch(/MARKERS\.watchdogResult/);
+    expect(watchdogPlan).toMatch(/c\.user === BOT/);
   });
 
   it("the reducer current-label read is materialized, shape-validated, and aborts before any label write", () => {
@@ -536,23 +529,20 @@ describe("I3 — guarded reads: materialized, shape-validated, never pipeline-am
     expect(err).not.toBe(1); // …never a valid "not found"
   });
 
-  it("the watchdog PR-head read records failure as UNRESOLVED (fail-closed finding), never as 'no PR'", () => {
-    const s = step(watchdog, "Reconstruct all lanes and scan");
-    expect(s).not.toMatch(/-q '\.head\.sha' 2>\/dev\/null \|\| true/);
-    expect(s).toMatch(/if gh api "repos\/\$\{REPO\}\/pulls\/\$\{PRNUM\}" > \/tmp\/pr\.json 2>\/dev\/null; then/);
-    expect(s).toMatch(/pr_head_unresolved \+= \[\$pr\]/);
+  it("a failed watchdog PR fetch is a DURABLE explicit failure record, never 'no PR'", () => {
+    // Workflow-boundary redesign: a failed PR fetch writes an explicit
+    // {fetched:false} ledger row — a durable fact, never filename
+    // absence (S4→S5); the final planner turns agreed failure into the
+    // unresolved-head fail-closed path (pr_head_unresolved), proven
+    // executably in watchdog-dual-collection.test.ts (row 6 + control).
+    const s = step(watchdog, "Collect evidence (Collection A, then Collection B)");
+    expect(s).toMatch(/if gh api "repos\/\$\{REPO\}\/pulls\/\$\{P\}" > "\$\{DIR\}\/issue-\$\{N\}\/pr-\$\{P\}\.json" 2>\/dev\/null; then/);
+    expect(s).toMatch(/fetched: false/);
+    const plan = readFileSync(".straylight/lib/watchdog-plan.mjs", "utf8");
+    expect(plan).toMatch(/pr_head_unresolved\.push/);
   });
 
-  it("valid no-match behavior is preserved: the post call follows the dedupe check in every guarded step", () => {
-    for (const [src, stepName] of GUARDED) {
-      const s = step(src, stepName);
-      const dedupe = s.indexOf("/tmp/dedupe-bodies.json");
-      const post = s.indexOf('gh api -X POST');
-      expect(dedupe, stepName).toBeGreaterThan(-1);
-      expect(post, stepName).toBeGreaterThan(dedupe);
-    }
-    // Converted workflows: planning (which embeds the dedupe proof)
-    // strictly precedes each single executor invocation.
+  it("valid no-match behavior is preserved: planning (which embeds the dedupe proof) precedes each single executor invocation", () => {
     const planStep = mergeGuard.indexOf("Plan shadow result (planner authority)");
     const execStep = mergeGuard.indexOf("Execute write plan (single shared executor)");
     expect(planStep).toBeGreaterThan(-1);
@@ -565,5 +555,9 @@ describe("I3 — guarded reads: materialized, shape-validated, never pipeline-am
     expect(execA).toBeGreaterThan(planA);
     expect(planB).toBeGreaterThan(execA); // Stage B starts only after Stage A's execution
     expect(execB).toBeGreaterThan(planB);
+    const wdPlan = watchdog.indexOf("Plan watchdog writes (dual-collection planner authority)");
+    const wdExec = watchdog.indexOf("Execute write plan (single shared executor)");
+    expect(wdPlan).toBeGreaterThan(-1);
+    expect(wdExec).toBeGreaterThan(wdPlan);
   });
 });

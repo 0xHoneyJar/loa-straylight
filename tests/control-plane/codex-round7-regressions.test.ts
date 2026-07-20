@@ -436,19 +436,31 @@ describe("G3 — mutation guards: ok:true AND frozen:false (type-strict) before 
     expect((reducer.match(/execute-write-plan\.mjs/g) ?? []).length).toBeGreaterThanOrEqual(2);
   });
 
-  it("watchdog scan ingests ONLY ok:true, frozen:false reconstructions (type-strict jq)", () => {
+  it("watchdog scan ingests ONLY ok:true, frozen:false reconstructions (planner authority)", () => {
+    // Workflow-boundary redesign: the type-strict guard lives in
+    // watchdog-plan.mjs — an ok reconstruction feeds the scan; a FROZEN
+    // one under an enabled gate refuses the whole sweep
+    // (frozen-under-enabled-policy); a failed one becomes an issue-keyed
+    // malformed-lane stub, never silently continued past. Proven
+    // executably in watchdog-dual-collection.test.ts.
+    const plan = readFileSync(".straylight/lib/watchdog-plan.mjs", "utf8");
+    expect(plan).toMatch(/rec\.ok && rec\.lane !== null && rec\.frozen !== true/);
+    expect(plan).toMatch(/frozen-under-enabled-policy/);
+    // The old textual `jq -r '.ok'` comparison is gone from the workflow.
     const wf = readFileSync(".github/workflows/straylight-watchdog.yml", "utf8");
-    expect(wf).toMatch(/jq -e '\(\.ok == true\) and \(\.frozen == false\)' \/tmp\/lane\.json/);
-    // The old textual `jq -r '.ok'` comparison is gone from the sweep.
     expect(wf).not.toMatch(/jq -r '\.ok'/);
   });
 
   it("watchdog scanning and recovery posting are gated on the killswitch output (never run disabled/malformed)", () => {
     const wf = readFileSync(".github/workflows/straylight-watchdog.yml", "utf8");
-    for (const step of ["Reconstruct all lanes and scan", "Post deduped recovery events"]) {
+    for (const step of [
+      "Collect evidence (Collection A, then Collection B)",
+      "Plan watchdog writes (dual-collection planner authority)",
+      "Execute write plan (single shared executor)",
+    ]) {
       const start = wf.indexOf(step);
       expect(start, step).toBeGreaterThan(-1);
-      const body = wf.slice(start, start + 400);
+      const body = wf.slice(start, start + 600);
       expect(body, step).toMatch(/if: steps\.killswitch\.outputs\.enabled == 'true'/);
     }
   });

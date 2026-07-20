@@ -643,19 +643,16 @@ describe("R5 — edited protocol comments route the lane to operator-required", 
     expect(out.lane?.state).toBe("ready-for-coordinator");
   });
 
-  it("reconstruction input carries updated_at (workflows/parsers populate it)", () => {
-    // Legacy-pattern workflows populate updated_at in their jq mapping;
-    // converted workflows (merge-guard, reducer) inherit it from
-    // parseCommentPages (evidence.mjs), which REQUIRES the chronological
-    // pair on every comment — proven executably in evidence.test.ts.
-    for (const f of [
-      ".github/workflows/straylight-watchdog.yml",
-    ]) {
-      expect(readFileSync(f, "utf8"), f).toMatch(/updated_at: \.updated_at/);
-    }
+  it("reconstruction input carries updated_at (parsers populate it)", () => {
+    // All comment evidence flows through parseCommentPages
+    // (evidence.mjs), which REQUIRES the chronological
+    // created_at/updated_at pair on every comment — proven executably in
+    // evidence.test.ts. Every consumer inherits it: the merge-guard and
+    // reducer planners directly, the watchdog through
+    // reconstructCollectionLanes (collection.mjs).
     const evidence = readFileSync(".straylight/lib/evidence.mjs", "utf8");
     expect(evidence).toMatch(/updated_at: item\.updated_at/);
-    for (const p of [".straylight/bin/plan-merge-guard-write.mjs", ".straylight/bin/plan-reducer-writes.mjs"]) {
+    for (const p of [".straylight/bin/plan-merge-guard-write.mjs", ".straylight/bin/plan-reducer-writes.mjs", ".straylight/lib/collection.mjs"]) {
       expect(readFileSync(p, "utf8"), p).toMatch(/parseCommentPages/);
     }
   });

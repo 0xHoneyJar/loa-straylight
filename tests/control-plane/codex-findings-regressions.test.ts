@@ -569,9 +569,16 @@ describe("C8 — recovery event IDs cannot collide across long lane IDs / recove
     expect(new Set(ids).size).toBe(2);
   });
 
-  it("the watchdog workflow posts the scanner's event_id (no jq truncation of the dedupe key)", () => {
+  it("the watchdog posts the scanner's event_id verbatim (no truncation of the dedupe key)", () => {
+    // Workflow-boundary redesign: the event body is authored by
+    // watchdog-plan.mjs (buildEventBody), which embeds action.event_id
+    // verbatim — the scanner's sha256-derived id, never a truncation.
+    // Proven end-to-end in watchdog-dual-collection.test.ts (the planned
+    // body carries the exact dedupe line + event payload).
+    const plan = readFileSync(".straylight/lib/watchdog-plan.mjs", "utf8");
+    expect(plan).toMatch(/event_id: action\.event_id/);
+    expect(plan).not.toMatch(/\.slice\(0, ?60\)|\.\[0:60\]/);
     const wf = readFileSync(".github/workflows/straylight-watchdog.yml", "utf8");
-    expect(wf).toMatch(/event_id: \$a\[0\]\.event_id/);
     expect(wf).not.toMatch(/\.\[0:60\]/);
   });
 });
@@ -583,9 +590,10 @@ describe("C9 — a failed watchdog lane enumeration aborts the sweep", () => {
   const wf = readFileSync(".github/workflows/straylight-watchdog.yml", "utf8");
   it("the lane listing checks the API exit status explicitly and exits non-zero", () => {
     // Round 9 widened the enumeration to be label-independent (no
-    // labels=cp-lane filter); the fail-closed posture is unchanged.
+    // labels=cp-lane filter); the dual-collection conversion kept the
+    // fail-closed posture — each collection's S0→S1 fetch aborts loudly.
     expect(wf).toMatch(/if ! gh api --paginate "repos\/\$\{REPO\}\/issues\?state=open&per_page=100"/);
-    expect(wf).toMatch(/lane enumeration failed[\s\S]{0,160}exit 1/);
+    expect(wf).toMatch(/enumeration failed[\s\S]{0,200}exit 1/);
   });
   it("the listing is never piped through a failure-swallowing construct", () => {
     // No `mapfile -t ISSUES < <(gh api ...)` (process substitution swallows
