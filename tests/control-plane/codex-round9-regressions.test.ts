@@ -396,13 +396,30 @@ describe("I3 — guarded reads: materialized, shape-validated, never pipeline-am
     [BOOTSTRAP, readFileSync(BOOTSTRAP, "utf8")],
   ] as const;
 
-  // The five guarded reads, by the step that performs them.
+  // The guarded reads still performed as workflow bash (legacy pattern);
+  // workflows converted to the gather → plan → execute boundary carry
+  // their dedupe guarantees in planner code instead, proven executably
+  // in planner-adversarial.test.ts / watchdog-dual-collection.test.ts.
   const GUARDED = [
     [reducer, "Confirm eligibility with durable live PR metadata", "confirmation dedupe"],
     [reducer, "Post reducer result (idempotent per event_sequence)", "result dedupe"],
     [watchdog, "Post deduped recovery events", "recovery dedupe"],
-    [mergeGuard, "Post shadow result", "result dedupe"],
   ] as const;
+
+  it("converted workflows own dedupe in the planner: merge-guard reads ALL comment pages and dedupes on parsed evidence", () => {
+    // The merge-guard planner derives its dedupe proof from the complete
+    // parsed comment stream (bot-author + machine-marker + exact
+    // full-line identity), proven executably in planner-adversarial
+    // ("an already-posted result … → exit 3"). The workflow's only
+    // comment read is the materialized paginated fetch feeding it, and
+    // its only write path is the shared executor.
+    expect(mergeGuard).toMatch(/gh api --paginate "repos\/\$\{REPO\}\/issues\/\$\{ISSUE_NUMBER\}\/comments"/);
+    expect(mergeGuard).toMatch(/node \.straylight\/bin\/plan-merge-guard-write\.mjs/);
+    expect(mergeGuard).toMatch(/node \.straylight\/bin\/execute-write-plan\.mjs/);
+    const planner = readFileSync(".straylight/bin/plan-merge-guard-write.mjs", "utf8");
+    expect(planner).toMatch(/hasFullLineDedupe/);
+    expect(planner).toMatch(/github-actions\[bot\]/);
+  });
 
   it("no `gh api | grep` pipeline survives anywhere in the four control-plane workflows", () => {
     for (const [f, src] of ALL) {
@@ -452,13 +469,18 @@ describe("I3 — guarded reads: materialized, shape-validated, never pipeline-am
       [reducer, "Confirm eligibility with durable live PR metadata", "straylight:event:v1"],
       [reducer, "Post reducer result (idempotent per event_sequence)", "straylight:reducer-result:v1"],
       [watchdog, "Post deduped recovery events", "straylight:(event|watchdog-result):v1"],
-      [mergeGuard, "Post shadow result", "straylight:merge-guard-result:v1"],
     ] as const) {
       const s = step(src, stepName);
       expect(s, stepName).toMatch(/select\(\.user\.login == "github-actions\[bot\]"\)/);
       expect(s, stepName).toContain(marker);
       expect(s, stepName).toMatch(/gh api --paginate/);
     }
+    // Merge-guard (converted): the same restriction lives in the planner
+    // (bot author + straylight:merge-guard-result:v1 marker + exact
+    // full-line identity), proven executably in planner-adversarial.
+    const planner = readFileSync(".straylight/bin/plan-merge-guard-write.mjs", "utf8");
+    expect(planner).toMatch(/MARKERS\.mergeGuardResult/);
+    expect(planner).toMatch(/c\.user === BOT/);
   });
 
   it("the reducer current-label read is materialized, shape-validated, and aborts before any label write", () => {
@@ -512,5 +534,11 @@ describe("I3 — guarded reads: materialized, shape-validated, never pipeline-am
       expect(dedupe, stepName).toBeGreaterThan(-1);
       expect(post, stepName).toBeGreaterThan(dedupe);
     }
+    // Merge-guard (converted): planning (which embeds the dedupe proof)
+    // strictly precedes the single executor invocation.
+    const planStep = mergeGuard.indexOf("Plan shadow result (planner authority)");
+    const execStep = mergeGuard.indexOf("Execute write plan (single shared executor)");
+    expect(planStep).toBeGreaterThan(-1);
+    expect(execStep).toBeGreaterThan(planStep);
   });
 });

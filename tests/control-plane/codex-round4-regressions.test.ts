@@ -433,16 +433,22 @@ describe("D4 — merge guard: complete normalized metadata, field-by-field corre
     expect(evaluate(noBranch, policy, { checks, pr_metadata: liveMeta() }).eligible).toBe(false);
   });
 
-  it("the workflow builds the SAME complete-record normalization and forwards pr_metadata only", () => {
+  it("the workflow forwards ONLY the complete parsed record — normalization lives in the shared parser", () => {
+    // Workflow-boundary redesign: the complete-or-nothing normalization
+    // moved from workflow jq into parsePr (evidence.mjs), the single
+    // path plan-merge-guard-write.mjs consumes; it produces exactly the
+    // validatePrMetadata ten-field record or refuses (proven executably
+    // in evidence.test.ts). The workflow only fetches bytes and invokes
+    // the planner; no loose single-field forwarding can be expressed.
     const wf = readFileSync(".github/workflows/straylight-merge-guard.yml", "utf8");
-    // Complete-or-nothing jq normalization (identical posture to reducer).
-    expect(wf).toMatch(/\(\$p\.draft\|type\) == "boolean" and \(\$p\.merged\|type\) == "boolean"/);
-    expect(wf).toMatch(/fetch_ok: true/);
-    expect(wf).toMatch(/else \{ fetch_ok: false \}/);
-    expect(wf).toMatch(/pr_metadata: \$prmeta/);
-    // No loose single-field forwarding remains.
+    expect(wf).toMatch(/node \.straylight\/bin\/plan-merge-guard-write\.mjs/);
     expect(wf).not.toMatch(/pr_head_sha: \$head/);
     expect(wf).not.toMatch(/pr_state|pr_base_ref|pr_draft|pr_merged/);
+    const planner = readFileSync(".straylight/bin/plan-merge-guard-write.mjs", "utf8");
+    expect(planner).toMatch(/parsePr\(/);
+    expect(planner).toMatch(/pr_metadata: read2\.prMeta/);
+    const evidence = readFileSync(".straylight/lib/evidence.mjs", "utf8");
+    expect(evidence).toMatch(/fetch_ok: true/);
   });
 });
 

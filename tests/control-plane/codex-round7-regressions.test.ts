@@ -470,9 +470,13 @@ describe("G3 — mutation guards: ok:true AND frozen:false (type-strict) before 
   it("the merge-guard workflow (a comment-posting mutator) consults the same canonical gate before acting", () => {
     const wf = readFileSync(".github/workflows/straylight-merge-guard.yml", "utf8");
     const gate = wf.indexOf("node .straylight/bin/policy-gate.mjs");
-    const reconstructStep = wf.indexOf("Reconstruct lane");
+    // Workflow-boundary redesign: the gate precedes the entire
+    // gather → plan → execute chain (the only mutation path).
+    const gatherStep = wf.indexOf("Gather evidence twice");
+    const executeStep = wf.indexOf("Execute write plan (single shared executor)");
     expect(gate).toBeGreaterThan(-1);
-    expect(gate).toBeLessThan(reconstructStep);
+    expect(gate).toBeLessThan(gatherStep);
+    expect(gatherStep).toBeLessThan(executeStep);
   });
 });
 

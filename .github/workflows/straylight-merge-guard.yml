@@ -13,6 +13,14 @@
 # requires a future ADR,
 # a separately audited authorization, and distinct actor identities
 # (ADR-050 §6) — not a change to this file's conditions.
+#
+# WORKFLOW-BOUNDARY CONTRACT (rev. 3 §11): bash here is confined to
+# fetching bytes to files (TWICE — the two-read stability fence),
+# switching on validated exit codes, and invoking the planner
+# (plan-merge-guard-write.mjs — evidence parsing with N1/N2 profiles,
+# the universal lane-target proof, pure merge-guard evaluation, exact
+# dedupe) and the shared secure executor (execute-write-plan.mjs). Bash
+# never constructs a write request and never interprets evidence content.
 
 name: Straylight CP Merge Guard
 
@@ -24,7 +32,8 @@ on:
         required: true
 
 # contents:read       — checkout of protocol code.
-# issues:write        — post the shadow result on the lane issue.
+# issues:write        — post the shadow result on the lane issue (used
+#                       ONLY through the shared executor).
 # pull-requests:read  — read PR head SHA + check states (never write).
 permissions:
   contents: read
@@ -62,9 +71,9 @@ jobs:
       # POLICY AUTHORITY: the canonical executable gate (policy-gate.mjs →
       # validatePolicy) validates the COMPLETE committed policy on LITERAL
       # BOOLEANS before this workflow performs any network or mutation
-      # action (it posts a shadow-result comment). Exit 0 = valid + enabled
-      # → proceed. Exit 3 = valid kill switch → take no action (post
-      # nothing). Anything else = malformed policy → FAIL CLOSED loudly.
+      # action. Exit 0 = valid + enabled → proceed. Exit 3 = valid kill
+      # switch → take no action. Anything else = malformed policy → FAIL
+      # CLOSED loudly.
       - name: Kill switch check (canonical policy gate)
         run: |
           set -euo pipefail
@@ -80,166 +89,145 @@ jobs:
             exit 1
           fi
 
-      - name: Reconstruct lane
+      # FETCH ONLY, TWICE: two complete independent reads for the
+      # stability fence. Raw bytes go straight to files; the PLANNERS own
+      # all parsing, binding, reconstruction, and eligibility logic. Fetch
+      # targets are DERIVED outputs only: the PR number comes from the
+      # reducer planner's --probe (the shared reconstruction authority),
+      # and the head SHA for check evidence comes from evidence.mjs's
+      # bound parse of the just-fetched PR bytes — bash never extracts a
+      # field from raw evidence itself. PR/check/status evidence is
+      # optional on disk (a failed fetch is recorded by absence; the pure
+      # module fails closed downstream), but a failed ENUMERATION or
+      # issue/comment fetch aborts loudly.
+      - name: Gather evidence twice (raw bytes to files)
+        id: gather
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
-          gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" > /tmp/issue.json
-          gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" --paginate > /tmp/comments.json
-          jq -n --slurpfile issue /tmp/issue.json --slurpfile comments /tmp/comments.json \
-            '{issue_body: $issue[0].body,
-              comments: ($comments | add // [] | map({id: .id, user: .user.login, body: .body, created_at: .created_at, updated_at: .updated_at}))}' \
-            > /tmp/reduce-input.json
-          node .straylight/bin/reduce-issue.mjs --input /tmp/reduce-input.json > /tmp/lane-result.json
-          jq '.lane' /tmp/lane-result.json > /tmp/lane.json
-
-      - name: Gather complete live PR metadata and check status (fail closed on absence)
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          PRNUM=$(jq -r '.pr_number // empty' /tmp/lane.json)
-          HEAD=""
-          # COMPLETE normalized metadata only: one fetch of the PR object is
-          # normalized into the same validatePrMetadata record the reducer
-          # workflow embeds in system.eligibility_confirmed events. Every
-          # field must be PRESENT with its expected type (draft/merged as
-          # literal booleans, never defaulted) or the record collapses to
-          # {fetch_ok:false} and the pure module fails closed. No loose
-          # single-field forwarding: partial evidence is unknown, and
-          # unknown is ineligible.
-          CHECKS_JSON="null"
-          PR_META='{"fetch_ok": false}'
-          if [[ "$PRNUM" =~ ^[0-9]+$ ]]; then
-            if gh api "repos/${REPO}/pulls/${PRNUM}" > /tmp/pr.json 2>/dev/null; then
-              PR_META=$(jq --arg repo "$REPO" '
-                . as $p
-                | if (($p.draft|type) == "boolean" and ($p.merged|type) == "boolean"
-                      and (($p.number)|type) == "number" and (($p.state)|type) == "string"
-                      and (($p.base.ref)|type) == "string" and (($p.base.sha)|type) == "string"
-                      and (($p.head.ref)|type) == "string" and (($p.head.sha)|type) == "string")
-                  then {
-                    fetch_ok: true,
-                    repository: $repo,
-                    pr_number: $p.number,
-                    state: $p.state,
-                    draft: $p.draft,
-                    merged: $p.merged,
-                    base_branch: $p.base.ref,
-                    base_sha: $p.base.sha,
-                    head_branch: $p.head.ref,
-                    head_sha: $p.head.sha
-                  }
-                  else { fetch_ok: false }
-                  end' /tmp/pr.json)
-              HEAD=$(jq -r 'if .fetch_ok == true then .head_sha else "" end' <<< "$PR_META")
+          gather_once() {
+            local DIR="$1"
+            if ! gh api --paginate "repos/${REPO}/issues?state=open&per_page=100" > "${DIR}/enumeration.pages"; then
+              echo "::error::enumeration failed (gh api non-zero); aborting — NOT treating as zero lanes"
+              exit 1
             fi
-            if [[ "$HEAD" =~ ^[0-9a-f]{40}$ ]]; then
-              # Modern check runs on the head: aggregate EVERY page's runs into
-              # one conclusion list (--paginate emits one JSON document per
-              # page; slurp + flatten joins them). The pure module cross-checks
-              # the list length against total_count, so a dropped page (or this
-              # aggregation ever regressing to page 1 only) fails closed
-              # instead of passing on partial evidence. In-progress runs have
-              # conclusion null → recorded as "null" (non-passing).
-              CR_TOTAL=$(gh api "repos/${REPO}/commits/${HEAD}/check-runs" -q '.total_count' 2>/dev/null || echo "")
-              CR_CONCLUSIONS="null"
-              if gh api --paginate "repos/${REPO}/commits/${HEAD}/check-runs" > /tmp/check-pages.json 2>/dev/null; then
-                CR_CONCLUSIONS=$(jq -s '[.[].check_runs[] | (.conclusion // "null")]' /tmp/check-pages.json)
-              fi
-              # Legacy combined commit status (the check-runs API does not
-              # surface these; branch protection may still require them).
-              CS_STATE=$(gh api "repos/${REPO}/commits/${HEAD}/status" -q '.state' 2>/dev/null || echo "")
-              CS_TOTAL=$(gh api "repos/${REPO}/commits/${HEAD}/status" -q '.total_count' 2>/dev/null || echo "")
-              if [[ "$CR_TOTAL" =~ ^[0-9]+$ && "$CR_CONCLUSIONS" != "null" && "$CS_TOTAL" =~ ^[0-9]+$ && -n "$CS_STATE" ]]; then
-                CHECKS_JSON=$(jq -n \
-                  --argjson crt "$CR_TOTAL" --argjson crc "$CR_CONCLUSIONS" \
-                  --argjson cst "$CS_TOTAL" --arg css "$CS_STATE" \
-                  '{check_runs_total: $crt, check_run_conclusions: $crc, commit_statuses_total: $cst, commit_status_state: $css}')
-              fi
+            if ! gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" > "${DIR}/issue.json"; then
+              echo "::error::issue fetch failed; aborting"
+              exit 1
             fi
-          fi
-          jq -n --slurpfile lane /tmp/lane.json --argjson checks "$CHECKS_JSON" \
-            --argjson prmeta "$PR_META" \
-            '{lane: $lane[0],
-              context: ((if $checks != null then {checks: $checks} else {} end)
-                        + {pr_metadata: $prmeta})}' \
-            > /tmp/guard-input.json
-
-      - name: Evaluate shadow eligibility
-        run: |
-          set -euo pipefail
-          node .straylight/bin/merge-guard-check.mjs --input /tmp/guard-input.json > /tmp/guard-result.json
-          cat /tmp/guard-result.json
-
-      - name: Post shadow result
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ISSUE_NUMBER: ${{ inputs.issue_number }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          ELIGIBLE=$(jq -r '.eligible' /tmp/guard-result.json)
-          SEQ=$(jq -r '.event_sequence // "na"' /tmp/lane.json)
-          HEAD=$(jq -r '.context.pr_metadata.head_sha // "unknown"' /tmp/guard-input.json)
-          DEDUPE="merge-guard:${SEQ}:${HEAD}:${ELIGIBLE}"
-          # Only a genuine bot-authored merge-guard-result comment counts as
-          # "already posted" — restrict the scan to github-actions[bot]
-          # authorship AND the merge-guard-result marker so a third party
-          # cannot suppress this shadow report by planting the dedupe string
-          # in an ordinary comment (B8 uniform hardening).
-          #
-          # FAIL CLOSED, MATERIALIZED READ: this read GUARDS the result
-          # write. Never a `gh api | grep -q` pipeline — an API failure
-          # mid-stream (or grep exiting early on first match, SIGPIPE-ing
-          # gh) would be indistinguishable from "not found" and fall through
-          # to a duplicate write. Fetch to a local file, verify the API exit
-          # status, validate the shape, then search ONLY the local file. A
-          # read or parse failure fails the job; it is never converted into
-          # "not yet posted".
-          if ! gh api --paginate "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" > /tmp/dedupe-pages.json; then
-            echo "::error::result dedupe read failed (gh api non-zero); failing before any write — NOT treating as 'not yet posted'"
-            exit 1
-          fi
-          jq -s -e 'map(type == "array") | all' /tmp/dedupe-pages.json >/dev/null || {
-            echo "::error::result dedupe pages malformed; failing before any write"
-            exit 1
+            if ! gh api --paginate "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" > "${DIR}/comments.pages"; then
+              echo "::error::comment fetch failed; aborting — NOT treating as zero comments"
+              exit 1
+            fi
           }
-          # An unexpected comment shape makes this jq error and (set -e)
-          # fail the job — shape surprises never read as "not found".
-          jq -s '[.[][] | select(.user.login == "github-actions[bot]")
-                        | select(.body | test("<!-- straylight:merge-guard-result:v1 -->"))
-                        | .body]' /tmp/dedupe-pages.json > /tmp/dedupe-bodies.json
-          # jq 'any' decides found/not-found on the LOCAL file: exit 0 =
-          # found (skip), exit 1 = valid no-match (post), exit >1 = error
-          # (fail). No pipeline ambiguity.
+          # Derived read: the bound head SHA of an already-fetched PR file,
+          # parsed by evidence.mjs (never by bash/jq over raw bytes).
+          # Prints nothing when the file is absent or fails binding.
+          derived_head() {
+            local DIR="$1" PRNUM="$2"
+            [[ -f "${DIR}/pr.json" ]] || return 0
+            PR_FILE="${DIR}/pr.json" PR_NUM="$PRNUM" node --input-type=module -e '
+              import { readFileSync } from "node:fs";
+              const { parsePr } = await import("./.straylight/lib/evidence.mjs");
+              const r = parsePr(readFileSync(process.env.PR_FILE, "utf8"), {
+                repository: process.env.REPO, pr_number: Number(process.env.PR_NUM),
+              });
+              if (r.ok) process.stdout.write(r.pr.head_sha);
+            ' 2>/dev/null || true
+          }
+          fetch_pr_evidence() {
+            local DIR="$1" PRNUM="$2"
+            if ! gh api "repos/${REPO}/pulls/${PRNUM}" > "${DIR}/pr.json" 2>/dev/null; then
+              rm -f "${DIR}/pr.json"
+              return 0
+            fi
+            local HEAD
+            HEAD=$(derived_head "${DIR}" "$PRNUM")
+            if [[ "$HEAD" =~ ^[0-9a-f]{40}$ ]]; then
+              gh api --paginate "repos/${REPO}/commits/${HEAD}/check-runs" > "${DIR}/check-runs.pages" 2>/dev/null || rm -f "${DIR}/check-runs.pages"
+              gh api "repos/${REPO}/commits/${HEAD}/status" > "${DIR}/status.json" 2>/dev/null || rm -f "${DIR}/status.json"
+            fi
+          }
+          G1=$(mktemp -d); G2=$(mktemp -d)
+          echo "g1=${G1}" >> "$GITHUB_OUTPUT"
+          echo "g2=${G2}" >> "$GITHUB_OUTPUT"
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "now=${NOW}" >> "$GITHUB_OUTPUT"
+          gather_once "${G1}"
+          # DERIVED probe over read 1 (reducer planner --probe: two-read
+          # fence trivially satisfied by the same read twice, lane-target
+          # proof, reconstruction) to learn which PR to fetch.
           set +e
-          jq -e --arg d "dedupe:${DEDUPE}" 'any(.[]; contains($d))' /tmp/dedupe-bodies.json >/dev/null
-          FOUND=$?
+          PROBE=$(node .straylight/bin/plan-reducer-writes.mjs --stage a --probe \
+            --gather-1 "${G1}" --gather-2 "${G1}" \
+            --issue-number "${ISSUE_NUMBER}" \
+            --repository "${REPO}" --nonce "${NONCE}" --now "${NOW}")
+          PROBE_EXIT=$?
           set -e
-          if [[ "$FOUND" -eq 0 ]]; then
-            echo "already posted ${DEDUPE}; skipping"
-            exit 0
-          elif [[ "$FOUND" -ne 1 ]]; then
-            echo "::error::result dedupe search failed (jq exit ${FOUND}); failing before any write"
+          if [[ "$PROBE_EXIT" -ne 0 ]]; then
+            echo "::error::evidence probe refused (exit ${PROBE_EXIT}); failing closed"
+            echo "$PROBE"
             exit 1
           fi
-          {
-            echo "## Straylight merge guard — SHADOW RESULT (cannot merge)"
-            echo ""
-            echo "dedupe:${DEDUPE}"
-            echo ""
-            echo "Eligibility: **${ELIGIBLE}** — this is a report, not an action."
-            echo "Merging remains an exclusive \`operator:eileen\` action."
-            echo ""
-            echo "<!-- straylight:merge-guard-result:v1 -->"
-            echo '```json'
-            cat /tmp/guard-result.json
-            echo '```'
-          } > /tmp/comment.md
-          gh api -X POST "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
-            --input <(jq -n --rawfile body /tmp/comment.md '{body: $body}')
+          PRNUM=$(echo "$PROBE" | jq -r '.pr_number // empty')
+          if [[ "$PRNUM" =~ ^[0-9]+$ ]]; then
+            fetch_pr_evidence "${G1}" "$PRNUM"
+          fi
+          gather_once "${G2}"
+          if [[ "$PRNUM" =~ ^[0-9]+$ ]]; then
+            fetch_pr_evidence "${G2}" "$PRNUM"
+          fi
+
+      # PLAN: two-read fence, lane-target proof, pure evaluation, exact
+      # dedupe — all planner authority. Exit 3 = already posted (valid
+      # no-op); exit 2 = refusal, zero writes.
+      - name: Plan shadow result (planner authority)
+        id: plan
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          REQUEST_ROOT=$(mktemp -d)
+          echo "request_root=${REQUEST_ROOT}" >> "$GITHUB_OUTPUT"
+          set +e
+          node .straylight/bin/plan-merge-guard-write.mjs \
+            --gather-1 "${{ steps.gather.outputs.g1 }}" \
+            --gather-2 "${{ steps.gather.outputs.g2 }}" \
+            --issue-number "${ISSUE_NUMBER}" \
+            --request-root "${REQUEST_ROOT}" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}" \
+            --now "${{ steps.gather.outputs.now }}"
+          PLAN=$?
+          set -e
+          if [[ "$PLAN" -eq 3 ]]; then
+            echo "shadow result already posted; nothing to do"
+            echo "outcome=noop" >> "$GITHUB_OUTPUT"
+          elif [[ "$PLAN" -eq 0 ]]; then
+            echo "outcome=plan" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::merge-guard planner refused (exit ${PLAN}); failing closed — zero writes"
+            exit 1
+          fi
+
+      # EXECUTE: one invocation of the shared secure executor per plan.
+      - name: Execute write plan (single shared executor)
+        if: steps.plan.outputs.outcome == 'plan'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+          REQUEST_ROOT: ${{ steps.plan.outputs.request_root }}
+        run: |
+          set -euo pipefail
+          node .straylight/bin/execute-write-plan.mjs \
+            --plan "${REQUEST_ROOT}/plan.json" \
+            --request-root "${REQUEST_ROOT}" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}"

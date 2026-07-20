@@ -211,18 +211,23 @@ describe("C2 — missing draft/merged PR metadata fails closed as unknown", () =
     const reducer = readFileSync(".github/workflows/straylight-reducer.yml", "utf8");
     expect(reducer).not.toMatch(/\.draft\s*\/\/\s*false/);
     expect(reducer).not.toMatch(/\.merged\s*\/\/\s*false/);
-    expect(reducer).toMatch(/\(\$p\.draft\|type\) == "boolean"/);
-    expect(reducer).toMatch(/\(\$p\.merged\|type\) == "boolean"/);
-    // The merge-guard workflow normalizes with the SAME complete-record jq
-    // (fetch_ok collapses to false unless every field is present and typed).
+    // Workflow-boundary redesign: the merge-guard workflow no longer
+    // normalizes PR metadata in jq at all — parsePr (evidence.mjs, used
+    // by plan-merge-guard-write.mjs) is the ONLY normalization path, and
+    // it requires draft/merged to be literal observed booleans (proven
+    // executably in evidence.test.ts "PR with non-boolean draft/merged
+    // refuses"). Pin that no jq defaulting or loose forwarding returns.
     const guard = readFileSync(".github/workflows/straylight-merge-guard.yml", "utf8");
     expect(guard).not.toMatch(/\.draft\s*\/\/\s*false/);
     expect(guard).not.toMatch(/\.merged\s*\/\/\s*false/);
-    expect(guard).toMatch(/\(\$p\.draft\|type\) == "boolean"/);
-    expect(guard).toMatch(/\(\$p\.merged\|type\) == "boolean"/);
-    expect(guard).toMatch(/fetch_ok: false/);
+    expect(guard).toMatch(/node \.straylight\/bin\/plan-merge-guard-write\.mjs/);
     // No loose single-field forwarding survives anywhere in the workflow.
-    expect(guard).not.toMatch(/pr_draft|pr_merged|pr_state|pr_base_ref|pr_head_sha/);
+    expect(guard).not.toMatch(/pr_draft|pr_merged|pr_state|pr_base_ref/);
+    // The evidence parser is the executable authority for the observed-
+    // boolean rule the old jq expressed.
+    const evidence = readFileSync(".straylight/lib/evidence.mjs", "utf8");
+    expect(evidence).toMatch(/typeof p\.draft !== "boolean"/);
+    expect(evidence).toMatch(/typeof p\.merged !== "boolean"/);
   });
 });
 
@@ -651,11 +656,20 @@ describe("C11 — two-page check-run aggregation", () => {
     expect(out.eligible).toBe(false);
   });
 
-  it("the merge-guard workflow gathers conclusions with --paginate and slurps every page", () => {
+  it("the merge-guard workflow gathers conclusions with --paginate; the shared parser aggregates every page", () => {
+    // Workflow-boundary redesign: bash fetches the raw --paginate stream
+    // to a file; parseCheckRunPages (evidence.mjs, consumed by
+    // plan-merge-guard-write.mjs) owns aggregation and cross-checks the
+    // run list against total_count so a dropped page fails closed —
+    // proven executably in evidence.test.ts ("check-run aggregation count
+    // must equal total_count exactly"). Pin the fetch shape and that no
+    // jq slurping of check pages returns.
     const wf = readFileSync(".github/workflows/straylight-merge-guard.yml", "utf8");
     expect(wf).toMatch(/gh api --paginate "repos\/\$\{REPO\}\/commits\/\$\{HEAD\}\/check-runs"/);
-    expect(wf).toMatch(/jq -s '\[\.\[\]\.check_runs\[\] \| \(\.conclusion \/\/ "null"\)\]'/);
-    expect(wf).toMatch(/check_run_conclusions/);
+    expect(wf).not.toMatch(/jq -s '\[\.\[\]\.check_runs/);
+    const evidence = readFileSync(".straylight/lib/evidence.mjs", "utf8");
+    expect(evidence).toMatch(/check-run-count-mismatch/);
+    expect(evidence).toMatch(/conclusions\.length !== total/);
   });
 });
 
