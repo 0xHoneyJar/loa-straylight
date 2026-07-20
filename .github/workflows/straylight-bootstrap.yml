@@ -2,13 +2,25 @@
 #
 # Authority: docs/decisions/ADR-050-autonomous-execution-control-plane.md §7.1
 #
-# Manual, idempotent: creates AT MOST ONE Phase 49P lane issue (ALL issues
-# — open and closed, label-independently — are searched through the
-# canonical lane marker parser before creating; the cp-lane label is a
-# derived convenience, never discovery authority). It does NOT implement
-# Phase 49P, does NOT open an implementation PR, does NOT invoke any model
-# API, and does NOT merge anything. Run it once after the control-plane PR
-# merges; re-running is a no-op.
+# Manual, idempotent: creates AT MOST ONE Phase 49P lane issue. It does
+# NOT implement Phase 49P, does NOT open an implementation PR, does NOT
+# invoke any model API, and does NOT merge anything. Run it once after
+# the control-plane PR merges; re-running is a no-op.
+#
+# WORKFLOW-BOUNDARY CONTRACT (rev. 3 §11): bash here is confined to
+# fetching bytes to files, switching on validated exit codes, and
+# invoking the two Node entry points (planner, executor). Bash never
+# constructs a write request, never interprets evidence content, and
+# never calls `gh api -X POST/PATCH/DELETE` directly. All authority lives
+# in the planner (plan-bootstrap-write.mjs — evidence parsing, N1/N2
+# binding, the universal lane-ABSENCE proof, genesis validation) and the
+# shared secure executor (execute-write-plan.mjs — O_NOFOLLOW
+# read-once/hash/retain, fixed argv, stdin bytes, exit 2 = zero writes).
+#
+# Planner exit semantics: 0 = absence proven, plan written → execute.
+# 3 = the lane exists exactly once → valid no-op. 2 = ANY ambiguity
+# (duplicate lane IDs anywhere, unreadable genesis bodies, malformed
+# pages/labels, invalid base SHA) → fail closed, zero writes.
 
 name: Straylight CP Bootstrap (Phase 49P lane)
 
@@ -16,7 +28,7 @@ on:
   workflow_dispatch: {}
 
 # contents:read — read base SHA + protocol code. issues:write — create the
-# lane issue and its labels.
+# lane issue and its labels (used ONLY through the shared executor).
 permissions:
   contents: read
   issues: write
@@ -48,11 +60,9 @@ jobs:
       # POLICY AUTHORITY: the canonical executable gate (policy-gate.mjs →
       # validatePolicy) validates the COMPLETE committed policy and decides
       # on LITERAL BOOLEANS — jq raw textual output is never policy
-      # authority (it prints the STRING "true" identically to the boolean).
-      # Bootstrap MUTATES (creates a label and a lane issue), so ONLY exit 0
-      # (valid policy, enabled boolean true) may proceed: a valid kill switch
-      # (exit 3) refuses, and a malformed policy (any other exit) fails
-      # closed — it is neither enabled nor a valid kill switch.
+      # authority. Bootstrap MUTATES, so ONLY exit 0 (valid policy, enabled
+      # boolean true) may proceed: a valid kill switch (exit 3) refuses,
+      # and a malformed policy (any other exit) fails closed.
       - name: Kill switch check (canonical policy gate)
         run: |
           set -euo pipefail
@@ -68,156 +78,86 @@ jobs:
             exit 1
           fi
 
-      - name: Idempotency check — existing Phase 49P lane
-        id: existing
+      # FETCH ONLY: raw bytes to files. The enumeration is
+      # label-independent across ALL issues (open AND closed — a closed
+      # lane is a completed lane, not permission to duplicate it); the
+      # planner owns flattening, strict parsing, PR exclusion, N1
+      # uniqueness, and the lane-absence proof, all fail-closed. A failed
+      # listing call aborts loudly — never "zero lanes".
+      - name: Fetch evidence (raw bytes to files)
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # A lane exists if ANY issue's body carries a lane genesis payload
-          # with lane_id lane-phase-49p (open OR closed — a closed lane is a
-          # completed/superseded lane, not permission to duplicate it).
-          #
-          # DISCOVERY IS LABEL-INDEPENDENT: the enumeration deliberately does
-          # NOT filter on the cp-lane label. Labels are derived projections,
-          # never discovery authority (ADR-050 §1.1): a lane whose cp-lane
-          # label was removed (or never synced) must still be found here, or
-          # this check would happily create a duplicate lane. Detection goes
-          # through the CANONICAL protocol parser (lane-scan.mjs →
-          # markers.mjs → strict JSON), NOT a substring match over the raw
-          # body: substring matching was whitespace-sensitive, so a
-          # compact-but-valid genesis payload ({"lane_id":"lane-phase-49p"})
-          # would have been missed and a duplicate lane created. Anything the
-          # reducer would parse as this lane's genesis is found here,
-          # byte-formatting notwithstanding.
-          # --paginate across ALL pages: an un-paginated check could miss an
-          # existing lane on page 2 and create a duplicate (R4).
-          #
-          # FAIL CLOSED on enumeration failure: a failed listing API call must
-          # abort the bootstrap loudly, never be mistaken for "no existing
-          # lane" (an empty successful query) — that would create a duplicate.
-          # Capture the exit status explicitly; no `|| true` may swallow it.
           if ! gh api --paginate "repos/${REPO}/issues?state=all&per_page=100" \
               > /tmp/issue-pages.json; then
             echo "::error::lane enumeration failed (gh api non-zero); refusing to bootstrap — NOT treating as zero lanes"
             exit 1
           fi
-          # The raw page stream goes to the scanner UNTOUCHED: flattening,
-          # page well-formedness, and pull-request exclusion (the issues
-          # listing includes PRs; a PR body with a lane-like payload is never
-          # a lane issue) all happen inside lane-scan.mjs and FAIL CLOSED —
-          # a malformed page exits 2 here instead of reading as zero lanes.
-          if ! node .straylight/bin/lane-scan.mjs --pages /tmp/issue-pages.json --lane-id lane-phase-49p > /tmp/lane-scan.json; then
-            echo "::error::lane scan failed (flattening/parse error); refusing to bootstrap — NOT treating as zero lanes"
-            cat /tmp/lane-scan.json
+          if ! gh api --paginate "repos/${REPO}/labels?per_page=100" \
+              > /tmp/label-pages.json; then
+            echo "::error::label enumeration failed (gh api non-zero); refusing to bootstrap — NOT treating as no labels"
             exit 1
           fi
-          cat /tmp/lane-scan.json
-          jq -e '.ok == true' /tmp/lane-scan.json >/dev/null || {
-            echo "::error::lane scan failed; refusing to bootstrap"
-            exit 1
-          }
-          # FAIL CLOSED on unprovable bodies: an issue carrying the lane
-          # marker whose payload cannot be parsed could BE the existing lane
-          # in mangled form — refusing beats duplicating.
-          UNREADABLE=$(jq -r '.unreadable | length' /tmp/lane-scan.json)
-          if [[ "$UNREADABLE" != "0" ]]; then
-            echo "::error::${UNREADABLE} issue(s) carry an unparseable lane payload; refusing to bootstrap until they are resolved"
-            exit 1
-          fi
-          FOUND=$(jq -r '.matches | length' /tmp/lane-scan.json)
-          echo "found=${FOUND}" >> "$GITHUB_OUTPUT"
-          if [[ "$FOUND" != "0" ]]; then
-            echo "Phase 49P lane already exists (${FOUND} match(es)); bootstrap is a no-op."
-          fi
-
-      - name: Ensure cp-lane label exists
-        if: steps.existing.outputs.found == '0'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
-          gh api "repos/${REPO}/labels/cp-lane" >/dev/null 2>&1 || \
-            gh api -X POST "repos/${REPO}/labels" \
-              --input <(jq -n '{name: "cp-lane", color: "1d76db", description: "Straylight control-plane lane (ADR-050)"}')
-
-      - name: Create Phase 49P shadow lane issue
-        if: steps.existing.outputs.found == '0'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPO: ${{ github.repository }}
-        run: |
-          set -euo pipefail
           # Resolve the base SHA from origin/main explicitly — NOT from the
-          # dispatched checkout ref. workflow_dispatch can run against any ref,
-          # and `git rev-parse HEAD` would then anchor the lane to that
-          # arbitrary ref while the record still claims base_branch:"main". A
-          # read-only fetch (allowed under contents:read) pins base to the
-          # actual main tip. `set -euo pipefail` fails the step closed if the
-          # fetch or rev-parse fails, so a lane is never created against an
-          # unverifiable base.
+          # dispatched checkout ref. `set -euo pipefail` fails the step
+          # closed if the fetch or rev-parse fails, so a lane is never
+          # created against an unverifiable base. The planner re-validates
+          # the SHA shape and embeds it in the reducer-validated genesis.
           git fetch --no-tags --depth=1 origin main
-          BASE_SHA=$(git rev-parse FETCH_HEAD)
-          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "could not resolve origin/main tip"; exit 1; }
-          jq -n --arg base "$BASE_SHA" --arg repo "$REPO" '{
-            schema: "straylight.lane.v1",
-            lane_id: "lane-phase-49p",
-            phase: "phase-49p",
-            authorized_corridor: ["phase-49p", "phase-49q", "phase-50a", "phase-50b"],
-            repository: $repo,
-            base_branch: "main",
-            base_sha: $base,
-            tier: "tier-1",
-            authority_bearing: false,
-            state: "planning",
-            next_actor: "coordinator",
-            working_branch: null,
-            pr_number: null,
-            pr_head_sha: null,
-            audited_sha: null,
-            verdict: null,
-            attempt: 0,
-            patch_cycle: 0,
-            mode: "shadow",
-            auto_merge_allowed: false,
-            operator_pause: false,
-            operator_required_reason: null,
-            lease: null,
-            event_sequence: 0,
-            last_transition: null
-          }' > /tmp/lane.json
-          # Genesis must satisfy the same validator the reducer uses.
-          jq -n --slurpfile lane /tmp/lane.json \
-            '{issue_body: ("<!-- straylight:lane:v1 -->\n```json\n" + ($lane[0] | tojson) + "\n```"), comments: []}' \
-            > /tmp/genesis-check.json
-          node .straylight/bin/reduce-issue.mjs --input /tmp/genesis-check.json > /tmp/genesis-result.json
-          [[ "$(jq -r '.ok' /tmp/genesis-result.json)" == "true" ]] || {
-            echo "genesis lane failed validation; refusing to create issue"
-            cat /tmp/genesis-result.json
+          git rev-parse FETCH_HEAD > /tmp/base-sha.txt
+
+      # PLAN: the planner performs the universal lane-ABSENCE proof over
+      # the complete enumeration and authors the write plan. Exit 3 is a
+      # valid no-op (the lane exists exactly once); exit 2 is any
+      # ambiguity — duplicate lane IDs, unreadable marker-bearing bodies,
+      # malformed evidence — and fails the job with zero writes.
+      - name: Plan bootstrap write (planner authority)
+        id: plan
+        env:
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          REQUEST_ROOT=$(mktemp -d)
+          echo "request_root=${REQUEST_ROOT}" >> "$GITHUB_OUTPUT"
+          set +e
+          node .straylight/bin/plan-bootstrap-write.mjs \
+            --pages /tmp/issue-pages.json \
+            --labels /tmp/label-pages.json \
+            --base-sha "$(cat /tmp/base-sha.txt)" \
+            --request-root "${REQUEST_ROOT}" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}"
+          PLAN=$?
+          set -e
+          if [[ "$PLAN" -eq 3 ]]; then
+            echo "Phase 49P lane already exists; bootstrap is a no-op."
+            echo "outcome=noop" >> "$GITHUB_OUTPUT"
+          elif [[ "$PLAN" -eq 0 ]]; then
+            echo "outcome=plan" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::bootstrap planner refused (exit ${PLAN}); failing closed — zero writes"
             exit 1
-          }
-          {
-            echo "# Control-plane lane: Phase 49P — sibling evidence intake (shadow)"
-            echo ""
-            echo "Coordinated under [ADR-050](https://github.com/${REPO}/blob/main/docs/decisions/ADR-050-autonomous-execution-control-plane.md)."
-            echo "Protocol: [.straylight/README.md](https://github.com/${REPO}/blob/main/.straylight/README.md)."
-            echo ""
-            echo "This issue is the durable lane record. The genesis lane payload is below;"
-            echo "all subsequent protocol actions are append-only event comments. Labels are"
-            echo "derived state. **Shadow mode: nothing merges automatically.**"
-            echo ""
-            echo "This lane COORDINATES Phase 49P (ADR-049 §10 step 3 — PR A, sibling"
-            echo "evidence intake). Creating this issue does not implement Phase 49P,"
-            echo "does not open its PR, and does not advance any ADR-022E gate."
-            echo ""
-            echo "<!-- straylight:lane:v1 -->"
-            echo '```json'
-            jq . /tmp/lane.json
-            echo '```'
-          } > /tmp/issue-body.md
-          gh api -X POST "repos/${REPO}/issues" \
-            --input <(jq -n --rawfile body /tmp/issue-body.md \
-              '{title: "CP lane: Phase 49P — sibling evidence intake (shadow)", body: $body, labels: ["cp-lane"]}')
+          fi
+
+      # EXECUTE: one invocation of the shared secure executor per plan.
+      # Exit 2 = validation refusal, zero gh launches guaranteed; exit 4 =
+      # execution began and a failure occurred (recovery = a fresh run;
+      # the absence proof then finds whatever landed). Both fail the job.
+      - name: Execute write plan (single shared executor)
+        if: steps.plan.outputs.outcome == 'plan'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+          REQUEST_ROOT: ${{ steps.plan.outputs.request_root }}
+        run: |
+          set -euo pipefail
+          node .straylight/bin/execute-write-plan.mjs \
+            --plan "${REQUEST_ROOT}/plan.json" \
+            --request-root "${REQUEST_ROOT}" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}"
           echo "Phase 49P shadow lane created."

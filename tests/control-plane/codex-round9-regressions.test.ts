@@ -101,11 +101,19 @@ describe("I1 — lane discovery never depends on the derived cp-lane label", () 
     expect(watchdog).not.toMatch(/issues\?[^"]*labels=/);
   });
 
-  it("both route the RAW page stream through the shared canonical adapter (lane-scan.mjs --pages)", () => {
-    expect(bootstrap).toMatch(/node \.straylight\/bin\/lane-scan\.mjs --pages \/tmp\/issue-pages\.json --lane-id lane-phase-49p/);
+  it("both route the RAW page stream through the shared canonical parsers (planner/collector), never jq", () => {
+    // Workflow-boundary redesign: bootstrap's detection lives in
+    // plan-bootstrap-write.mjs; the watchdog's lives in
+    // collect-watchdog-evidence.mjs — both consume the raw --paginate
+    // stream through evidence.mjs + lane-target.mjs (strict parse, N1
+    // uniqueness, PR exclusion, canonical marker parsing), all
+    // fail-closed and proven executably in planner-adversarial /
+    // collection / dual-collection suites.
+    expect(bootstrap).toMatch(/node \.straylight\/bin\/plan-bootstrap-write\.mjs/);
+    expect(bootstrap).toMatch(/--pages \/tmp\/issue-pages\.json/);
     expect(watchdog).toMatch(/node \.straylight\/bin\/lane-scan\.mjs --pages \/tmp\/issue-pages\.json --all-lanes/);
     // No workflow-side jq flattening of the page stream survives: the
-    // adapter owns flattening and fails closed on malformed pages.
+    // shared parsers own flattening and fail closed on malformed pages.
     expect(bootstrap).not.toMatch(/jq -s '\[\.\[\]\[\] \| \{number/);
     expect(watchdog).not.toMatch(/-q '\.\[\]\.number'/);
   });
@@ -189,7 +197,13 @@ describe("I1 — lane discovery never depends on the derived cp-lane label", () 
   });
 
   it("cp-lane remains a derived convenience: bootstrap still creates it; reducer still syncs it; nothing discovers by it", () => {
-    expect(bootstrap).toMatch(/- name: Ensure cp-lane label exists/);
+    // Bootstrap's cp-lane creation now flows through the planner: label
+    // evidence is fetched and the create-label-definition operation is
+    // planned only when provably missing (proven executably in
+    // planner-adversarial.test.ts). The workflow fetches label evidence
+    // for that decision.
+    expect(bootstrap).toMatch(/repos\/\$\{REPO\}\/labels\?per_page=100/);
+    expect(bootstrap).toMatch(/--labels \/tmp\/label-pages\.json/);
     const reducer = readFileSync(REDUCER, "utf8");
     expect(reducer).toMatch(/Sync derived labels/);
     // The reducer's per-issue trigger condition may reference the label
@@ -271,10 +285,35 @@ describe("I2 — a malformed / unreadable marker-bearing lane is visible, never 
   });
 
   it("bootstrap ABORTS while any marker-bearing body is unprovable (an unreadable genesis could BE the lane)", () => {
-    const s = step(bootstrap, "Idempotency check — existing Phase 49P lane");
-    expect(s).toMatch(/UNREADABLE=\$\(jq -r '\.unreadable \| length' \/tmp\/lane-scan\.json\)/);
-    expect(s).toMatch(/refusing to bootstrap until they are resolved/);
-    expect(s).toMatch(/unparseable lane payload[\s\S]{0,200}exit 1/);
+    // EXECUTABLE proof (replacing the retired YAML source pin): the
+    // bootstrap planner exits 2 with lane-target-unreadable when any
+    // marker-bearing body cannot be parsed — the absence proof is blocked
+    // because the unreadable genesis could BE the lane in mangled form.
+    const dir = mkdtempSync(join(tmpdir(), "cp-r9-boot-"));
+    writeFileSync(join(dir, "pages.json"), JSON.stringify([{
+      number: 9,
+      url: "https://api.github.com/repos/0xHoneyJar/loa-straylight/issues/9",
+      body: "<!-- straylight:lane:v1 -->\n```json\n{ not json ]\n```",
+      created_at: "2026-07-16T11:00:00Z", updated_at: "2026-07-16T12:00:00Z",
+    }]));
+    writeFileSync(join(dir, "labels.json"), "[]");
+    let status = 0, out: any = null;
+    try {
+      execFileSync("node", [
+        ".straylight/bin/plan-bootstrap-write.mjs",
+        "--pages", join(dir, "pages.json"), "--labels", join(dir, "labels.json"),
+        "--base-sha", "009c4afe34f3f7151db4239fe1c69898833440bb",
+        "--request-root", dir, "--repository", "0xHoneyJar/loa-straylight",
+        "--nonce", "12345-1",
+      ], { encoding: "utf8" });
+    } catch (e: any) {
+      status = e.status ?? -1;
+      out = e.stdout ? JSON.parse(e.stdout) : null;
+    }
+    expect(status).toBe(2);
+    expect(out.reason).toBe("lane-target-unreadable");
+    // And the workflow fails the job on every planner refusal.
+    expect(bootstrap).toMatch(/planner refused \(exit \$\{PLAN\}\); failing closed/);
   });
 
   it("the watchdog feeds UNREADABLE issues to the scanner as stubs mapped to their issue (never dropped)", () => {

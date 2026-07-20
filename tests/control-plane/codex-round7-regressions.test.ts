@@ -451,14 +451,17 @@ describe("G3 — mutation guards: ok:true AND frozen:false (type-strict) before 
 
   it("bootstrap label creation and lane-issue creation cannot run under a malformed OR disabled policy", () => {
     const wf = readFileSync(".github/workflows/straylight-bootstrap.yml", "utf8");
-    // The gate step precedes both mutations and exits 1 for BOTH the valid
-    // kill switch (3) and any malformed policy (other non-zero).
+    // Workflow-boundary redesign: ALL bootstrap mutations (label
+    // definition + lane issue) flow through the single shared-executor
+    // invocation, so the gate preceding the plan→execute chain gates
+    // every mutation. It exits 1 for BOTH the valid kill switch (3) and
+    // any malformed policy (other non-zero).
     const gate = wf.indexOf("Kill switch check (canonical policy gate)");
-    const label = wf.indexOf("Ensure cp-lane label exists");
-    const issue = wf.indexOf("Create Phase 49P shadow lane issue");
+    const plan = wf.indexOf("Plan bootstrap write (planner authority)");
+    const execute = wf.indexOf("Execute write plan (single shared executor)");
     expect(gate).toBeGreaterThan(-1);
-    expect(gate).toBeLessThan(label);
-    expect(gate).toBeLessThan(issue);
+    expect(gate).toBeLessThan(plan);
+    expect(gate).toBeLessThan(execute);
     const gateBody = wf.slice(gate, wf.indexOf("- name:", gate + 10));
     expect(gateBody).toMatch(/-eq 3[\s\S]{0,200}exit 1/);
     expect(gateBody).toMatch(/-ne 0[\s\S]{0,300}exit 1/);

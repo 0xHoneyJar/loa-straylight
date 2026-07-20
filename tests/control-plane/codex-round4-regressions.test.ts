@@ -493,15 +493,24 @@ describe("D5 — bootstrap existing-lane detection uses the canonical parser (co
     expect(result.unreadable[0].number).toBe(9);
   });
 
-  it("the workflow routes detection through lane-scan.mjs and aborts on unreadable bodies", () => {
+  it("the workflow routes detection through the canonical planner and aborts on unreadable bodies", () => {
+    // Workflow-boundary redesign: bootstrap detection lives in
+    // plan-bootstrap-write.mjs, which consumes the raw --paginate page
+    // stream through evidence.mjs (flattening, strict parse, PR
+    // exclusion) and lane-target.mjs (canonical marker parsing, the
+    // absence proof). The unreadable-genesis abort is proven EXECUTABLY
+    // in planner-adversarial.test.ts ("an unreadable marker-bearing body
+    // exits 2"); here we pin that the workflow's only detection path is
+    // that planner and that every non-zero/non-3 planner exit fails the
+    // job closed.
     const wf = readFileSync(".github/workflows/straylight-bootstrap.yml", "utf8");
-    // Round 9: the raw --paginate page stream feeds the scanner directly
-    // (--pages), which flattens + excludes PRs fail-closed itself.
-    expect(wf).toMatch(/node \.straylight\/bin\/lane-scan\.mjs --pages \/tmp\/issue-pages\.json --lane-id lane-phase-49p/);
-    expect(wf).toMatch(/unreadable/);
-    expect(wf).toMatch(/refusing to bootstrap until they are resolved/);
-    // The whitespace-sensitive substring detector is gone.
+    expect(wf).toMatch(/node \.straylight\/bin\/plan-bootstrap-write\.mjs/);
+    expect(wf).toMatch(/--pages \/tmp\/issue-pages\.json/);
+    expect(wf).toMatch(/planner refused \(exit \$\{PLAN\}\); failing closed/);
+    // The whitespace-sensitive substring detector is gone, and no
+    // workflow-side detection survives.
     expect(wf).not.toMatch(/contains\("\\"lane_id\\"/);
+    expect(wf).not.toMatch(/jq[^\n]*lane_id/);
   });
 });
 
