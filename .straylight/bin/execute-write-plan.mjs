@@ -40,6 +40,10 @@
 //   projections that reconverge on the next run (C9).
 //
 // SECURITY POSTURE:
+//   - the plan file is CONTAINED: its parent directory must realpath to
+//     exactly the realpath'd --request-root and its name must be a single
+//     safe path component — a plan outside the request root (or reached
+//     through a symlinked directory) is refused before it is opened;
 //   - the plan file and every body file are opened O_RDONLY|O_NOFOLLOW
 //     (a symlink at the final component fails), fstat-checked as regular
 //     files, read EXACTLY ONCE from the descriptor, hashed, strict-parsed,
@@ -70,7 +74,7 @@
 import { openSync, fstatSync, readFileSync, closeSync, realpathSync, constants } from "node:fs";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { join } from "node:path";
+import { join, dirname, basename } from "node:path";
 import { parseStrict } from "../lib/strict-json.mjs";
 import { validatePlan, validateOperationBody } from "../lib/write-plan.mjs";
 
@@ -132,9 +136,29 @@ try {
   refuse("request-root-invalid", String(e?.message ?? e));
 }
 
-// 1. The plan file itself: O_NOFOLLOW, regular file, single read, strict
-//    parse (duplicate keys rejected), closed-schema validation.
-const planBytes = readOnceNoFollow(planPath, "plan");
+// 1. The plan file itself. CONTAINMENT FIRST: the plan must live DIRECTLY
+//    under the realpath'd request root — its parent directory must
+//    realpath-resolve to exactly the request root (a symlinked
+//    intermediate directory collapses here and mismatches), and its name
+//    must be a single safe path component (no separators, no traversal).
+//    A plan anywhere else — however valid its content — is a validation
+//    refusal: exit 2, zero gh launches. Then O_NOFOLLOW (a symlink at the
+//    final component fails), regular file, single read, strict parse
+//    (duplicate keys rejected), closed-schema validation.
+const planName = basename(planPath);
+if (!/^[A-Za-z0-9._-]+$/.test(planName)) {
+  refuse("plan-outside-request-root", "plan file name is not a single safe path component");
+}
+let realPlanDir;
+try {
+  realPlanDir = realpathSync(dirname(planPath));
+} catch (e) {
+  refuse("plan-outside-request-root", `plan directory unresolvable: ${String(e?.message ?? e)}`);
+}
+if (realPlanDir !== realRoot) {
+  refuse("plan-outside-request-root", "plan file does not live directly under --request-root");
+}
+const planBytes = readOnceNoFollow(join(realRoot, planName), "plan");
 const planParsed = parseStrict(planBytes.toString("utf8"));
 if (!planParsed.ok) {
   refuse("plan-malformed", `strict JSON parse failed: ${planParsed.reason}`);

@@ -337,9 +337,13 @@ for (const label of have) {
   if (label === "cp-paused") {
     // §9: EVERY cp-paused removal goes through the warning-gated kind.
     // Prove the exact warning already present, or post it (fatal) first.
+    // The proof is BYTE-EXACT: only a bot-authored comment whose body
+    // EQUALS the canonical state-neutral warning for THIS lane/issue
+    // authorizes removal — a bot comment that merely CONTAINS the dedupe
+    // line (any other machine comment quoting it) is never a proof.
     const wDedupe = warningDedupeKey(lane.lane_id, issueNumber);
     const proofComment = read2.comments.find(
-      (c) => c.user === BOT && hasFullLineDedupe(c.body, wDedupe),
+      (c) => c.user === BOT && c.body === warningBodyFor(lane.lane_id, issueNumber),
     );
     if (proofComment !== undefined) {
       operations.push({

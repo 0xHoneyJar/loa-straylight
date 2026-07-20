@@ -138,13 +138,29 @@ export function planWatchdogWrites({ collections, nonce, repository, policy, now
       scanLanesInput.push({ ...rec.lane, issue_number: lane.issue_number });
       context.last_activity[rec.lane.lane_id] = lane.issue.updated_at;
       if (Number.isInteger(rec.lane.pr_number)) {
-        const outcome = projection.pr_outcomes[String(rec.lane.pr_number)];
+        // Outcomes are keyed by the compound {issue}:{pr} slot identity
+        // (F7): THIS lane's outcome is the one fetched FOR this issue.
+        const outcome = projection.pr_outcomes[`${lane.issue_number}:${rec.lane.pr_number}`];
+        const prKey = String(rec.lane.pr_number);
         if (outcome !== undefined && outcome.failed !== true) {
-          context.pr_heads[String(rec.lane.pr_number)] = outcome.head_sha;
+          if (prKey in context.pr_heads && context.pr_heads[prKey] !== outcome.head_sha) {
+            // Two issues resolved the SAME PR to different heads inside
+            // one stable A/B world — physically impossible for honest
+            // evidence; refuse rather than let either lane scan against
+            // the other's head.
+            return bad("pr-head-conflict", `PR #${prKey} resolved to different heads across issues`);
+          }
+          if (context.pr_head_unresolved.includes(prKey)) {
+            return bad("pr-head-conflict", `PR #${prKey} resolved for one issue but failed for another`);
+          }
+          context.pr_heads[prKey] = outcome.head_sha;
         } else if (outcome !== undefined) {
           // The explicit both-collections fetch failure: unresolved head,
           // fail-closed finding (pr_head_unresolved), never "no PR".
-          context.pr_head_unresolved.push(String(rec.lane.pr_number));
+          if (prKey in context.pr_heads) {
+            return bad("pr-head-conflict", `PR #${prKey} resolved for one issue but failed for another`);
+          }
+          context.pr_head_unresolved.push(prKey);
         }
       }
     } else if (rec.ok && rec.frozen === true) {
@@ -162,9 +178,12 @@ export function planWatchdogWrites({ collections, nonce, repository, policy, now
     }
   }
   for (const u of world.unreadable) {
+    // An unreadable marker-bearing issue has NO provable lane identity —
+    // the finding is keyed by the trusted issue number ALONE; fabricating
+    // a synthetic lane_id would put an untrusted identity into the
+    // durable finding record (F8).
     scanLanesInput.push({
       issue_number: u.number,
-      lane_id: `unreadable-issue-${u.number}`,
       event_sequence: u.number,
     });
   }

@@ -58,15 +58,19 @@ export function scan(lanes, policy, context = {}) {
       // A malformed lane is itself a finding — but the watchdog cannot
       // guess a recovery, so it routes to the operator. When the entry is
       // issue-keyed, the finding identity IS the issue number: no
-      // synthetic lane identity exists to collide or mis-map.
-      actions.push(withIssue({
+      // synthetic lane identity exists to collide or mis-map. The finding
+      // carries a lane_id ONLY when the caller derived one from readable
+      // evidence — an unreadable genesis has no provable lane identity,
+      // and the watchdog never fabricates one (F8).
+      const finding = {
         type: "escalate-malformed-lane",
-        lane_id: lane?.lane_id ?? "unknown",
         dedupe_key: issueNumber !== null
           ? `malformed:issue:${issueNumber}`
-          : `malformed:${lane?.lane_id ?? "unknown"}:${lane?.event_sequence ?? "na"}`,
+          : `malformed:${typeof lane?.lane_id === "string" ? lane.lane_id : "unknown"}:${lane?.event_sequence ?? "na"}`,
         detail: lv.errors.join("; "),
-      }));
+      };
+      if (typeof lane?.lane_id === "string") finding.lane_id = lane.lane_id;
+      actions.push(withIssue(finding));
       continue;
     }
     if (lane.operator_pause === true) continue;

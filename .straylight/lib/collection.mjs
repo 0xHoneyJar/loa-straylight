@@ -163,6 +163,29 @@ export function reconstructCollectionLanes(enumerationBytes, issueEvidence, { re
     issueRecords.set(number, { issue: issueParsed.issue, comments: commentsParsed.comments });
   }
 
+  // ENUMERATION↔FETCH IDENTITY BINDING (F6): the lane identity derived
+  // from every FETCHED issue body must equal the identity the ENUMERATION
+  // derived for the same issue number — the lane→issue mapping and the
+  // unreadable set alike. A marker-bearing body that changed between the
+  // enumeration fetch and the per-issue fetch (different lane_id, marker
+  // added or removed, readable turned unreadable) refuses the collection:
+  // reconstruction must never run under an identity the enumeration did
+  // not independently derive.
+  const fetchedScan = scanLanes(
+    [...issueRecords.entries()]
+      .map(([number, record]) => ({ number, body: record.issue.body ?? "" }))
+      .sort((a, b) => a.number - b.number),
+  );
+  if (!fetchedScan.ok) return bad("lane-scan-failed", fetchedScan.reason);
+  const mappingOf = (s) => JSON.stringify(s.lanes.map((l) => [l.number, l.lane_id]).sort((a, b) => a[0] - b[0]));
+  const unreadableOf = (s) => JSON.stringify(s.unreadable.map((u) => u.number).sort((a, b) => a - b));
+  if (mappingOf(fetchedScan) !== mappingOf(scanned) || unreadableOf(fetchedScan) !== unreadableOf(scanned)) {
+    return bad(
+      "enumeration-fetch-identity-mismatch",
+      "lane identity derived from fetched issue bodies does not equal the enumeration's derivation",
+    );
+  }
+
   const lanes = [];
   for (const { number, lane_id } of scanned.lanes) {
     const record = issueRecords.get(number);
@@ -296,6 +319,31 @@ export function parseLedger(text, { collection_id, nonce }) {
   return { ok: true, rows };
 }
 
+// EXACT RESOURCE SET (F6): the ledger must contain EXACTLY one issue row
+// and EXACTLY one comments row per enumerated slot — no row for an issue
+// the enumeration did not derive (an unenumerated resource is smuggled
+// evidence, not surplus), and none missing (parseLedger's duplicate-
+// identity refusal already guarantees "at most one", so equality of the
+// sets gives exactly-one). PR-row exactness is checked against the
+// re-derived PR slots by the callers.
+function checkExactIssueResources(rows, issueSlots) {
+  const slotSet = new Set(issueSlots);
+  for (const resource of ["issue", "comments"]) {
+    const numbers = rows.filter((r) => r.resource === resource).map((r) => r.issue_number);
+    for (const n of numbers) {
+      if (!slotSet.has(n)) {
+        return bad("ledger-unenumerated-resource", `${resource} row for issue #${n} has no enumerated slot`);
+      }
+    }
+    if (numbers.length !== issueSlots.length) {
+      const have = new Set(numbers);
+      const missing = issueSlots.filter((n) => !have.has(n));
+      return bad("ledger-resource-missing", `${resource} row(s) missing for issue #${missing.join(", #")}`);
+    }
+  }
+  return { ok: true };
+}
+
 // ---------------------------------------------------------------------------
 // S5→S6: seal — the manifest can never claim what raw bytes don't derive
 // ---------------------------------------------------------------------------
@@ -360,6 +408,11 @@ export function sealCollection({
   if (JSON.stringify(reIssue.document.issue_slots) !== JSON.stringify(issueSlotsDocument.issue_slots)) {
     return bad("claims-rule-violation", "issue_slots claim does not equal the seal's own derivation");
   }
+
+  // EXACTLY one issue row and one comments row per re-derived slot; a row
+  // for an unenumerated issue refuses (F6).
+  const exact = checkExactIssueResources(rows, reIssue.document.issue_slots);
+  if (!exact.ok) return exact;
 
   // Assemble per-issue evidence from ledger rows for lane reconstruction.
   const issueEvidence = new Map();
@@ -499,6 +552,11 @@ export function verifyAndProjectCollection({
   if (JSON.stringify(issueSlots) !== JSON.stringify(manifest.issue_slots)) {
     return bad("manifest-claims-mismatch", "issue_slots");
   }
+
+  // EXACTLY one issue row and one comments row per independently
+  // re-derived slot; a row for an unenumerated issue refuses (F6).
+  const exact = checkExactIssueResources(rows, issueSlots);
+  if (!exact.ok) return exact;
   const prSlots = [];
   for (const lane of world.lanes) {
     const rec = lane.reconstruction;
@@ -513,7 +571,11 @@ export function verifyAndProjectCollection({
 
   // PR evidence: every slot has exactly one pr row; fetched:true rows
   // reparse with repo + PR-number binding; fetched:false rows are accepted
-  // ONLY as explicit failure records.
+  // ONLY as explicit failure records. Outcomes are keyed by the COMPOUND
+  // {issue_number, pr_number} slot identity (F7): two lanes recording the
+  // same PR each carry their OWN fetch outcome — keying by PR number alone
+  // would let the last-processed slot silently overwrite the first and
+  // hide an asymmetric success/failure from the A/B gate.
   const prOutcomes = {};
   const prRows = rows.filter((r) => r.resource === "pr");
   for (const slot of prSlots) {
@@ -522,12 +584,13 @@ export function verifyAndProjectCollection({
       return bad("pr-evidence-unaccounted", `slot ${slot.issue_number}:${slot.pr_number}`);
     }
     const row = matching[0];
+    const key = `${slot.issue_number}:${slot.pr_number}`;
     if (row.fetched === true) {
       const parsed = parsePr(bytesByRow.get(row).toString("utf8"), { repository, pr_number: slot.pr_number });
       if (!parsed.ok) return bad("pr-evidence-invalid", `PR #${slot.pr_number}: ${parsed.reason}`);
-      prOutcomes[String(slot.pr_number)] = { metadata: parsed.pr, head_sha: parsed.pr.head_sha };
+      prOutcomes[key] = { metadata: parsed.pr, head_sha: parsed.pr.head_sha };
     } else {
-      prOutcomes[String(slot.pr_number)] = { failed: true };
+      prOutcomes[key] = { failed: true };
     }
   }
   for (const row of prRows) {
@@ -644,15 +707,21 @@ export function compareProjections(a, b) {
   if (canon(a.pr_slots) !== canon(b.pr_slots)) {
     return bad("ab-pr-slot-difference");
   }
-  for (const key of Object.keys(a.pr_outcomes)) {
+  // Outcomes are keyed by compound {issue}:{pr} slot identity (F7);
+  // iterate the UNION of both key sets so a key present on only one side
+  // is a difference, never silently skipped.
+  for (const key of new Set([...Object.keys(a.pr_outcomes), ...Object.keys(b.pr_outcomes)])) {
     const oa = a.pr_outcomes[key];
     const ob = b.pr_outcomes[key];
-    if ((oa.failed === true) !== (ob?.failed === true)) {
-      return bad("ab-fetch-outcome-difference", `PR #${key}`);
+    if (oa === undefined || ob === undefined) {
+      return bad("ab-fetch-outcome-difference", `slot ${key}`);
+    }
+    if ((oa.failed === true) !== (ob.failed === true)) {
+      return bad("ab-fetch-outcome-difference", `slot ${key}`);
     }
     if (oa.failed !== true && ob.failed !== true) {
-      if (oa.head_sha !== ob.head_sha) return bad("ab-head-sha-difference", `PR #${key}`);
-      if (canon(oa.metadata) !== canon(ob.metadata)) return bad("ab-pr-metadata-difference", `PR #${key}`);
+      if (oa.head_sha !== ob.head_sha) return bad("ab-head-sha-difference", `slot ${key}`);
+      if (canon(oa.metadata) !== canon(ob.metadata)) return bad("ab-pr-metadata-difference", `slot ${key}`);
     }
   }
   // Catch-all over the complete projection: anything the specific gates
