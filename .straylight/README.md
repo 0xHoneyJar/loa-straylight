@@ -61,8 +61,37 @@ that nothing merges.
     validate.mjs             ← structural validators mirroring the schemas
     reducer.mjs              ← the single state-advancement authority
     reconstruct.mjs          ← full lane rebuild from issue + comments
-    watchdog.mjs             ← recovery scan (expired leases, moved heads…)
+    watchdog.mjs             ← recovery scan (expired leases, moved heads…);
+                               issue-keyed action contract (C8)
     merge-guard.mjs          ← shadow merge-eligibility report (cannot merge)
+    evidence.mjs             ← shared raw-evidence parser: N1 global
+                               uniqueness (issue numbers, comment IDs,
+                               check-run IDs, combined-status IDs unique
+                               across complete paginated responses), N2
+                               exact-equality target binding (repository /
+                               issue / PR / exact SHA — never substring),
+                               N5 chronology (strict instants,
+                               updated_at >= created_at); zero-byte streams
+                               invalid, one parsed [] page valid empty
+    lane-target.mjs          ← universal lane-target authority (N3): unique
+                               lane proof / absence proof from
+                               same-execution evidence; duplicate valid
+                               lane IDs refuse for EVERY writer (C1)
+    collection.mjs           ← watchdog dual-collection stages (issue-slot /
+                               PR-slot derivation, seal claims rule),
+                               per-collection re-verification, canonical
+                               planning projection, A/B comparison
+    watchdog-plan.mjs        ← final dual-collection planner (independent
+                               reparse of BOTH collections; any planning-
+                               relevant difference refuses with its ab-*
+                               code; issue-keyed deduped write plan)
+    write-plan.mjs           ← closed straylight.write-plan.v1 schema:
+                               operation-kind allowlist with fixed
+                               method/path templates (no method/path/URL/
+                               best_effort expressible), kind-derived
+                               fatality, structural terminal barriers,
+                               §9 cp-paused warning-gate rules, endpoint
+                               body-content binding
   bin/                       ← thin CLI adapters (no network calls)
     reduce-issue.mjs
     watchdog-scan.mjs
@@ -76,15 +105,180 @@ that nothing merges.
                                text is parsed by strict-json.mjs, never
                                JSON.parse → fail closed, never enabled,
                                never a valid kill switch)
+    collect-watchdog-evidence.mjs ← staged collection driver
+                               (--stage issue-slots|pr-slots|seal), one
+                               invocation per stage per collection
+    plan-bootstrap-write.mjs ← bootstrap planner (0 = plan create, 3 =
+                               exists-once no-op, 2 = duplicates /
+                               unreadable / malformed — fail closed)
+    plan-reducer-writes.mjs  ← staged reducer planner (--stage a | b, §
+                               "Reducer stages" below)
+    plan-merge-guard-write.mjs ← merge-guard planner (report-only)
+    plan-watchdog-writes.mjs ← final dual-collection watchdog planner
+    execute-write-plan.mjs   ← THE single shared secure executor — the only
+                               production code path that performs GitHub
+                               writes (§ "Write execution" below)
   prompts/                   ← permanent actor prompts
     chatgpt-coordinator.md
     claude-fable-implementer.md
     codex-auditor.md
 ```
 
-Workflows live in `.github/workflows/straylight-*.yml` and only fetch
-GitHub content, run the CLIs above, and post results. They never call
-model APIs and never hold `contents: write`.
+Workflows live in `.github/workflows/straylight-*.yml`. Their bash is
+confined to three verbs: **fetch bytes to files**, **switch on validated
+exit codes**, and **invoke the two Node entry points** (a planner, then
+the shared executor). Bash never constructs a write request, never
+interprets evidence content, and never calls `gh api -X
+POST/PATCH/DELETE` directly — no YAML/Bash step performs a GitHub write.
+They never call model APIs and never hold `contents: write`.
+
+## Write execution (the shared executor)
+
+Every GitHub write flows through ONE invocation of
+`bin/execute-write-plan.mjs` per plan. A plan is a closed
+`straylight.write-plan.v1` document authored by a planner: operations
+carry validated fields only — **no method, path, URL, host, endpoint, or
+`best_effort` is expressible** (unknown fields refuse everywhere); the
+executor constructs each request from the fixed per-kind template and
+guards the constructed path again (defense in depth). `plan.repository`
+must equal both the compiled-in allowlist (exactly
+`0xHoneyJar/loa-straylight`) and the workflow-supplied argv;
+`plan.nonce` must equal the run nonce
+(`GITHUB_RUN_ID`-`GITHUB_RUN_ATTEMPT`) — no stale-plan replay.
+
+The executor has exactly TWO phases:
+
+- **Validation/preflight** — the plan file and every body file are opened
+  `O_RDONLY|O_NOFOLLOW` (a symlink at the final component refuses),
+  fstat-checked as regular files, read EXACTLY ONCE from the descriptor,
+  hashed against the plan's declared digest, strict-parsed against the
+  kind's closed endpoint contract (exact full-line dedupe identity,
+  single extractable machine marker, embedded payload validity,
+  lane/issue binding), and the exact bytes RETAINED. Any failure exits
+  **2**, which GUARANTEES: execution never began, no `gh` process was
+  launched, zero write attempts occurred.
+- **Execution** — begins immediately before the first validated
+  operation. Requests are `spawnSync("gh", argv, { shell: false, input:
+  <retained bytes>, env: {PATH, HOME, GH_TOKEN} })` with fixed argv
+  (`api -X METHOD PATH --input -` for body-bearing kinds; the body is
+  the retained validated bytes over stdin — the path is never reopened,
+  so a post-validation swap cannot reach a request). After execution
+  begins, EVERY launch error, transport error, fatal-operation `gh`
+  failure, or executor exception exits **4** — including a launch
+  failure on the very first operation and a launch failure for a
+  warning-only label operation (no trustworthy result exists). No
+  execution-phase condition may exit 2. Exit 4 means earlier operations
+  may have executed: recovery is ALWAYS a fresh run — fresh evidence,
+  fresh lane-target proof, fresh reconstruction, exact dedupe
+  recognition of landed operations, a new plan containing only missing
+  work.
+
+A non-zero `gh` API RESULT is warning-only exclusively for the
+hard-coded derived-label add/remove kinds (labels reconverge next run);
+every other kind is fatal. Fatality is derived from the kind registry in
+`lib/write-plan.mjs`; nothing in a plan can widen it.
+
+**Structural terminal barriers**: a `post-state-advancing-event` is
+terminal for its issue within its plan — the executor rejects, at
+validation time, any plan with a second state-advancing operation for
+the same issue or ANY operation addressing that issue after it. Across
+the workflow, every state-advancing write is a terminal barrier: further
+state-dependent work requires fresh evidence, a fresh proof, and a new
+plan.
+
+**cp-paused warning gate (§ uniform)**: every removal of `cp-paused`
+uses the dedicated `remove-derived-cp-paused-after-warning` kind (a
+plain `remove-derived-label` naming `cp-paused` or `cp-lane` refuses).
+The removal requires exactly one of `warning_op_id` (an earlier
+same-plan `post-cp-paused-warning`, fatal by kind — if the warning post
+fails the executor exits 4 and the removal is never attempted) or
+`warning_proof` (the planner proved the exact state-neutral warning
+already present via its canonical full-line identity, so removal retries
+without re-posting). The warning text is state-neutral: labels are
+derived projections and reconstruction no longer supports the label; it
+never asserts how the label came to be present.
+
+## Evidence discipline (every writer)
+
+Every byte of GitHub evidence flows through `lib/evidence.mjs` before
+anything derives from it: strict duplicate-key-rejecting JSON, N1 global
+uniqueness, N2 exact-equality binding to the expected repository / issue
+/ PR / exact commit SHA, N5 strict-instant chronology
+(`updated_at >= created_at`), combined-status integrity (unique entry
+IDs, contexts, states, `statuses.length === total_count`, exact sha +
+repository binding), zero-byte streams invalid, one parsed `[]` page
+valid empty evidence. Files are byte containers, never identity
+authority.
+
+Before EVERY lane-addressed write, the writer proves the lane target
+unique via `lib/lane-target.mjs` from same-execution evidence (N3):
+duplicate valid lane IDs exit 2 for every writer — bootstrap included
+(C1) — and any unreadable marker-bearing body blocks both targeting and
+absence proofs (it could BE the lane in mangled form).
+
+## Reducer stages (Stage A / Stage B)
+
+The reducer job is two strictly ordered stages, each with its own fresh
+two-read-stable evidence (the gather runs twice; planning-relevant
+canonical projections must be equal, else exit 2), its own lane-target
+proof, its own plan, and its own single executor invocation:
+
+- **Stage A — eligibility confirmation (state-advancing, terminal)**:
+  when the reconstructed lane is `eligibility-pending`, the planner
+  fetches nothing itself — the workflow fetched the live PR to a file
+  keyed by the planner's DERIVED probe output — parses it with full
+  binding, proves exact dedupe from the collected comment stream, and
+  dry-runs the candidate (append → re-reduce → require
+  `ready-for-merge`; a doomed confirmation is a no-op that never burns
+  the dedupe key). The Stage A plan contains EXACTLY ONE operation: the
+  `system.eligibility_confirmed` event. Stage A is terminal for its plan
+  and its reconstruction.
+- **Stage B — projections and publication (non-state-advancing)**: a
+  COMPLETELY FRESH gather — never Stage A's evidence, even when Stage A
+  posted nothing — whose reconstruction includes Stage A's confirmation
+  if one posted. Plans, in structural order: derived-label additions and
+  removals (`deriveLabels` projection vs parsed label evidence; a failed
+  label read aborts, never "no labels"), the warning-gated cp-paused
+  pair when required, and the exact-deduped reducer-result comment.
+  Stage B never emits a state-advancing operation.
+
+## Watchdog dual collection
+
+The watchdog gathers TWO complete, independently collected evidence sets
+(Collection A, Collection B). Each advances S0→S6: bash fetches
+(enumeration → per-slot issue+comments → PR attempts) and appends a
+strict ledger row per fetch attempt; the collector binary derives
+(issue slots from enumeration ONLY — the stage schema has no PR field,
+so enumeration-only evidence structurally cannot emit PR slots; PR slots
+only after that collection's complete issue/comment evidence exists,
+via reconstruction; the seal re-derives both slot sets from raw bytes
+and verifies every ledger claim — a manifest can never claim a slot its
+own raw evidence does not independently produce). A failed PR fetch is
+an explicit durable `{fetched:false}` ledger row, never filename
+absence; a failed issue/comment/enumeration fetch fails the job.
+
+Collection B shares NOTHING derived from Collection A. The final
+planner (`plan-watchdog-writes.mjs`) trusts nothing derived earlier: it
+independently reparses both complete collections (ledger reparse, digest
+re-verification, evidence reparse, fresh reconstruction, slot
+re-derivation vs manifest claims, PR reparse with binding), builds
+canonical planning projections, and refuses ANY planning-relevant
+difference with a specific code (`ab-issue-set-difference`,
+`ab-lane-set-difference`, `ab-lane-mapping-difference`,
+`ab-reconstruction-difference`, `ab-comment-evidence-difference`,
+`ab-pr-slot-difference`, `ab-pr-metadata-difference`,
+`ab-head-sha-difference`, `ab-fetch-outcome-difference`, plus
+`ab-canonical-digest-difference` as the catch-all). Equivalent explicit
+PR-fetch failures in BOTH collections are agreement (the unresolved-head
+fail-closed finding), not a difference. An A/B difference aborts the
+whole sweep — the accepted v1 liveness tradeoff — and the next cron
+firing retries against a stable world.
+
+Planning is ISSUE-KEYED (C8): every scan action carries the issue
+number of the lane entry it derived from; an action the planner cannot
+key refuses the sweep (a finding is never dropped silently). Findings
+precede any state-advancing event for their issue; the watchdog emits
+at most one state-advancing event per issue per plan.
 
 ## Machine-readable payloads
 
@@ -361,12 +555,18 @@ control-plane workflow holds `contents: write`.
 
 ## Workflows (`.github/workflows/`)
 
+All four follow the same boundary: **gather → plan → one executor
+invocation per plan** (after the 0/3/2 policy gate). Planner exit codes
+are uniform: 0 = plan written → execute; 3 = valid no-op (nothing to
+post / already exists); 2 or anything else = refusal, fail the job
+closed, zero writes.
+
 | Workflow | Trigger | Does | Never |
 |---|---|---|---|
-| `straylight-reducer.yml` | `issues`, `issue_comment` on `cp-lane` issues; manual | fetch issue + comments, run `reduce-issue.mjs`, sync derived labels, post reducer result; for an `eligibility-pending` lane, fetch the live PR and post the durable `system.eligibility_confirmed` event (metadata embedded; nothing posted on a failed/partial fetch) | evaluate comment content as shell; call model APIs; write repo contents |
-| `straylight-watchdog.yml` | cron (off-minute) + manual | enumerate ALL open issues label-independently and identify lanes solely through the canonical marker parser (`lane-scan.mjs --all-lanes`; the `cp-lane` label is a derived projection, never discovery authority — an unlabeled lane is still swept), reconstruct each, run `watchdog-scan.mjs`, post deduped recovery events / escalations (a failed enumeration or flattening aborts the sweep — never treated as zero lanes; a marker-bearing issue whose lane cannot be reconstructed surfaces as an explicit malformed-lane finding, never silently skipped; every dedupe read is materialized to a local file and fails the job on read/parse error rather than reading as "not yet posted") | duplicate a recovery event (dedupe keys); hide a lane because its label was removed; drop a malformed lane from the sweep; merge |
-| `straylight-merge-guard.yml` | manual `workflow_dispatch` (lane issue number) | reconstruct lane, normalize ONE fetch of the live PR into the complete `pr_metadata` record (the same validatePrMetadata shape the reducer embeds durably; any missing/mistyped field collapses it to `fetch_ok: false`), gather the complete all-pages check-run conclusion list, run `merge-guard-check.mjs` (fails closed unless EVERY metadata field corresponds exactly with the lane and audited target), post shadow eligibility comment | merge (no merge API call exists in the workflow or CLI); forward loose single PR fields |
-| `straylight-bootstrap.yml` | manual `workflow_dispatch` | idempotently create the single Phase 49P shadow lane issue — existing-lane detection enumerates ALL issues (open AND closed, label-independently: the `cp-lane` label is a derived projection, never discovery authority, so a lane whose label was removed still blocks duplication) and parses every body through the canonical protocol parser (`lane-scan.mjs`), so a genesis in ANY valid JSON formatting (compact included) is found and pull requests with lane-like bodies are excluded; a failed enumeration, a malformed page, OR any unparseable lane-marker body aborts (never treated as "no existing lane") | implement 49P, open its PR, call a model API, merge; detect lanes by raw-substring matching or by label |
+| `straylight-reducer.yml` | `issues`, `issue_comment` on `cp-lane` issues; manual | Stage A: two-read-stable gather → `plan-reducer-writes.mjs --stage a` (probe-derived live-PR fetch, exact dedupe, dry-run, ≤1 confirmation event — terminal) → execute. Stage B: fresh two-read-stable gather (never Stage A's evidence) → `--stage b` (derived labels vs parsed label evidence, warning-gated cp-paused pair, exact-deduped result) → execute | execute an individual `gh` write from bash; derive Stage B from Stage A's evidence; post state advancement in Stage B; evaluate comment content as shell; call model APIs; write repo contents |
+| `straylight-watchdog.yml` | cron (off-minute) + manual | Collection A (S0–S6) → Collection B (S0–S6, fully independent) → `plan-watchdog-writes.mjs` over both (independent reparse + A/B equivalence gate) → execute. Discovery stays label-independent through the shared parsers; unreadable / failed-reconstruction issues surface as issue-keyed malformed-lane findings, never dropped; a failed enumeration or issue/comment fetch aborts the sweep — never zero lanes | trust any stage output / manifest / filename as authority; write after an A/B difference; post two state-advancing events for one issue in one plan; hide a lane because its label was removed; merge |
+| `straylight-merge-guard.yml` | manual `workflow_dispatch` (lane issue number) | two-read-stable gather (lane + PR + check-runs + combined status, all through `evidence.mjs` N1/N2 profiles; fetch targets from DERIVED probe/parse output only) → `plan-merge-guard-write.mjs` (lane-target proof, pure evaluation, exact dedupe) → execute (one shadow result comment) | merge (no merge API call exists anywhere in the chain); write without the lane-target proof; forward loose single PR fields |
+| `straylight-bootstrap.yml` | manual `workflow_dispatch` | label-independent all-issues enumeration + label enumeration + base-SHA resolution from origin/main → `plan-bootstrap-write.mjs` (universal lane-ABSENCE proof: duplicates anywhere, unreadable genesis bodies, malformed pages/labels, or a bad base SHA exit 2; an existing unique lane exits 3; the planned genesis satisfies the reducer's own validator) → execute (label definition if missing + lane issue) | create when the lane-absence proof fails; implement 49P, open its PR, call a model API, merge; detect lanes by raw-substring matching or by label |
 
 All workflows: least-privilege permissions (`contents: read` +
 `issues: write` and/or `pull-requests: read`), actions pinned to
