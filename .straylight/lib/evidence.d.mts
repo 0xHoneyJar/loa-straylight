@@ -80,12 +80,38 @@ export declare function parseLabelPages(
   expectation: { repository: string }
 ): EvidenceResult<{ labels: string[] }>;
 
+/** One validated check run, identity-complete (round 11 J2). */
+export interface CheckRunRecord {
+  id: number;
+  name: string;
+  conclusion: string | null;
+  head_sha: string;
+}
+
+/** One validated combined-status entry, identity-complete (round 11 J2). */
+export interface CommitStatusRecord {
+  id: number;
+  context: string;
+  state: string;
+}
+
 export declare function parseCheckRunPages(
   text: string,
   expectation: { repository: string; sha: string }
-): EvidenceResult<{ check_runs_total: number; check_run_conclusions: string[] }>;
+): EvidenceResult<{
+  check_runs_total: number;
+  check_run_conclusions: string[];
+  /** The COMPLETE validated record set, sorted by id — evidence equality
+   *  compares these records, never the aggregates alone. */
+  check_runs: CheckRunRecord[];
+}>;
 
 export declare function parseCombinedStatus(
   text: string,
   expectation: { repository: string; sha: string }
-): EvidenceResult<{ commit_statuses_total: number; commit_status_state: string }>;
+): EvidenceResult<{
+  commit_statuses_total: number;
+  commit_status_state: string;
+  /** The COMPLETE validated entry set, sorted by id. */
+  commit_statuses: CommitStatusRecord[];
+}>;

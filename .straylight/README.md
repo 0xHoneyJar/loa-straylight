@@ -192,7 +192,12 @@ claim (including the source digests), requires the read ledger to
 account for EXACTLY the claim's slots (missing, extra, duplicate, or
 wrong-PR rows refuse), digest-verifies every fetched file in its own
 gather, refuses any slot-shaped file the ledger does not account for,
-and requires the two gathers' live evidence to be canonically equal.
+and requires the two gathers' live evidence to be canonically equal
+over the COMPLETE validated records — the parsed PR metadata, every
+check run's `{id, name, conclusion, head_sha}`, and every
+combined-status entry's `{id, context, state}` — never aggregate
+totals/conclusion lists alone: two reads whose totals and rollup agree
+but whose run or status identities differ refuse as instability.
 
 ## Write execution (the shared executor)
 

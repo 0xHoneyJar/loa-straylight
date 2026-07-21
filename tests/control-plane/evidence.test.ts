@@ -71,6 +71,7 @@ function checkRun(id: number, overrides: Record<string, any> = {}) {
     id,
     url: `${API}/repos/${REPO}/check-runs/${id}`,
     head_sha: HEAD_SHA,
+    name: `ci/check-${id}`,
     conclusion: "success",
     ...overrides,
   };

@@ -426,6 +426,13 @@ export function parsePr(text, { repository, pr_number }) {
 // globally unique — a duplicated passing run never compensates for an
 // omitted failing one. N2: every run binds to the exact repository (by
 // exact URL equality on its own ID) and to the exact expected head SHA.
+//
+// The COMPLETE validated per-run record set is preserved (round 11 J2):
+// `check_runs` carries every run's {id, name, conclusion, head_sha}
+// sorted by id, so two evidence reads whose aggregates agree but whose
+// run identities differ (different run IDs, different names, permuted
+// conclusions) canonically compare UNEQUAL — aggregate equality is never
+// evidence equality.
 export function parseCheckRunPages(text, { repository, sha }) {
   const r = checkExpectedRepository(repository);
   if (!r.ok) return r;
@@ -435,6 +442,7 @@ export function parseCheckRunPages(text, { repository, sha }) {
   if (!stream.ok) return stream;
   let total = null;
   const conclusions = [];
+  const runs = [];
   const seen = new Set();
   for (const page of stream.pages) {
     if (!isPlainObject(page)) return bad("page-not-object", "a check-run page is not an object");
@@ -464,18 +472,23 @@ export function parseCheckRunPages(text, { repository, sha }) {
       if (run.head_sha !== sha) {
         return bad("binding-sha-mismatch", `check run ${run.id}: head_sha does not equal expected ${sha}`);
       }
+      if (typeof run.name !== "string" || run.name.length === 0) {
+        return bad("check-run-invalid", `check run ${run.id}: name is not a non-empty string`);
+      }
       if (run.conclusion !== null && typeof run.conclusion !== "string") {
         return bad("check-run-invalid", `check run ${run.id}: conclusion is neither string nor null`);
       }
       // In-progress runs have conclusion null → recorded as the string
       // "null" (non-passing), matching the merge-guard evidence contract.
       conclusions.push(run.conclusion === null ? "null" : run.conclusion);
+      runs.push({ id: run.id, name: run.name, conclusion: run.conclusion, head_sha: run.head_sha });
     }
   }
   if (conclusions.length !== total) {
     return bad("check-run-count-mismatch", `aggregated ${conclusions.length} run(s) but total_count is ${total} (dropped or duplicated page)`);
   }
-  return { ok: true, check_runs_total: total, check_run_conclusions: conclusions };
+  runs.sort((a, b) => a.id - b.id);
+  return { ok: true, check_runs_total: total, check_run_conclusions: conclusions, check_runs: runs };
 }
 
 // ---------------------------------------------------------------------------
@@ -539,6 +552,11 @@ export function parseLabelPages(text, { repository }) {
 // statuses.length must equal total_count exactly; the response sha must
 // equal the expected exact commit SHA; the response repository must equal
 // the expected repository. Any mismatch refuses the evidence.
+//
+// The COMPLETE validated entry set is preserved (round 11 J2):
+// `commit_statuses` carries every entry's {id, context, state} sorted by
+// id, so two evidence reads whose rollup state and count agree but whose
+// entry identities differ canonically compare UNEQUAL.
 export function parseCombinedStatus(text, { repository, sha }) {
   const r = checkExpectedRepository(repository);
   if (!r.ok) return r;
@@ -582,5 +600,8 @@ export function parseCombinedStatus(text, { repository, sha }) {
   if (!isPlainObject(v.repository) || v.repository.full_name !== repository) {
     return bad("binding-repository-mismatch", `combined status repository does not equal ${repository}`);
   }
-  return { ok: true, commit_statuses_total: v.total_count, commit_status_state: v.state };
+  const entries = v.statuses
+    .map((st) => ({ id: st.id, context: st.context, state: st.state }))
+    .sort((a, b) => a.id - b.id);
+  return { ok: true, commit_statuses_total: v.total_count, commit_status_state: v.state, commit_statuses: entries };
 }

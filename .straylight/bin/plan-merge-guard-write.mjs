@@ -219,7 +219,11 @@ for (const gather of [1, 2]) {
 // row is fail-closed ineligibility, never a guess; check evidence exists
 // only when BOTH the check-runs and status rows fetched, bound to that
 // gather's own parsed PR head. The two gathers' evidence must be
-// canonically EQUAL (the live half of the stability fence, J2).
+// canonically EQUAL (the live half of the stability fence, J2) — over
+// the COMPLETE validated records: every check run's {id, name,
+// conclusion, head_sha} and every combined-status entry's {id, context,
+// state}, never aggregates alone. Two reads whose totals and rollup
+// agree but whose run/entry identities differ are instability (exit 2).
 function gatherEvidence(gather) {
   if (claim.pr_number === null) return { pr_metadata: { fetch_ok: false }, checks: null };
   const rowOf = (slot) => ledgerParsed.rows.find((r) => r.gather === gather && r.slot === slot);
@@ -242,8 +246,10 @@ function gatherEvidence(gather) {
     checks = {
       check_runs_total: cr.check_runs_total,
       check_run_conclusions: cr.check_run_conclusions,
+      check_runs: cr.check_runs,
       commit_statuses_total: cs.commit_statuses_total,
       commit_status_state: cs.commit_status_state,
+      commit_statuses: cs.commit_statuses,
     };
   }
   return { pr_metadata: pr.pr, checks };
@@ -254,10 +260,22 @@ if (payloadDigest(evidence1) !== payloadDigest(evidence2)) {
   fail("two-read-instability", "live PR/check evidence differs between gathers; retry next run");
 }
 
-// Pure evaluation — report-only by construction.
+// Pure evaluation — report-only by construction. The evaluator consumes
+// the aggregate profile; the record-level fields above exist for the
+// equality fence, and passing them along is harmless (evaluate ignores
+// unknown check fields only through its own closed checksOk predicate).
 const verdict = evaluate(lane, policy, {
   pr_metadata: evidence2.pr_metadata,
-  ...(evidence2.checks !== null ? { checks: evidence2.checks } : {}),
+  ...(evidence2.checks !== null
+    ? {
+        checks: {
+          check_runs_total: evidence2.checks.check_runs_total,
+          check_run_conclusions: evidence2.checks.check_run_conclusions,
+          commit_statuses_total: evidence2.checks.commit_statuses_total,
+          commit_status_state: evidence2.checks.commit_status_state,
+        },
+      }
+    : {}),
 });
 
 const headForKey = evidence2.pr_metadata.fetch_ok === true ? evidence2.pr_metadata.head_sha : "unknown";
