@@ -350,11 +350,14 @@ describe("I2 — a malformed / unreadable marker-bearing lane is visible, never 
     expect(watchdog).not.toMatch(/\|\| continue/);
   });
 
-  it("the scanner turns exactly such stubs into explicit escalate-malformed-lane findings with per-issue dedupe keys", () => {
+  it("the scanner turns exactly such stubs into explicit escalate-malformed-lane findings keyed by the trusted issue number", () => {
+    // Issue-keyed stubs, as watchdog-plan.mjs feeds them (round 11 J8):
+    // an unreadable issue carries NO lane identity at all; a failed
+    // reconstruction carries the lane_id scanned from readable evidence.
     const out = scan(
       [
-        { lane_id: "unreadable-issue-42", event_sequence: 42 },
-        { lane_id: "malformed-issue-17", event_sequence: 17 },
+        { issue_number: 42, event_sequence: 42 },
+        { issue_number: 17, lane_id: "lane-phase-49q", event_sequence: 17 },
       ],
       makePolicy(),
       { now: NOW },
@@ -362,8 +365,9 @@ describe("I2 — a malformed / unreadable marker-bearing lane is visible, never 
     expect(out.ok).toBe(true);
     const findings = out.actions.filter((a: any) => a.type === "escalate-malformed-lane");
     expect(findings).toHaveLength(2);
-    expect(findings[0]?.dedupe_key).toBe("malformed:unreadable-issue-42:42");
-    expect(findings[1]?.dedupe_key).toBe("malformed:malformed-issue-17:17");
+    expect(findings[0]).toMatchObject({ issue_number: 42, dedupe_key: "malformed:issue:42" });
+    expect(findings[0]?.lane_id).toBeUndefined(); // no synthetic identity
+    expect(findings[1]).toMatchObject({ issue_number: 17, dedupe_key: "malformed:issue:17", lane_id: "lane-phase-49q" });
   });
 
   it("a finding whose lane has no issue mapping FAILS the sweep instead of being skipped", () => {

@@ -25,6 +25,12 @@
 import { createHash } from "node:crypto";
 import { validatePolicy, validateLane, parseIsoInstant } from "./validate.mjs";
 
+// The canonical lane-id shape (mirrors write-plan/collection): a
+// malformed-lane finding records a lane_id ONLY when the caller derived
+// a pattern-valid identity from readable evidence — an arbitrary string
+// (or a synthetic stub id) never enters the durable finding record.
+const LANE_ID_RE = /^lane-[a-z0-9][a-z0-9-]{1,62}$/;
+
 // Deterministic, collision-resistant event id for a recovery action:
 // sha256 over the full dedupe key (complete lane id + recovery key + seq).
 // 48 hex chars (192 bits) fits the evt- pattern's 63-char budget.
@@ -59,17 +65,20 @@ export function scan(lanes, policy, context = {}) {
       // guess a recovery, so it routes to the operator. When the entry is
       // issue-keyed, the finding identity IS the issue number: no
       // synthetic lane identity exists to collide or mis-map. The finding
-      // carries a lane_id ONLY when the caller derived one from readable
-      // evidence — an unreadable genesis has no provable lane identity,
-      // and the watchdog never fabricates one (F8).
+      // carries a lane_id ONLY when the caller derived a PATTERN-VALID
+      // one from readable evidence — an unreadable genesis has no
+      // provable lane identity, and the watchdog never fabricates or
+      // relays one (F8, round 11 J8: an arbitrary string in the stub is
+      // not identity).
+      const hasDerivedLaneId = typeof lane?.lane_id === "string" && LANE_ID_RE.test(lane.lane_id);
       const finding = {
         type: "escalate-malformed-lane",
         dedupe_key: issueNumber !== null
           ? `malformed:issue:${issueNumber}`
-          : `malformed:${typeof lane?.lane_id === "string" ? lane.lane_id : "unknown"}:${lane?.event_sequence ?? "na"}`,
+          : `malformed:${hasDerivedLaneId ? lane.lane_id : "unknown"}:${lane?.event_sequence ?? "na"}`,
         detail: lv.errors.join("; "),
       };
-      if (typeof lane?.lane_id === "string") finding.lane_id = lane.lane_id;
+      if (hasDerivedLaneId) finding.lane_id = lane.lane_id;
       actions.push(withIssue(finding));
       continue;
     }

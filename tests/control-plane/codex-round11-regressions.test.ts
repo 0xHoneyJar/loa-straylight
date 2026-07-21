@@ -38,9 +38,11 @@ import { join } from "node:path";
 import { parseCheckRunPages, parseCombinedStatus } from "../../.straylight/lib/evidence.mjs";
 import { warningBodyFor, warningDedupeKey, validateOperationBody } from "../../.straylight/lib/write-plan.mjs";
 import { hasMarker, MARKERS } from "../../.straylight/lib/markers.mjs";
+import { scan } from "../../.straylight/lib/watchdog.mjs";
+import type { WatchdogAction, WatchdogPostEventAction, WatchdogMalformedLaneFinding } from "../../.straylight/lib/watchdog.mjs";
 import {
-  makeLane, makeEvent, makeTaskPacket, makeAuditRecord, makePolicy,
-  payloadDigest, REPO, NOW, BASE_SHA, HEAD_SHA, WORKING_BRANCH,
+  makeLane, makeEvent, makeTaskPacket, makeAuditRecord, makePolicy, laneClaudeWorking,
+  payloadDigest, REPO, NOW, AFTER_EXPIRY, BASE_SHA, HEAD_SHA, WORKING_BRANCH,
 } from "./_fixtures.js";
 
 const REDUCER_PLANNER = ".straylight/bin/plan-reducer-writes.mjs";
@@ -407,5 +409,100 @@ describe("J4 — the cp-paused warning is positively identified by its dedicated
     expect(plan.operations.some((o: any) => o.kind === "post-cp-paused-warning")).toBe(false);
     const removal = plan.operations.find((o: any) => o.kind === "remove-derived-cp-paused-after-warning");
     expect(removal.warning_proof).toEqual({ comment_id: 4202, dedupe_key: warningDedupeKey("lane-phase-49p", 41) });
+  });
+});
+
+// =============================================================================
+// J8 — WatchdogAction is a discriminated union: only malformed findings
+// may omit lane_id
+// =============================================================================
+describe("J8 — healthy actions require lane_id at the type level; only issue-keyed malformed findings may omit it", () => {
+  it("COMPILER PROBE: a healthy post-event without a lane_id no longer type-checks", () => {
+    // The Codex probe: pre-round-11, `lane_id?: string` on every action
+    // made this object a valid WatchdogAction.
+    // @ts-expect-error — post-event REQUIRES lane_id (discriminated union)
+    const rejected: WatchdogAction = {
+      type: "post-event",
+      event_type: "system.lease_expired",
+      event_id: "evt-x",
+      sequence: 4,
+      prior_state: "claude-working",
+      dedupe_key: "lease-expired:lane-phase-49p:lease-1:3",
+      detail: "x",
+    };
+    // @ts-expect-error — unverifiable-head findings REQUIRE lane_id too
+    const rejectedFinding: WatchdogAction = {
+      type: "flag-unverifiable-head",
+      dedupe_key: "head-unverifiable:x",
+      detail: "x",
+    };
+    // The valid spellings, for contrast:
+    const event: WatchdogPostEventAction = {
+      type: "post-event",
+      lane_id: "lane-phase-49p",
+      event_type: "system.lease_expired",
+      event_id: "evt-x",
+      sequence: 4,
+      prior_state: "claude-working",
+      dedupe_key: "lease-expired:lane-phase-49p:lease-1:3",
+      detail: "x",
+    };
+    const malformedWithout: WatchdogMalformedLaneFinding = {
+      type: "escalate-malformed-lane",
+      issue_number: 42,
+      dedupe_key: "malformed:issue:42",
+      detail: "x",
+    };
+    const malformedWith: WatchdogMalformedLaneFinding = {
+      type: "escalate-malformed-lane",
+      issue_number: 17,
+      lane_id: "lane-phase-49q",
+      dedupe_key: "malformed:issue:17",
+      detail: "x",
+    };
+    expect([rejected, rejectedFinding, event, malformedWithout, malformedWith].length).toBe(5);
+  });
+
+  it("RUNTIME: every healthy action the scan emits carries the validated lane_id", () => {
+    const out = scan([{ ...laneClaudeWorking(), issue_number: 41 }], makePolicy(), { now: AFTER_EXPIRY });
+    expect(out.ok).toBe(true);
+    expect(out.actions).toHaveLength(1);
+    expect(out.actions[0]).toMatchObject({ type: "post-event", lane_id: "lane-phase-49p", issue_number: 41 });
+  });
+
+  it("RUNTIME: a stub whose lane_id is NOT a pattern-valid lane identity yields a finding WITHOUT lane_id", () => {
+    // Round 11 J8: an arbitrary string in a malformed stub is not a
+    // derived identity — it must never enter the durable finding record.
+    const out = scan(
+      [{ issue_number: 42, lane_id: "unreadable-issue-42", event_sequence: 42 }],
+      makePolicy(),
+      { now: NOW },
+    );
+    expect(out.ok).toBe(true);
+    const findings = out.actions.filter((a) => a.type === "escalate-malformed-lane");
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ issue_number: 42, dedupe_key: "malformed:issue:42" });
+    expect(findings[0]?.lane_id).toBeUndefined();
+  });
+
+  it("RUNTIME: a pattern-valid lane_id derived from readable evidence IS carried on the malformed finding", () => {
+    const out = scan(
+      [{ issue_number: 17, lane_id: "lane-phase-49q", event_sequence: 17 }],
+      makePolicy(),
+      { now: NOW },
+    );
+    expect(out.ok).toBe(true);
+    const findings = out.actions.filter((a) => a.type === "escalate-malformed-lane");
+    expect(findings[0]).toMatchObject({ issue_number: 17, lane_id: "lane-phase-49q", dedupe_key: "malformed:issue:17" });
+  });
+
+  it("no production or test path routes on synthetic unreadable-issue-*/malformed-issue-* lane IDs", () => {
+    const watchdogPlan = readFileSync(".straylight/lib/watchdog-plan.mjs", "utf8");
+    const watchdog = readFileSync(".straylight/lib/watchdog.mjs", "utf8");
+    expect(watchdogPlan).not.toMatch(/unreadable-issue-|malformed-issue-/);
+    expect(watchdog).not.toMatch(/unreadable-issue-|malformed-issue-/);
+    // The watchdog relays a stub lane_id onto a finding only through the
+    // pattern gate.
+    expect(watchdog).toMatch(/LANE_ID_RE\.test\(lane\.lane_id\)/);
   });
 });
