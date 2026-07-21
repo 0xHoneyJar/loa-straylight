@@ -178,15 +178,33 @@ describe("row 19 — reducer Stage B gathers and reconstructs AFTER Stage A's wr
     writeFileSync(policyPath, JSON.stringify(makePolicy()));
     const cs = eligibilityPendingComments(41);
 
-    // --- Stage A: plan against the pre-write world.
+    // --- Stage A: probe → claim → read ledger → final plan against the
+    // pre-write world (the round-10 J2 pipeline, as the workflow runs it).
     const gA1 = mkdtempSync(join(tmpdir(), "cp-a1-"));
     const gA2 = mkdtempSync(join(tmpdir(), "cp-a2-"));
-    writeGather(gA1, cs, null);
+    writeGather(gA1, cs, null, livePr());
     writeGather(gA2, cs, null, livePr());
+    const claimRoot = mkdtempSync(join(tmpdir(), "cp-r19-claim-"));
+    const probe = runPlanner([
+      "--stage", "a", "--probe", "--claim-root", claimRoot,
+      "--gather-1", gA1, "--gather-2", gA2, "--issue-number", "41",
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+    ]);
+    expect(probe.status).toBe(0);
+    // The read ledger the shared read executor would have written for the
+    // claimed PR slot (both gathers fetched).
+    const prText1 = readFileSync(join(gA1, "pr.json"), "utf8");
+    const prText2 = readFileSync(join(gA2, "pr.json"), "utf8");
+    writeFileSync(join(claimRoot, "read-ledger.jsonl"), [
+      JSON.stringify({ nonce: NONCE, gather: 1, slot: "pr", pr_number: 120, fetched: true, path: "pr.json", sha256: sha256(prText1) }),
+      JSON.stringify({ nonce: NONCE, gather: 2, slot: "pr", pr_number: 120, fetched: true, path: "pr.json", sha256: sha256(prText2) }),
+    ].join("\n") + "\n");
     const requestA = mkdtempSync(join(tmpdir(), "cp-reqa-"));
     const a = runPlanner([
       "--stage", "a", "--gather-1", gA1, "--gather-2", gA2,
       "--issue-number", "41", "--request-root", requestA,
+      "--claim", join(claimRoot, "claim.json"),
+      "--read-ledger", join(claimRoot, "read-ledger.jsonl"),
       "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
     ]);
     expect(a.status).toBe(0);

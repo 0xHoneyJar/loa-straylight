@@ -664,17 +664,23 @@ describe("C11 — two-page check-run aggregation", () => {
     expect(out.eligible).toBe(false);
   });
 
-  it("the merge-guard workflow gathers conclusions with --paginate; the shared parser aggregates every page", () => {
-    // Workflow-boundary redesign: bash fetches the raw --paginate stream
-    // to a file; parseCheckRunPages (evidence.mjs, consumed by
+  it("check evidence is fetched --paginate by the READ EXECUTOR against the bound head; the shared parser aggregates every page", () => {
+    // Round-10 J3: the derived check-runs fetch moved from workflow bash
+    // into execute-read-plan.mjs — the head SHA is derived INSIDE the
+    // executor from the just-fetched PR bytes via evidence.mjs, and the
+    // paginated stream goes to a file. parseCheckRunPages (consumed by
     // plan-merge-guard-write.mjs) owns aggregation and cross-checks the
     // run list against total_count so a dropped page fails closed —
     // proven executably in evidence.test.ts ("check-run aggregation count
-    // must equal total_count exactly"). Pin the fetch shape and that no
-    // jq slurping of check pages returns.
+    // must equal total_count exactly"). Pin the executor's fetch shape
+    // and that the workflow carries no check fetch (or jq slurp) at all.
+    const readExecutor = readFileSync(".straylight/bin/execute-read-plan.mjs", "utf8");
+    expect(readExecutor).toMatch(/commits\/\$\{sha\}\/check-runs/);
+    expect(readExecutor).toMatch(/"api", "--paginate", path/);
     const wf = readFileSync(".github/workflows/straylight-merge-guard.yml", "utf8");
-    expect(wf).toMatch(/gh api --paginate "repos\/\$\{REPO\}\/commits\/\$\{HEAD\}\/check-runs"/);
-    expect(wf).not.toMatch(/jq -s '\[\.\[\]\.check_runs/);
+    const code = wf.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
+    expect(code).not.toMatch(/check-runs/);
+    expect(code).not.toMatch(/jq -s '\[\.\[\]\.check_runs/);
     const evidence = readFileSync(".straylight/lib/evidence.mjs", "utf8");
     expect(evidence).toMatch(/check-run-count-mismatch/);
     expect(evidence).toMatch(/conclusions\.length !== total/);

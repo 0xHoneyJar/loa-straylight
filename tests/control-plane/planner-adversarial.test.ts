@@ -12,6 +12,7 @@
 import { describe, it, expect } from "vitest";
 import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, existsSync } from "node:fs";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -19,6 +20,8 @@ import {
   payloadDigest, REPO, NOW, BASE_SHA, HEAD_SHA, WORKING_BRANCH,
 } from "./_fixtures.js";
 import { warningDedupeKey, warningBodyFor } from "../../.straylight/lib/write-plan.mjs";
+
+const sha256 = (s: string) => "sha256:" + createHash("sha256").update(s, "utf8").digest("hex");
 
 const BOOTSTRAP_PLANNER = ".straylight/bin/plan-bootstrap-write.mjs";
 const REDUCER_PLANNER = ".straylight/bin/plan-reducer-writes.mjs";
@@ -61,9 +64,12 @@ function writePolicy(dir: string, overrides: Record<string, any> = {}) {
 // Bootstrap planner
 // =============================================================================
 describe("bootstrap planner — the absence proof gates every creation", () => {
-  function setup(issues: any[], labels: any[] = []) {
+  // Two independent enumerations (J1): by default the second read equals
+  // the first; tests can perturb it to prove the stability fence.
+  function setup(issues: any[], labels: any[] = [], issues2?: any[]) {
     const dir = mkdtempSync(join(tmpdir(), "cp-boot-"));
     writeFileSync(join(dir, "pages.json"), JSON.stringify(issues));
+    writeFileSync(join(dir, "pages2.json"), JSON.stringify(issues2 ?? issues));
     writeFileSync(join(dir, "labels.json"), JSON.stringify(labels));
     const requestRoot = join(dir, "request");
     mkdirSync(requestRoot);
@@ -71,7 +77,8 @@ describe("bootstrap planner — the absence proof gates every creation", () => {
   }
   const label = (name: string, id = 7) => ({ id, name, url: `${API}/repos/${REPO}/labels/${encodeURIComponent(name)}` });
   const args = (s: ReturnType<typeof setup>) => [
-    "--pages", join(s.dir, "pages.json"), "--labels", join(s.dir, "labels.json"),
+    "--pages-1", join(s.dir, "pages.json"), "--pages-2", join(s.dir, "pages2.json"),
+    "--labels", join(s.dir, "labels.json"),
     "--base-sha", BASE_SHA, "--request-root", s.requestRoot,
     "--repository", REPO, "--nonce", NONCE,
   ];
@@ -238,17 +245,94 @@ function reducerArgs(stage: string, g1: string, g2: string, requestRoot: string 
   ];
 }
 
+// Fabricate the read ledger the shared READ executor would have written
+// for this claim against the files actually present in the gathers: a
+// fetched slot file → fetched:true row with its digest; an absent file →
+// the explicit {fetched:false} durable fact.
+function fabricateReadLedger(claimRoot: string, g1: string, g2: string) {
+  const claim = JSON.parse(readFileSync(join(claimRoot, "claim.json"), "utf8"));
+  const rows: string[] = [];
+  if (claim.pr_number !== null) {
+    for (const [gather, dir] of [[1, g1], [2, g2]] as const) {
+      const prPath = join(dir, "pr.json");
+      let headSha: string | null = null;
+      if (existsSync(prPath)) {
+        const text = readFileSync(prPath, "utf8");
+        try { headSha = JSON.parse(text)?.head?.sha ?? null; } catch { headSha = null; }
+        rows.push(JSON.stringify({ nonce: NONCE, gather, slot: "pr", pr_number: claim.pr_number, fetched: true, path: "pr.json", sha256: sha256(text) }));
+      } else {
+        rows.push(JSON.stringify({ nonce: NONCE, gather, slot: "pr", pr_number: claim.pr_number, fetched: false }));
+      }
+      if (claim.checks === true) {
+        for (const [slot, file] of [["check-runs", "check-runs.pages"], ["status", "status.json"]] as const) {
+          const p = join(dir, file);
+          if (existsSync(p) && headSha !== null) {
+            const text = readFileSync(p, "utf8");
+            rows.push(JSON.stringify({ nonce: NONCE, gather, slot, pr_number: claim.pr_number, sha: headSha, fetched: true, path: file, sha256: sha256(text) }));
+          } else {
+            rows.push(JSON.stringify({ nonce: NONCE, gather, slot, pr_number: claim.pr_number, fetched: false }));
+          }
+        }
+      }
+    }
+  }
+  writeFileSync(join(claimRoot, "read-ledger.jsonl"), rows.length === 0 ? "" : rows.join("\n") + "\n");
+}
+
+// Full Stage A pipeline as the workflow runs it: probe (writes claim +
+// read plan) → fabricated read-executor ledger → final planner with claim
+// rebinding. Returns the probe result when the probe itself refuses.
+function runStageA(g1: string, g2: string, requestRoot: string, policyPath: string, issue = 41) {
+  const claimRoot = mkdtempSync(join(tmpdir(), "cp-claim-"));
+  const probe = run(REDUCER_PLANNER, [
+    "--stage", "a", "--probe", "--claim-root", claimRoot,
+    "--gather-1", g1, "--gather-2", g2, "--issue-number", String(issue),
+    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+  ]);
+  if (probe.status !== 0) return probe;
+  fabricateReadLedger(claimRoot, g1, g2);
+  return run(REDUCER_PLANNER, [
+    "--stage", "a",
+    "--gather-1", g1, "--gather-2", g2, "--issue-number", String(issue),
+    "--request-root", requestRoot,
+    "--claim", join(claimRoot, "claim.json"),
+    "--read-ledger", join(claimRoot, "read-ledger.jsonl"),
+    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+  ]);
+}
+
+// Full merge-guard pipeline: any-pr probe with checks → fabricated read
+// ledger → merge-guard planner with claim rebinding.
+function runMergeGuard(g1: string, g2: string, requestRoot: string, policyPath: string, issue = 41) {
+  const claimRoot = mkdtempSync(join(tmpdir(), "cp-mg-claim-"));
+  const probe = run(REDUCER_PLANNER, [
+    "--stage", "a", "--probe", "--slot-mode", "any-pr", "--with-checks", "--claim-root", claimRoot,
+    "--gather-1", g1, "--gather-2", g2, "--issue-number", String(issue),
+    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+  ]);
+  if (probe.status !== 0) return probe;
+  fabricateReadLedger(claimRoot, g1, g2);
+  return run(MERGE_GUARD_PLANNER, [
+    "--gather-1", g1, "--gather-2", g2, "--issue-number", String(issue),
+    "--request-root", requestRoot,
+    "--claim", join(claimRoot, "claim.json"),
+    "--read-ledger", join(claimRoot, "read-ledger.jsonl"),
+    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+  ]);
+}
+
 // =============================================================================
 // Reducer Stage A
 // =============================================================================
 describe("reducer Stage A — at most the eligibility confirmation, terminal", () => {
   it("an eligibility-pending lane with live PR evidence plans EXACTLY ONE state-advancing operation", () => {
     const cs = eligibilityPendingComments(41);
-    const g1 = writeGather({ issue: 41, body: laneBody(), comments: cs });
+    // The read executor fetches the claimed PR into BOTH gathers.
+    const g1 = writeGather({ issue: 41, body: laneBody(), comments: cs, prDoc: livePr() });
     const g2 = writeGather({ issue: 41, body: laneBody(), comments: cs, prDoc: livePr() });
     const requestRoot = mkdtempSync(join(tmpdir(), "cp-req-"));
     const policyPath = writePolicy(g1);
-    const r = run(REDUCER_PLANNER, reducerArgs("a", g1, g2, requestRoot, policyPath));
+    const r = runStageA(g1, g2, requestRoot, policyPath);
     expect(r.status).toBe(0);
     const plan = JSON.parse(readFileSync(join(requestRoot, "plan.json"), "utf8"));
     expect(plan.operations).toHaveLength(1);
@@ -263,38 +347,56 @@ describe("reducer Stage A — at most the eligibility confirmation, terminal", (
     expect(body.body).toContain(`"head_sha": "${HEAD_SHA}"`);
   });
 
-  it("--probe reports the derived state without writing anything (bash decides fetches on DERIVED output)", () => {
+  it("--probe writes the closed claim + read plan (never a write plan); its stdout is diagnostic only", () => {
     const cs = eligibilityPendingComments(41);
     const g1 = writeGather({ issue: 41, body: laneBody(), comments: cs });
     const g2 = writeGather({ issue: 41, body: laneBody(), comments: cs });
     const policyPath = writePolicy(g1);
-    const r = run(REDUCER_PLANNER, reducerArgs("a", g1, g2, null, policyPath));
+    const claimRoot = mkdtempSync(join(tmpdir(), "cp-probe-"));
+    const r = run(REDUCER_PLANNER, [
+      "--stage", "a", "--probe", "--claim-root", claimRoot,
+      "--gather-1", g1, "--gather-2", g2, "--issue-number", "41",
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+    ]);
     expect(r.status).toBe(0);
     expect(r.out).toMatchObject({ ok: true, state: "eligibility-pending", lane_id: "lane-phase-49p", pr_number: 120 });
+    const claim = JSON.parse(readFileSync(join(claimRoot, "claim.json"), "utf8"));
+    expect(claim).toMatchObject({
+      schema: "straylight.fetch-slot-claim.v1",
+      nonce: NONCE, repository: REPO, issue_number: 41,
+      lane_id: "lane-phase-49p", state: "eligibility-pending",
+      pr_number: 120, checks: false,
+    });
+    // The claim digest-binds itself to BOTH reads' exact evidence bytes.
+    expect(claim.sources.gather_1.enumeration_sha256).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(claim.sources.gather_2.comments_sha256).toMatch(/^sha256:[0-9a-f]{64}$/);
+    const readPlan = JSON.parse(readFileSync(join(claimRoot, "read-plan.json"), "utf8"));
+    expect(readPlan.reads).toEqual([{ kind: "pr-into-gathers", pr_number: 120 }]);
+    expect(existsSync(join(claimRoot, "plan.json"))).toBe(false); // never write authority
   });
 
-  it("not eligibility-pending → exit 3 (valid no-op); missing PR evidence → exit 3 (fail closed, retry)", () => {
+  it("not eligibility-pending → exit 3 (valid no-op); explicit failed PR fetch → exit 3 (fail closed, retry)", () => {
     const g1 = writeGather({ issue: 41, body: laneBody(), comments: [] });
     const g2 = writeGather({ issue: 41, body: laneBody(), comments: [] });
     const requestRoot = mkdtempSync(join(tmpdir(), "cp-req-"));
     const policyPath = writePolicy(g1);
-    expect(run(REDUCER_PLANNER, reducerArgs("a", g1, g2, requestRoot, policyPath)).status).toBe(3);
+    expect(runStageA(g1, g2, requestRoot, policyPath).status).toBe(3);
 
     const cs = eligibilityPendingComments(41);
     const g3 = writeGather({ issue: 41, body: laneBody(), comments: cs });
-    const g4 = writeGather({ issue: 41, body: laneBody(), comments: cs }); // no pr.json
-    const r = run(REDUCER_PLANNER, reducerArgs("a", g3, g4, requestRoot, policyPath));
+    const g4 = writeGather({ issue: 41, body: laneBody(), comments: cs }); // no pr.json → {fetched:false} rows
+    const r = runStageA(g3, g4, requestRoot, policyPath);
     expect(r.status).toBe(3);
     expect(existsSync(join(requestRoot, "plan.json"))).toBe(false);
   });
 
   it("the dry-run refuses a doomed confirmation (draft PR) → exit 3, dedupe key NOT burned", () => {
     const cs = eligibilityPendingComments(41);
-    const g1 = writeGather({ issue: 41, body: laneBody(), comments: cs });
+    const g1 = writeGather({ issue: 41, body: laneBody(), comments: cs, prDoc: livePr({ draft: true }) });
     const g2 = writeGather({ issue: 41, body: laneBody(), comments: cs, prDoc: livePr({ draft: true }) });
     const requestRoot = mkdtempSync(join(tmpdir(), "cp-req-"));
     const policyPath = writePolicy(g1);
-    const r = run(REDUCER_PLANNER, reducerArgs("a", g1, g2, requestRoot, policyPath));
+    const r = runStageA(g1, g2, requestRoot, policyPath);
     expect(r.status).toBe(3);
     expect(r.out.detail).toContain("dry-run");
     expect(existsSync(join(requestRoot, "plan.json"))).toBe(false);
@@ -304,16 +406,16 @@ describe("reducer Stage A — at most the eligibility confirmation, terminal", (
     const cs = eligibilityPendingComments(41);
     const posted = comment(3999, 41, "github-actions[bot]",
       `## confirmation\n\ndedupe:eligibility-confirmed:lane-phase-49p:6\n\n<!-- straylight:event:v1 -->\n\`\`\`json\n{"schema":"straylight.event.v1"}\n\`\`\``);
-    const g1 = writeGather({ issue: 41, body: laneBody(), comments: [...cs, posted] });
+    const g1 = writeGather({ issue: 41, body: laneBody(), comments: [...cs, posted], prDoc: livePr() });
     const g2 = writeGather({ issue: 41, body: laneBody(), comments: [...cs, posted], prDoc: livePr() });
     const requestRoot = mkdtempSync(join(tmpdir(), "cp-req-"));
     const policyPath = writePolicy(g1);
-    expect(run(REDUCER_PLANNER, reducerArgs("a", g1, g2, requestRoot, policyPath)).status).toBe(3);
+    expect(runStageA(g1, g2, requestRoot, policyPath).status).toBe(3);
 
     // Two-read instability: read 2 gained a protocol comment.
     const g3 = writeGather({ issue: 41, body: laneBody(), comments: cs });
-    const g4 = writeGather({ issue: 41, body: laneBody(), comments: [...cs, posted], prDoc: livePr() });
-    const r = run(REDUCER_PLANNER, reducerArgs("a", g3, g4, requestRoot, policyPath));
+    const g4 = writeGather({ issue: 41, body: laneBody(), comments: [...cs, posted] });
+    const r = runStageA(g3, g4, requestRoot, policyPath);
     expect(r.status).toBe(2);
     expect(r.out.reason).toBe("two-read-instability");
   });
@@ -322,26 +424,124 @@ describe("reducer Stage A — at most the eligibility confirmation, terminal", (
     const cs = eligibilityPendingComments(41);
     const dup = enumEntry(44, laneBody());
     const g1 = writeGather({ issue: 41, body: laneBody(), comments: cs, extraIssues: [dup] });
-    const g2 = writeGather({ issue: 41, body: laneBody(), comments: cs, extraIssues: [dup], prDoc: livePr() });
+    const g2 = writeGather({ issue: 41, body: laneBody(), comments: cs, extraIssues: [dup] });
     const requestRoot = mkdtempSync(join(tmpdir(), "cp-req-"));
     const policyPath = writePolicy(g1);
-    const r = run(REDUCER_PLANNER, reducerArgs("a", g1, g2, requestRoot, policyPath));
+    const r = runStageA(g1, g2, requestRoot, policyPath);
     expect(r.status).toBe(2);
     expect(r.out.reason).toBe("duplicate-lane-id");
   });
 
   it("wrong-repository / wrong-PR live evidence exits 2 (N2 binding)", () => {
     const cs = eligibilityPendingComments(41);
-    const g1 = writeGather({ issue: 41, body: laneBody(), comments: cs });
-    const g2 = writeGather({
-      issue: 41, body: laneBody(), comments: cs,
-      prDoc: livePr({ base: { ref: "main", sha: BASE_SHA, repo: { full_name: "evil/repo" } } }),
-    });
+    const evilPr = livePr({ base: { ref: "main", sha: BASE_SHA, repo: { full_name: "evil/repo" } } });
+    const g1 = writeGather({ issue: 41, body: laneBody(), comments: cs, prDoc: evilPr });
+    const g2 = writeGather({ issue: 41, body: laneBody(), comments: cs, prDoc: evilPr });
     const requestRoot = mkdtempSync(join(tmpdir(), "cp-req-"));
     const policyPath = writePolicy(g1);
-    const r = run(REDUCER_PLANNER, reducerArgs("a", g1, g2, requestRoot, policyPath));
+    const r = runStageA(g1, g2, requestRoot, policyPath);
     expect(r.status).toBe(2);
     expect(r.out.reason).toBe("binding-repository-mismatch");
+  });
+
+  it("J2: a claim the final planner's own derivation does not reproduce exits 2 (claim-derivation-mismatch)", () => {
+    const cs = eligibilityPendingComments(41);
+    const g1 = writeGather({ issue: 41, body: laneBody(), comments: cs, prDoc: livePr() });
+    const g2 = writeGather({ issue: 41, body: laneBody(), comments: cs, prDoc: livePr() });
+    const policyPath = writePolicy(g1);
+    const claimRoot = mkdtempSync(join(tmpdir(), "cp-claim-"));
+    const probe = run(REDUCER_PLANNER, [
+      "--stage", "a", "--probe", "--claim-root", claimRoot,
+      "--gather-1", g1, "--gather-2", g2, "--issue-number", "41",
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+    ]);
+    expect(probe.status).toBe(0);
+    // Forge the claim: swap the PR slot to a different number.
+    const claim = JSON.parse(readFileSync(join(claimRoot, "claim.json"), "utf8"));
+    claim.pr_number = 999;
+    writeFileSync(join(claimRoot, "claim.json"), JSON.stringify(claim));
+    fabricateReadLedger(claimRoot, g1, g2);
+    const requestRoot = mkdtempSync(join(tmpdir(), "cp-req-"));
+    const r = run(REDUCER_PLANNER, [
+      "--stage", "a",
+      "--gather-1", g1, "--gather-2", g2, "--issue-number", "41",
+      "--request-root", requestRoot,
+      "--claim", join(claimRoot, "claim.json"),
+      "--read-ledger", join(claimRoot, "read-ledger.jsonl"),
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+    ]);
+    expect(r.status).toBe(2);
+    expect(r.out.reason).toBe("claim-derivation-mismatch");
+    expect(existsSync(join(requestRoot, "plan.json"))).toBe(false);
+  });
+
+  it("J2: extra/missing/mismatched read-ledger evidence exits 2; an unaccounted slot-shaped file exits 2", () => {
+    const cs = eligibilityPendingComments(41);
+    const g1 = writeGather({ issue: 41, body: laneBody(), comments: cs, prDoc: livePr() });
+    const g2 = writeGather({ issue: 41, body: laneBody(), comments: cs, prDoc: livePr() });
+    const policyPath = writePolicy(g1);
+    const claimRoot = mkdtempSync(join(tmpdir(), "cp-claim-"));
+    run(REDUCER_PLANNER, [
+      "--stage", "a", "--probe", "--claim-root", claimRoot,
+      "--gather-1", g1, "--gather-2", g2, "--issue-number", "41",
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+    ]);
+    fabricateReadLedger(claimRoot, g1, g2);
+    const requestRoot = mkdtempSync(join(tmpdir(), "cp-req-"));
+    const finalArgs = [
+      "--stage", "a",
+      "--gather-1", g1, "--gather-2", g2, "--issue-number", "41",
+      "--request-root", requestRoot,
+      "--claim", join(claimRoot, "claim.json"),
+      "--read-ledger", join(claimRoot, "read-ledger.jsonl"),
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+    ];
+    const goodLedger = readFileSync(join(claimRoot, "read-ledger.jsonl"), "utf8");
+
+    // EXTRA row (an unclaimed check-runs slot): refuse.
+    writeFileSync(join(claimRoot, "read-ledger.jsonl"),
+      goodLedger + JSON.stringify({ nonce: NONCE, gather: 1, slot: "check-runs", pr_number: 120, sha: HEAD_SHA, fetched: true, path: "check-runs.pages", sha256: sha256("x") }) + "\n");
+    let r = run(REDUCER_PLANNER, finalArgs);
+    expect(r.status).toBe(2);
+    expect(r.out.reason).toBe("read-ledger-unclaimed-row");
+
+    // MISSING row (gather 2's pr row dropped): refuse.
+    writeFileSync(join(claimRoot, "read-ledger.jsonl"),
+      goodLedger.trim().split("\n").filter((l) => JSON.parse(l).gather !== 2).join("\n") + "\n");
+    r = run(REDUCER_PLANNER, finalArgs);
+    expect(r.status).toBe(2);
+    expect(r.out.reason).toBe("read-ledger-slot-missing");
+
+    // MISMATCHED digest: the file changed after the ledger recorded it.
+    writeFileSync(join(claimRoot, "read-ledger.jsonl"), goodLedger);
+    writeFileSync(join(g2, "pr.json"), livePr({ draft: true }));
+    r = run(REDUCER_PLANNER, finalArgs);
+    expect(r.status).toBe(2);
+    expect(r.out.reason).toBe("read-ledger-digest-mismatch");
+
+    // UNACCOUNTED slot-shaped file (Codex round-10 repro: an extra
+    // malformed PR file with no ledger row must refuse, never be
+    // silently ignored). Rebuild coherent gathers first.
+    const g3 = writeGather({ issue: 41, body: laneBody(), comments: cs, prDoc: livePr() });
+    const g4 = writeGather({ issue: 41, body: laneBody(), comments: cs }); // NO pr.json at probe time…
+    const claimRoot2 = mkdtempSync(join(tmpdir(), "cp-claim2-"));
+    run(REDUCER_PLANNER, [
+      "--stage", "a", "--probe", "--claim-root", claimRoot2,
+      "--gather-1", g3, "--gather-2", g4, "--issue-number", "41",
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+    ]);
+    fabricateReadLedger(claimRoot2, g3, g4); // ledger: gather2 pr → fetched:false
+    writeFileSync(join(g4, "pr.json"), "{ malformed ]"); // …file smuggled in AFTER
+    r = run(REDUCER_PLANNER, [
+      "--stage", "a",
+      "--gather-1", g3, "--gather-2", g4, "--issue-number", "41",
+      "--request-root", requestRoot,
+      "--claim", join(claimRoot2, "claim.json"),
+      "--read-ledger", join(claimRoot2, "read-ledger.jsonl"),
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+    ]);
+    expect(r.status).toBe(2);
+    expect(r.out.reason).toBe("read-ledger-unaccounted-file");
   });
 });
 
@@ -442,11 +642,7 @@ describe("merge-guard planner — report-only, deduped, fail-closed", () => {
     const g2 = writeGather({ issue: 41, body: laneBody(), comments: [] });
     const requestRoot = mkdtempSync(join(tmpdir(), "cp-req-"));
     const policyPath = writePolicy(g1);
-    const r = run(MERGE_GUARD_PLANNER, [
-      "--gather-1", g1, "--gather-2", g2, "--issue-number", "41",
-      "--request-root", requestRoot, "--repository", REPO,
-      "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
-    ]);
+    const r = runMergeGuard(g1, g2, requestRoot, policyPath);
     expect(r.status).toBe(0);
     expect(r.out.eligible).toBe(false);
     const plan = JSON.parse(readFileSync(join(requestRoot, "plan.json"), "utf8"));
@@ -465,11 +661,7 @@ describe("merge-guard planner — report-only, deduped, fail-closed", () => {
     const g2 = writeGather({ issue: 41, body: laneBody(), comments: [posted] });
     const requestRoot = mkdtempSync(join(tmpdir(), "cp-req-"));
     const policyPath = writePolicy(g1);
-    const r = run(MERGE_GUARD_PLANNER, [
-      "--gather-1", g1, "--gather-2", g2, "--issue-number", "41",
-      "--request-root", requestRoot, "--repository", REPO,
-      "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
-    ]);
+    const r = runMergeGuard(g1, g2, requestRoot, policyPath);
     expect(r.status).toBe(3);
   });
 
@@ -479,11 +671,7 @@ describe("merge-guard planner — report-only, deduped, fail-closed", () => {
     const g2 = writeGather({ issue: 41, body: laneBody(), comments: [], extraIssues: [dup] });
     const requestRoot = mkdtempSync(join(tmpdir(), "cp-req-"));
     const policyPath = writePolicy(g1);
-    const r = run(MERGE_GUARD_PLANNER, [
-      "--gather-1", g1, "--gather-2", g2, "--issue-number", "41",
-      "--request-root", requestRoot, "--repository", REPO,
-      "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
-    ]);
+    const r = runMergeGuard(g1, g2, requestRoot, policyPath);
     expect(r.status).toBe(2);
     expect(r.out.reason).toBe("duplicate-lane-id");
   });
@@ -495,11 +683,7 @@ describe("merge-guard planner — report-only, deduped, fail-closed", () => {
     const g2 = writeGather({ issue: 41, body: "prose", comments: [], extraIssues: [laneElsewhere] });
     const requestRoot = mkdtempSync(join(tmpdir(), "cp-req-"));
     const policyPath = writePolicy(g1);
-    const r = run(MERGE_GUARD_PLANNER, [
-      "--gather-1", g1, "--gather-2", g2, "--issue-number", "41",
-      "--request-root", requestRoot, "--repository", REPO,
-      "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
-    ]);
+    const r = runMergeGuard(g1, g2, requestRoot, policyPath);
     expect(r.status).toBe(2);
     // Issue 41 has no genesis at all → reconstruction fails there first;
     // either refusal is fail-closed and correct.

@@ -6,17 +6,23 @@
 // collection:
 //
 //   node collect-watchdog-evidence.mjs --stage issue-slots \
-//     --collection-dir <dir> --collection-id A|B --nonce <id>-<attempt> \
-//     --repository <owner/repo>
+//     --collection-dir <dir> --ledger <file> --collection-id A|B \
+//     --nonce <id>-<attempt> --repository <owner/repo>
 //       → writes <dir>/issue-slots.json (strict schema: NO PR field —
-//         enumeration-only input structurally cannot emit PR slots)
+//         enumeration-only input structurally cannot emit PR slots),
+//         appends the enumeration ledger row (this driver and the shared
+//         read executor are the ONLY ledger writers — bash never appends
+//         a row), and writes <dir>/read-plan-issues.json — the closed
+//         straylight.read-plan.v1 naming one issue-comments read per
+//         derived slot for execute-read-plan.mjs
 //
 //   node collect-watchdog-evidence.mjs --stage pr-slots \
 //     --collection-dir <dir> --ledger <file> --collection-id … --nonce … \
 //     --repository … [--policy <file>] --now <iso>
 //       → reparses the RAW enumeration + every raw issue/comment file via
 //         evidence.mjs, reconstructs every lane SOLELY to derive which PR
-//         numbers planning requires, writes <dir>/pr-slots.json
+//         numbers planning requires, writes <dir>/pr-slots.json and
+//         <dir>/read-plan-prs.json (one pr read per compound slot)
 //
 //   node collect-watchdog-evidence.mjs --stage seal \
 //     --collection-dir <dir> --ledger <file> --collection-id … --nonce … \
@@ -37,7 +43,7 @@
 // (fail closed; nothing written). This driver performs NO network I/O
 // and NO GitHub writes.
 
-import { readFileSync, writeFileSync, realpathSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, realpathSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseStrict } from "../lib/strict-json.mjs";
@@ -47,8 +53,10 @@ import {
   sealCollection,
   validateIssueSlotsDocument,
   parseLedger,
+  sha256OfBytes,
   COLLECTION_IDS,
 } from "../lib/collection.mjs";
+import { READ_PLAN_SCHEMA } from "../lib/read-plan.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -133,11 +141,28 @@ const identity = { collection_id: collectionId, nonce, repository };
 
 if (stage === "issue-slots") {
   // S1→S2: strict parse of the raw enumeration ONLY. The output schema
-  // has no PR field — nothing else is even read.
+  // has no PR field — nothing else is even read. This stage also appends
+  // the enumeration ledger row (the collector and the shared read
+  // executor are the ONLY ledger writers — bash never composes a row)
+  // and authors the closed read plan for the S2→S3 fetch transition.
+  const ledgerPath = arg("--ledger");
+  if (ledgerPath === null) fail("usage", "--ledger is required for issue-slots");
   const enumerationBytes = readRequired("enumeration.pages", "enumeration");
   const derived = deriveIssueSlots(enumerationBytes, identity);
   if (!derived.ok) fail(derived.reason, derived.detail);
+  appendFileSync(resolve(ledgerPath), JSON.stringify({
+    nonce, collection_id: collectionId, resource: "enumeration",
+    fetched: true, path: "enumeration.pages", sha256: sha256OfBytes(enumerationBytes),
+  }) + "\n");
   writeFileSync(join(realDir, "issue-slots.json"), JSON.stringify(derived.document, null, 2) + "\n");
+  writeFileSync(join(realDir, "read-plan-issues.json"), JSON.stringify({
+    schema: READ_PLAN_SCHEMA,
+    plan_id: `${nonce}-collect-${collectionId}-issues`,
+    nonce,
+    repository,
+    collection_id: collectionId,
+    reads: derived.document.issue_slots.map((n) => ({ kind: "issue-comments", issue_number: n })),
+  }, null, 2) + "\n");
   process.stdout.write(JSON.stringify({ ok: true, stage, issue_slots: derived.document.issue_slots }) + "\n");
   process.exit(0);
 }
@@ -178,6 +203,14 @@ if (stage === "pr-slots") {
   const derived = derivePrSlots(enumerationBytes, issueEvidence, { ...identity, policy, now });
   if (!derived.ok) fail(derived.reason, derived.detail);
   writeFileSync(join(realDir, "pr-slots.json"), JSON.stringify(derived.document, null, 2) + "\n");
+  writeFileSync(join(realDir, "read-plan-prs.json"), JSON.stringify({
+    schema: READ_PLAN_SCHEMA,
+    plan_id: `${nonce}-collect-${collectionId}-prs`,
+    nonce,
+    repository,
+    collection_id: collectionId,
+    reads: derived.document.pr_slots.map((s) => ({ kind: "pr", issue_number: s.issue_number, pr_number: s.pr_number })),
+  }, null, 2) + "\n");
   process.stdout.write(JSON.stringify({ ok: true, stage, pr_slots: derived.document.pr_slots }) + "\n");
   process.exit(0);
 }

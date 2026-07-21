@@ -71,9 +71,10 @@ function buildCollection(
   const dir = mkdtempSync(join(tmpdir(), `cp-dual-${collectionId}-`));
   const enumeration = JSON.stringify(world.map((w) => enumEntry(w.n, w.body)));
   writeFileSync(join(dir, "enumeration.pages"), enumeration);
-  const rows: string[] = [
-    JSON.stringify({ nonce: NONCE, collection_id: collectionId, resource: "enumeration", fetched: true, path: "enumeration.pages", sha256: sha256(enumeration) }),
-  ];
+  // The collector's issue-slots stage appends the enumeration ledger row
+  // itself (J3); the fixture pre-writes only the derived-fetch rows the
+  // read executor would have produced.
+  const rows: string[] = [];
   for (const w of world) {
     mkdirSync(join(dir, `issue-${w.n}`), { recursive: true });
     const iDoc = JSON.stringify(enumEntry(w.n, w.body));
@@ -92,12 +93,15 @@ function buildCollection(
     }
   }
   const ledgerPath = join(dir, "ledger.jsonl");
-  writeFileSync(ledgerPath, rows.join("\n") + "\n");
+  writeFileSync(ledgerPath, rows.length === 0 ? "" : rows.join("\n") + "\n");
   const policyPath = join(dir, "policy.json");
   writeFileSync(policyPath, JSON.stringify(makePolicy()));
-  // Run all three collector stages so the collection is sealed.
+  // Run all three collector stages so the collection is sealed. The
+  // issue-slots stage appends the enumeration row (prepended to the
+  // fixture's derived-fetch rows via a rewrite below, since the collector
+  // appends at the end while parseLedger accepts any order).
   for (const [stage, extra] of [
-    ["issue-slots", []],
+    ["issue-slots", ["--ledger", ledgerPath]],
     ["pr-slots", ["--ledger", ledgerPath, "--policy", policyPath, "--now", NOW]],
     ["seal", ["--ledger", ledgerPath, "--policy", policyPath, "--now", NOW]],
   ] as const) {

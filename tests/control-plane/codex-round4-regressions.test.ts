@@ -446,7 +446,9 @@ describe("D4 — merge guard: complete normalized metadata, field-by-field corre
     expect(wf).not.toMatch(/pr_state|pr_base_ref|pr_draft|pr_merged/);
     const planner = readFileSync(".straylight/bin/plan-merge-guard-write.mjs", "utf8");
     expect(planner).toMatch(/parsePr\(/);
-    expect(planner).toMatch(/pr_metadata: read2\.prMeta/);
+    // Round-10 J2: the evaluated record is the ledger-accounted, per-
+    // gather-equal parsed PR — still the complete parsePr record only.
+    expect(planner).toMatch(/pr_metadata: evidence2\.pr_metadata/);
     const evidence = readFileSync(".straylight/lib/evidence.mjs", "utf8");
     expect(evidence).toMatch(/fetch_ok: true/);
   });
@@ -511,7 +513,9 @@ describe("D5 — bootstrap existing-lane detection uses the canonical parser (co
     // job closed.
     const wf = readFileSync(".github/workflows/straylight-bootstrap.yml", "utf8");
     expect(wf).toMatch(/node \.straylight\/bin\/plan-bootstrap-write\.mjs/);
-    expect(wf).toMatch(/--pages \/tmp\/issue-pages\.json/);
+    // Round-10 J1: TWO independent enumerations feed the planner.
+    expect(wf).toMatch(/--pages-1 \/tmp\/issue-pages-1\.json/);
+    expect(wf).toMatch(/--pages-2 \/tmp\/issue-pages-2\.json/);
     expect(wf).toMatch(/planner refused \(exit \$\{PLAN\}\); failing closed/);
     // The whitespace-sensitive substring detector is gone, and no
     // workflow-side detection survives.

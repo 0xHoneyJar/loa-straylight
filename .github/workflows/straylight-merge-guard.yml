@@ -14,13 +14,16 @@
 # a separately audited authorization, and distinct actor identities
 # (ADR-050 §6) — not a change to this file's conditions.
 #
-# WORKFLOW-BOUNDARY CONTRACT (rev. 3 §11): bash here is confined to
-# fetching bytes to files (TWICE — the two-read stability fence),
-# switching on validated exit codes, and invoking the planner
-# (plan-merge-guard-write.mjs — evidence parsing with N1/N2 profiles,
-# the universal lane-target proof, pure merge-guard evaluation, exact
-# dedupe) and the shared secure executor (execute-write-plan.mjs). Bash
-# never constructs a write request and never interprets evidence content.
+# WORKFLOW-BOUNDARY CONTRACT (rev. 3 §11; round 10 J1/J2/J3): bash here
+# is confined to fetching FIXED urls to files (TWICE — the two-read
+# stability fence), switching on validated exit codes, and invoking the
+# checked-in Node entry points. Every DERIVED fetch (the lane's recorded
+# PR, its head's check evidence) flows through the shared READ executor
+# (execute-read-plan.mjs) driven by the probe's closed read plan; the
+# probe's fetch-slot claim is rebound by the final planner, which
+# rederives the slots from both raw reads and requires derived = claim.
+# Bash never constructs a write request, never interprets evidence
+# content, and never extracts a field from any evidence.
 
 name: Straylight CP Merge Guard
 
@@ -89,24 +92,16 @@ jobs:
             exit 1
           fi
 
-      # FETCH ONLY, TWICE: two complete independent reads for the
-      # stability fence. Raw bytes go straight to files; the PLANNERS own
-      # all parsing, binding, reconstruction, and eligibility logic. Fetch
-      # targets are DERIVED outputs only: the PR number comes from the
-      # reducer planner's --probe (the shared reconstruction authority),
-      # and the head SHA for check evidence comes from evidence.mjs's
-      # bound parse of the just-fetched PR bytes — bash never extracts a
-      # field from raw evidence itself. PR/check/status evidence is
-      # optional on disk (a failed fetch is recorded by absence; the pure
-      # module fails closed downstream), but a failed ENUMERATION or
-      # issue/comment fetch aborts loudly.
+      # FETCH ONLY, TWICE, FIXED URLS: two complete independent BASE
+      # reads for the stability fence. Raw bytes go straight to files;
+      # the PLANNERS own all parsing, binding, reconstruction, and
+      # eligibility logic. Bash extracts NOTHING from any response.
       - name: Gather evidence twice (raw bytes to files)
         id: gather
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           REPO: ${{ github.repository }}
-          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
           gather_once() {
@@ -124,73 +119,78 @@ jobs:
               exit 1
             fi
           }
-          # Derived read: the bound head SHA of an already-fetched PR file,
-          # parsed by evidence.mjs (never by bash/jq over raw bytes).
-          # Prints nothing when the file is absent or fails binding.
-          derived_head() {
-            local DIR="$1" PRNUM="$2"
-            [[ -f "${DIR}/pr.json" ]] || return 0
-            PR_FILE="${DIR}/pr.json" PR_NUM="$PRNUM" node --input-type=module -e '
-              import { readFileSync } from "node:fs";
-              const { parsePr } = await import("./.straylight/lib/evidence.mjs");
-              const r = parsePr(readFileSync(process.env.PR_FILE, "utf8"), {
-                repository: process.env.REPO, pr_number: Number(process.env.PR_NUM),
-              });
-              if (r.ok) process.stdout.write(r.pr.head_sha);
-            ' 2>/dev/null || true
-          }
-          fetch_pr_evidence() {
-            local DIR="$1" PRNUM="$2"
-            if ! gh api "repos/${REPO}/pulls/${PRNUM}" > "${DIR}/pr.json" 2>/dev/null; then
-              rm -f "${DIR}/pr.json"
-              return 0
-            fi
-            local HEAD
-            HEAD=$(derived_head "${DIR}" "$PRNUM")
-            if [[ "$HEAD" =~ ^[0-9a-f]{40}$ ]]; then
-              gh api --paginate "repos/${REPO}/commits/${HEAD}/check-runs" > "${DIR}/check-runs.pages" 2>/dev/null || rm -f "${DIR}/check-runs.pages"
-              gh api "repos/${REPO}/commits/${HEAD}/status" > "${DIR}/status.json" 2>/dev/null || rm -f "${DIR}/status.json"
-            fi
-          }
           G1=$(mktemp -d); G2=$(mktemp -d)
           echo "g1=${G1}" >> "$GITHUB_OUTPUT"
           echo "g2=${G2}" >> "$GITHUB_OUTPUT"
-          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          echo "now=${NOW}" >> "$GITHUB_OUTPUT"
+          echo "now=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           gather_once "${G1}"
-          # DERIVED probe over read 1 (reducer planner --probe: two-read
-          # fence trivially satisfied by the same read twice, lane-target
-          # proof, reconstruction) to learn which PR to fetch.
+          gather_once "${G2}"
+
+      # PROBE (derivation authority): the reducer planner's probe in
+      # any-pr slot mode with check evidence. It validates both reads,
+      # proves the lane target in both, and writes the closed fetch-slot
+      # CLAIM + closed READ PLAN. Probe stdout is never parsed here; the
+      # final planner rederives and rebinds the claim (J2).
+      - name: Derive fetch slots (probe writes claim + read plan)
+        id: probe
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          CLAIM_ROOT=$(mktemp -d)
+          echo "claim_root=${CLAIM_ROOT}" >> "$GITHUB_OUTPUT"
           set +e
-          PROBE=$(node .straylight/bin/plan-reducer-writes.mjs --stage a --probe \
-            --gather-1 "${G1}" --gather-2 "${G1}" \
+          node .straylight/bin/plan-reducer-writes.mjs --stage a --probe \
+            --slot-mode any-pr --with-checks \
+            --claim-root "${CLAIM_ROOT}" \
+            --gather-1 "${{ steps.gather.outputs.g1 }}" \
+            --gather-2 "${{ steps.gather.outputs.g2 }}" \
             --issue-number "${ISSUE_NUMBER}" \
-            --repository "${REPO}" --nonce "${NONCE}" --now "${NOW}")
-          PROBE_EXIT=$?
+            --repository "${REPO}" --nonce "${NONCE}" \
+            --now "${{ steps.gather.outputs.now }}"
+          PROBE=$?
           set -e
-          if [[ "$PROBE_EXIT" -ne 0 ]]; then
-            echo "::error::evidence probe refused (exit ${PROBE_EXIT}); failing closed"
-            echo "$PROBE"
+          if [[ "$PROBE" -ne 0 ]]; then
+            echo "::error::evidence probe refused (exit ${PROBE}); failing closed"
             exit 1
           fi
-          PRNUM=$(echo "$PROBE" | jq -r '.pr_number // empty')
-          if [[ "$PRNUM" =~ ^[0-9]+$ ]]; then
-            fetch_pr_evidence "${G1}" "$PRNUM"
-          fi
-          gather_once "${G2}"
-          if [[ "$PRNUM" =~ ^[0-9]+$ ]]; then
-            fetch_pr_evidence "${G2}" "$PRNUM"
-          fi
 
-      # PLAN: two-read fence, lane-target proof, pure evaluation, exact
-      # dedupe — all planner authority. Exit 3 = already posted (valid
-      # no-op); exit 2 = refusal, zero writes.
+      # EXECUTE DERIVED READS: one invocation of the shared READ executor.
+      # It fetches the claimed PR into BOTH gathers, derives the bound
+      # head SHA INSIDE the executor via evidence.mjs (never shell), and
+      # fetches check-runs + combined status for that bound head. Every
+      # attempt is an explicit read-ledger row.
+      - name: Execute read plan (single shared read executor)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+          CLAIM_ROOT: ${{ steps.probe.outputs.claim_root }}
+        run: |
+          set -euo pipefail
+          node .straylight/bin/execute-read-plan.mjs \
+            --plan "${CLAIM_ROOT}/read-plan.json" \
+            --plan-root "${CLAIM_ROOT}" \
+            --ledger "${CLAIM_ROOT}/read-ledger.jsonl" \
+            --gather-1 "${{ steps.gather.outputs.g1 }}" \
+            --gather-2 "${{ steps.gather.outputs.g2 }}" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}"
+
+      # PLAN: two-read fence (including canonical lane identity), the
+      # lane-target proof in both reads, claim rebinding, read-ledger
+      # accounting, pure evaluation, exact dedupe — all planner authority.
+      # Exit 3 = already posted (valid no-op); exit 2 = refusal, zero
+      # writes.
       - name: Plan shadow result (planner authority)
         id: plan
         env:
           ISSUE_NUMBER: ${{ inputs.issue_number }}
           REPO: ${{ github.repository }}
           NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+          CLAIM_ROOT: ${{ steps.probe.outputs.claim_root }}
         run: |
           set -euo pipefail
           REQUEST_ROOT=$(mktemp -d)
@@ -201,6 +201,8 @@ jobs:
             --gather-2 "${{ steps.gather.outputs.g2 }}" \
             --issue-number "${ISSUE_NUMBER}" \
             --request-root "${REQUEST_ROOT}" \
+            --claim "${CLAIM_ROOT}/claim.json" \
+            --read-ledger "${CLAIM_ROOT}/read-ledger.jsonl" \
             --repository "${REPO}" \
             --nonce "${NONCE}" \
             --now "${{ steps.gather.outputs.now }}"

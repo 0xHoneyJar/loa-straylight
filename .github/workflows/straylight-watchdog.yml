@@ -8,27 +8,37 @@
 # the-hour thundering herd, plus manual dispatch. Never merges, never
 # calls a model API, never holds contents:write.
 #
-# WORKFLOW-BOUNDARY CONTRACT (rev. 3 §1-§3, §11): the sweep gathers TWO
-# complete, independently collected evidence sets (Collection A,
-# Collection B). Each collection advances S0→S6: bash owns every FETCH
-# transition (raw bytes to files + a ledger row per fetch attempt); the
-# collector binary owns every DERIVATION transition:
+# WORKFLOW-BOUNDARY CONTRACT (rev. 3 §1-§3, §11; round 10 J3): the sweep
+# gathers TWO complete, independently collected evidence sets
+# (Collection A, Collection B). Each collection advances S0→S6. Bash owns
+# ONLY the S0→S1 fetch (a FIXED enumeration url to a file) and exit-code
+# switching; the collector binary owns every DERIVATION transition, and
+# the shared READ executor owns every DERIVED fetch:
 #
 #   S0→S1 bash:  enumerate all open issues (label-independent) → raw pages
-#   S1→S2 node:  --stage issue-slots (enumeration ONLY; the output schema
-#                has no PR field — enumeration-only evidence structurally
-#                cannot emit PR slots)
-#   S2→S3 bash:  fetch issue.json + comments.pages for EVERY slot; any
-#                issue/comment fetch failure fails the job (never "zero
-#                comments")
-#   S3→S4 node:  --stage pr-slots (reparses raw evidence, reconstructs
-#                every lane SOLELY to derive required PR numbers)
-#   S4→S5 bash:  attempt each PR fetch; SUCCESS → ledger row with path +
-#                digest; FAILURE → ledger row {fetched:false} — a durable
-#                fact, never filename absence
-#   S5→S6 node:  --stage seal (re-derives both slot sets from raw bytes,
-#                verifies every ledger claim; a manifest can never claim
-#                a slot its raw evidence does not independently produce)
+#   S1→S2 node:  collector --stage issue-slots (enumeration ONLY; the
+#                output schema has no PR field — enumeration-only evidence
+#                structurally cannot emit PR slots). Appends the
+#                enumeration ledger row and writes the closed READ PLAN
+#                naming one issue-comments read per derived slot.
+#   S2→S3 node:  execute-read-plan.mjs fetches issue.json +
+#                comments.pages for EVERY slot; any issue/comment fetch
+#                failure fails the job (never "zero comments"); one
+#                strict ledger row per fetch.
+#   S3→S4 node:  collector --stage pr-slots (reparses raw evidence,
+#                reconstructs every lane SOLELY to derive required PR
+#                numbers, writes the closed READ PLAN for the PR fetches)
+#   S4→S5 node:  execute-read-plan.mjs attempts each PR fetch; SUCCESS →
+#                ledger row with path + digest; FAILURE → ledger row
+#                {fetched:false} — a durable fact, never filename absence
+#   S5→S6 node:  collector --stage seal (re-derives both slot sets from
+#                raw bytes, verifies every ledger claim; a manifest can
+#                never claim a slot its raw evidence does not
+#                independently produce)
+#
+# The ledger is written ONLY by the collector (enumeration row) and the
+# read executor (every derived-fetch row) — bash never composes a ledger
+# row and never reads a stage document.
 #
 # Collection B shares NOTHING derived from Collection A. The final
 # planner (plan-watchdog-writes.mjs) independently reparses BOTH complete
@@ -105,11 +115,10 @@ jobs:
           fi
 
       # COLLECT A then COLLECT B: two complete, fully independent staged
-      # collections. Bash fetches bytes and appends ledger rows; the
-      # collector derives. Fetch targets after S1 come only from collector
-      # DERIVED output (issue-slots.json / pr-slots.json read via jq for
-      # loop drive only — the sealed authority is re-derived from raw
-      # bytes by the seal stage and again by the final planner).
+      # collections. Bash fetches ONE fixed url per collection and
+      # switches on exit codes; the collector derives; the shared read
+      # executor performs every derived fetch and writes every ledger
+      # row. Nothing derived from A is consumed by B.
       - name: Collect evidence (Collection A, then Collection B)
         id: collect
         if: steps.killswitch.outputs.enabled == 'true'
@@ -122,59 +131,37 @@ jobs:
           NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           echo "now=${NOW}" >> "$GITHUB_OUTPUT"
 
-          ledger_row() {
-            # Append one strict-JSON ledger row (jq -n compact) — bash
-            # composes only ledger bookkeeping, never evidence content.
-            local LEDGER="$1"; shift
-            jq -cn "$@" >> "$LEDGER"
-          }
-
           collect_one() {
             local CID="$1" DIR="$2" LEDGER="$3"
-            # S0→S1: enumeration (label-independent, all pages). A failed
-            # listing aborts the sweep loudly — never "zero lanes".
+            # S0→S1: enumeration (label-independent, all pages, FIXED
+            # url). A failed listing aborts the sweep loudly — never
+            # "zero lanes".
             if ! gh api --paginate "repos/${REPO}/issues?state=open&per_page=100" > "${DIR}/enumeration.pages"; then
               echo "::error::[${CID}] enumeration failed (gh api non-zero); aborting sweep — NOT treating as zero lanes"
               exit 1
             fi
-            ledger_row "$LEDGER" \
-              --arg nonce "$NONCE" --arg cid "$CID" \
-              --arg path "enumeration.pages" \
-              --arg sha "$(sha256sum "${DIR}/enumeration.pages" | cut -d' ' -f1)" \
-              '{nonce: $nonce, collection_id: $cid, resource: "enumeration", fetched: true, path: $path, sha256: ("sha256:" + $sha)}'
             # S1→S2: derive issue slots (enumeration only; no PR field).
+            # The collector appends the enumeration ledger row and writes
+            # the closed read plan for the S2→S3 fetches.
             if ! node .straylight/bin/collect-watchdog-evidence.mjs --stage issue-slots \
-                --collection-dir "${DIR}" --collection-id "${CID}" \
-                --nonce "${NONCE}" --repository "${REPO}"; then
+                --collection-dir "${DIR}" --ledger "${LEDGER}" \
+                --collection-id "${CID}" --nonce "${NONCE}" \
+                --repository "${REPO}"; then
               echo "::error::[${CID}] issue-slot derivation refused; aborting sweep"
               exit 1
             fi
-            # S2→S3: fetch issue + comments for EVERY derived slot. Any
-            # failure fails the job — issue/comment fetch failure has no
-            # ledger representation.
-            for N in $(jq -r '.issue_slots[]' "${DIR}/issue-slots.json"); do
-              mkdir -p "${DIR}/issue-${N}"
-              if ! gh api "repos/${REPO}/issues/${N}" > "${DIR}/issue-${N}/issue.json"; then
-                echo "::error::[${CID}] issue #${N} fetch failed; aborting sweep"
-                exit 1
-              fi
-              ledger_row "$LEDGER" \
-                --arg nonce "$NONCE" --arg cid "$CID" --argjson n "$N" \
-                --arg path "issue-${N}/issue.json" \
-                --arg sha "$(sha256sum "${DIR}/issue-${N}/issue.json" | cut -d' ' -f1)" \
-                '{nonce: $nonce, collection_id: $cid, resource: "issue", issue_number: $n, fetched: true, path: $path, sha256: ("sha256:" + $sha)}'
-              if ! gh api --paginate "repos/${REPO}/issues/${N}/comments" > "${DIR}/issue-${N}/comments.pages"; then
-                echo "::error::[${CID}] issue #${N} comment fetch failed; aborting sweep — NOT treating as zero comments"
-                exit 1
-              fi
-              ledger_row "$LEDGER" \
-                --arg nonce "$NONCE" --arg cid "$CID" --argjson n "$N" \
-                --arg path "issue-${N}/comments.pages" \
-                --arg sha "$(sha256sum "${DIR}/issue-${N}/comments.pages" | cut -d' ' -f1)" \
-                '{nonce: $nonce, collection_id: $cid, resource: "comments", issue_number: $n, fetched: true, path: $path, sha256: ("sha256:" + $sha)}'
-            done
+            # S2→S3: the shared read executor fetches issue + comments
+            # for EVERY derived slot. Any issue/comment fetch failure
+            # fails the job — it has no ledger representation.
+            if ! node .straylight/bin/execute-read-plan.mjs \
+                --plan "${DIR}/read-plan-issues.json" --plan-root "${DIR}" \
+                --root "${DIR}" --ledger "${LEDGER}" \
+                --repository "${REPO}" --nonce "${NONCE}"; then
+              echo "::error::[${CID}] issue/comment evidence read failed; aborting sweep — NOT treating as zero comments"
+              exit 1
+            fi
             # S3→S4: derive PR slots (raw reparse + reconstruction, this
-            # collection's evidence only).
+            # collection's evidence only) + the PR read plan.
             if ! node .straylight/bin/collect-watchdog-evidence.mjs --stage pr-slots \
                 --collection-dir "${DIR}" --ledger "${LEDGER}" \
                 --collection-id "${CID}" --nonce "${NONCE}" \
@@ -182,25 +169,17 @@ jobs:
               echo "::error::[${CID}] PR-slot derivation refused; aborting sweep"
               exit 1
             fi
-            # S4→S5: attempt each PR fetch. SUCCESS → row with path +
-            # digest; FAILURE → explicit {fetched:false} row — a durable
-            # ledger fact, never filename absence.
-            jq -c '.pr_slots[]' "${DIR}/pr-slots.json" | while read -r SLOT; do
-              N=$(jq -r '.issue_number' <<< "$SLOT")
-              P=$(jq -r '.pr_number' <<< "$SLOT")
-              if gh api "repos/${REPO}/pulls/${P}" > "${DIR}/issue-${N}/pr-${P}.json" 2>/dev/null; then
-                ledger_row "$LEDGER" \
-                  --arg nonce "$NONCE" --arg cid "$CID" --argjson n "$N" --argjson p "$P" \
-                  --arg path "issue-${N}/pr-${P}.json" \
-                  --arg sha "$(sha256sum "${DIR}/issue-${N}/pr-${P}.json" | cut -d' ' -f1)" \
-                  '{nonce: $nonce, collection_id: $cid, resource: "pr", issue_number: $n, pr_number: $p, fetched: true, path: $path, sha256: ("sha256:" + $sha)}'
-              else
-                rm -f "${DIR}/issue-${N}/pr-${P}.json"
-                ledger_row "$LEDGER" \
-                  --arg nonce "$NONCE" --arg cid "$CID" --argjson n "$N" --argjson p "$P" \
-                  '{nonce: $nonce, collection_id: $cid, resource: "pr", issue_number: $n, pr_number: $p, fetched: false}'
-              fi
-            done
+            # S4→S5: the read executor attempts each PR fetch. SUCCESS →
+            # ledger row with path + digest; FAILURE → explicit
+            # {fetched:false} row — a durable ledger fact, never filename
+            # absence.
+            if ! node .straylight/bin/execute-read-plan.mjs \
+                --plan "${DIR}/read-plan-prs.json" --plan-root "${DIR}" \
+                --root "${DIR}" --ledger "${LEDGER}" \
+                --repository "${REPO}" --nonce "${NONCE}"; then
+              echo "::error::[${CID}] PR evidence read failed; aborting sweep"
+              exit 1
+            fi
             # S5→S6: seal — re-derive everything from raw bytes; verify
             # every ledger claim; exit 2 on any unprovable claim.
             if ! node .straylight/bin/collect-watchdog-evidence.mjs --stage seal \

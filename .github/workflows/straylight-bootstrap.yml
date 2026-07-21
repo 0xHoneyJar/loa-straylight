@@ -78,12 +78,17 @@ jobs:
             exit 1
           fi
 
-      # FETCH ONLY: raw bytes to files. The enumeration is
-      # label-independent across ALL issues (open AND closed — a closed
-      # lane is a completed lane, not permission to duplicate it); the
+      # FETCH ONLY, TWICE (J1): raw bytes to files, FIXED urls. The
+      # enumeration is label-independent across ALL issues (open AND
+      # closed — a closed lane is a completed lane, not permission to
+      # duplicate it) and runs TWO complete independent times: the
+      # planner requires both reads' canonical lane identity to be EQUAL
+      # and proves lane ABSENCE in both before creating anything — a
+      # single point-in-time read is never creation authority. The
       # planner owns flattening, strict parsing, PR exclusion, N1
-      # uniqueness, and the lane-absence proof, all fail-closed. A failed
-      # listing call aborts loudly — never "zero lanes".
+      # uniqueness, the stability comparison, and the absence proof, all
+      # fail-closed. A failed listing call aborts loudly — never "zero
+      # lanes".
       - name: Fetch evidence (raw bytes to files)
         env:
           GH_TOKEN: ${{ github.token }}
@@ -91,8 +96,13 @@ jobs:
         run: |
           set -euo pipefail
           if ! gh api --paginate "repos/${REPO}/issues?state=all&per_page=100" \
-              > /tmp/issue-pages.json; then
-            echo "::error::lane enumeration failed (gh api non-zero); refusing to bootstrap — NOT treating as zero lanes"
+              > /tmp/issue-pages-1.json; then
+            echo "::error::lane enumeration (read 1) failed (gh api non-zero); refusing to bootstrap — NOT treating as zero lanes"
+            exit 1
+          fi
+          if ! gh api --paginate "repos/${REPO}/issues?state=all&per_page=100" \
+              > /tmp/issue-pages-2.json; then
+            echo "::error::lane enumeration (read 2) failed (gh api non-zero); refusing to bootstrap — NOT treating as zero lanes"
             exit 1
           fi
           if ! gh api --paginate "repos/${REPO}/labels?per_page=100" \
@@ -108,10 +118,12 @@ jobs:
           git fetch --no-tags --depth=1 origin main
           git rev-parse FETCH_HEAD > /tmp/base-sha.txt
 
-      # PLAN: the planner performs the universal lane-ABSENCE proof over
-      # the complete enumeration and authors the write plan. Exit 3 is a
-      # valid no-op (the lane exists exactly once); exit 2 is any
-      # ambiguity — duplicate lane IDs, unreadable marker-bearing bodies,
+      # PLAN: the planner requires the two enumerations' canonical lane
+      # identity to be EQUAL (two-read stability) and performs the
+      # universal lane-ABSENCE proof over BOTH before authoring the write
+      # plan. Exit 3 is a valid no-op (the lane exists exactly once in
+      # both stable reads); exit 2 is any ambiguity — an enumeration
+      # difference, duplicate lane IDs, unreadable marker-bearing bodies,
       # malformed evidence — and fails the job with zero writes.
       - name: Plan bootstrap write (planner authority)
         id: plan
@@ -124,9 +136,10 @@ jobs:
           echo "request_root=${REQUEST_ROOT}" >> "$GITHUB_OUTPUT"
           set +e
           node .straylight/bin/plan-bootstrap-write.mjs \
-            --pages /tmp/issue-pages.json \
+            --pages-1 /tmp/issue-pages-1.json \
+            --pages-2 /tmp/issue-pages-2.json \
             --labels /tmp/label-pages.json \
-            --base-sha "$(cat /tmp/base-sha.txt)" \
+            --base-sha-file /tmp/base-sha.txt \
             --request-root "${REQUEST_ROOT}" \
             --repository "${REPO}" \
             --nonce "${NONCE}"

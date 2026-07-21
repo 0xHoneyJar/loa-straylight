@@ -2,19 +2,26 @@
 // Straylight Control Plane v1 — bootstrap planner (Phase 49P lane).
 //
 //   node plan-bootstrap-write.mjs \
-//     --pages <issue-pages> --labels <label-pages> \
+//     --pages-1 <issue-pages> --pages-2 <issue-pages> \
+//     --labels <label-pages> \
 //     --base-sha <40-hex> --request-root <dir> \
 //     --repository <owner/repo> --nonce <run-id>-<attempt> [--policy <file>]
 //
 // Plans AT MOST ONE lane creation (plus the cp-lane label definition if
-// missing). The precondition is the universal lane-ABSENCE proof
-// (lane-target.mjs assertLaneAbsent) over the complete enumeration:
+// missing). TWO-READ STABLE ENUMERATION (J1): --pages-1 and --pages-2 are
+// two COMPLETE, independently fetched enumerations; their canonical
+// lane→issue mappings (lanes, duplicates, unreadable markers) must be
+// EQUAL, else exit 2 — creation must never proceed on an enumeration the
+// world moved under. The precondition is then the universal lane-ABSENCE
+// proof (lane-target.mjs assertLaneAbsent) over BOTH stable reads:
 //
-//   exit 0 — absence proven; plan.json + body files written
-//   exit 3 — the lane exists exactly once (valid no-op; nothing written)
-//   exit 2 — ANY ambiguity: duplicate lane IDs anywhere, unreadable
-//            marker-bearing bodies, malformed pages, malformed label
-//            evidence, invalid base SHA (fail closed; nothing written)
+//   exit 0 — absence proven in both reads; plan.json + body files written
+//   exit 3 — the lane exists exactly once in both reads (valid no-op;
+//            nothing written)
+//   exit 2 — ANY ambiguity: an enumeration difference between reads,
+//            duplicate lane IDs anywhere, unreadable marker-bearing
+//            bodies, malformed pages, malformed label evidence, invalid
+//            base SHA (fail closed; nothing written)
 //
 // The genesis lane record embedded in the plan body must satisfy the
 // SAME validator the reducer uses — a genesis this planner authors is
@@ -25,10 +32,11 @@ import { readFileSync, writeFileSync, realpathSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { createHash } from "node:crypto";
 import { parseIssuePages, parseLabelPages } from "../lib/evidence.mjs";
-import { assertLaneAbsent } from "../lib/lane-target.mjs";
+import { assertLaneAbsent, scanLanes } from "../lib/lane-target.mjs";
 import { validateLane } from "../lib/validate.mjs";
 import { renderPayload, MARKERS } from "../lib/markers.mjs";
 import { WRITE_PLAN_SCHEMA } from "../lib/write-plan.mjs";
+import { payloadDigest } from "../lib/canonical.mjs";
 
 const LANE_ID = "lane-phase-49p";
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -43,32 +51,76 @@ function fail(reason, detail) {
   process.exit(2);
 }
 
-const pagesPath = arg("--pages");
+const pages1Path = arg("--pages-1");
+const pages2Path = arg("--pages-2");
 const labelsPath = arg("--labels");
-const baseSha = arg("--base-sha");
 const requestRoot = arg("--request-root");
 const repository = arg("--repository");
 const nonce = arg("--nonce");
-for (const [name, v] of [["--pages", pagesPath], ["--labels", labelsPath], ["--base-sha", baseSha], ["--request-root", requestRoot], ["--repository", repository], ["--nonce", nonce]]) {
+for (const [name, v] of [["--pages-1", pages1Path], ["--pages-2", pages2Path], ["--labels", labelsPath], ["--request-root", requestRoot], ["--repository", repository], ["--nonce", nonce]]) {
   if (v === null) fail("usage", `${name} is required`);
+}
+// The base SHA arrives either literally (--base-sha, tests) or as a file
+// the workflow materialized from origin/main (--base-sha-file) — the
+// planner reads and validates it itself so bash never substitutes
+// derived content into an argument (J3).
+let baseSha = arg("--base-sha");
+const baseShaFile = arg("--base-sha-file");
+if (baseSha === null && baseShaFile === null) fail("usage", "--base-sha or --base-sha-file is required");
+if (baseSha !== null && baseShaFile !== null) fail("usage", "--base-sha and --base-sha-file are mutually exclusive");
+if (baseShaFile !== null) {
+  try {
+    baseSha = readFileSync(resolve(baseShaFile), "utf8").trim();
+  } catch (e) {
+    fail("base-sha-unreadable", String(e?.message ?? e));
+  }
 }
 if (!SHA_RE.test(baseSha)) fail("base-sha-invalid", "base SHA must be 40 lowercase hex");
 
-// Enumeration through the shared evidence parser: strict parse, N1
+// BOTH enumerations through the shared evidence parser: strict parse, N1
 // uniqueness, N2 binding, PR exclusion, zero-byte-invalid — fail closed.
-let pagesText;
-try {
-  pagesText = readFileSync(resolve(pagesPath), "utf8");
-} catch (e) {
-  fail("pages-unreadable", String(e?.message ?? e));
+function parseEnumeration(path, label) {
+  let text;
+  try {
+    text = readFileSync(resolve(path), "utf8");
+  } catch (e) {
+    fail("pages-unreadable", `${label}: ${String(e?.message ?? e)}`);
+  }
+  const enumerated = parseIssuePages(text, { repository });
+  if (!enumerated.ok) fail(enumerated.reason, `${label}: ${enumerated.detail ?? ""}`);
+  return enumerated;
 }
-const enumerated = parseIssuePages(pagesText, { repository });
-if (!enumerated.ok) fail(enumerated.reason, enumerated.detail);
+const enum1 = parseEnumeration(pages1Path, "read 1");
+const enum2 = parseEnumeration(pages2Path, "read 2");
 
-// The universal lane-ABSENCE proof: duplicates anywhere or unreadable
-// marker-bearing bodies refuse; an existing unique lane is a valid no-op.
-const absence = assertLaneAbsent(enumerated.issues, LANE_ID);
-if (!absence.ok) fail(absence.reason, absence.detail);
+// TWO-READ STABLE ENUMERATION (J1): the canonical lane identity of both
+// independent reads must be EQUAL — the lane→issue mapping, the
+// duplicate set, AND the unreadable set. A lane appearing, vanishing,
+// moving, duplicating, or turning unreadable between reads means the
+// world moved mid-enumeration; creating against either read is unsafe.
+function identityProjection(enumerated, label) {
+  const scanned = scanLanes(enumerated.issues);
+  if (!scanned.ok) fail("lane-scan-failed", `${label}: ${scanned.reason}`);
+  return {
+    lane_mapping: scanned.lanes.map((l) => ({ issue_number: l.number, lane_id: l.lane_id })),
+    lane_duplicates: scanned.duplicates,
+    lane_unreadable: scanned.unreadable.map((u) => u.number).sort((a, b) => a - b),
+  };
+}
+if (payloadDigest(identityProjection(enum1, "read 1")) !== payloadDigest(identityProjection(enum2, "read 2"))) {
+  fail("two-read-instability", "canonical lane identity differs between the two enumerations; retry");
+}
+
+// The universal lane-ABSENCE proof, IN BOTH STABLE READS: duplicates
+// anywhere or unreadable marker-bearing bodies refuse; an existing
+// unique lane is a valid no-op. Creation proceeds ONLY when the lane is
+// absent in read 1 AND read 2.
+let absence = null;
+for (const [label, enumerated] of [["read 1", enum1], ["read 2", enum2]]) {
+  const a = assertLaneAbsent(enumerated.issues, LANE_ID);
+  if (!a.ok) fail(a.reason, `${label}: ${a.detail ?? ""}`);
+  absence = a;
+}
 if (absence.absent === false) {
   process.stdout.write(JSON.stringify({ ok: true, exists: true, numbers: absence.numbers }) + "\n");
   process.exit(3);

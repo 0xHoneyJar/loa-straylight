@@ -427,9 +427,8 @@ describe("J7 — asymmetric per-issue outcomes for ONE PR can never alias into a
     ];
     const enumeration = JSON.stringify(world.map((w) => enumEntry(w.n, w.body)));
     writeFileSync(join(dir, "enumeration.pages"), enumeration);
-    const rows: string[] = [
-      JSON.stringify({ nonce: NONCE, collection_id: collectionId, resource: "enumeration", fetched: true, path: "enumeration.pages", sha256: sha256(enumeration) }),
-    ];
+    // The collector's issue-slots stage appends the enumeration row (J3).
+    const rows: string[] = [];
     for (const w of world) {
       mkdirSync(join(dir, `issue-${w.n}`), { recursive: true });
       const iDoc = JSON.stringify(enumEntry(w.n, w.body));
@@ -450,7 +449,7 @@ describe("J7 — asymmetric per-issue outcomes for ONE PR can never alias into a
     const policyPath = join(dir, "policy.json");
     writeFileSync(policyPath, JSON.stringify(makePolicy()));
     for (const [stage, extra] of [
-      ["issue-slots", []],
+      ["issue-slots", ["--ledger", ledgerPath]],
       ["pr-slots", ["--ledger", ledgerPath, "--policy", policyPath, "--now", NOW]],
       ["seal", ["--ledger", ledgerPath, "--policy", policyPath, "--now", NOW]],
     ] as const) {

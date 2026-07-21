@@ -109,18 +109,24 @@ function commentsDoc(comments: any[]) {
 }
 
 // Build a complete on-disk collection directory + ledger for the collector
-// binary. `world` = [{ issue, laneBody?, comments, pr? }].
+// binary. `world` = [{ issue, laneBody?, comments, pr? }]. In production
+// the enumeration ledger row is appended by the collector's issue-slots
+// stage (the collector and the read executor are the ONLY ledger
+// writers); tests that RUN that stage pass enumRow:false so the collector
+// appends it, while tests that call sealCollection directly keep the
+// default and get the complete ledger from the fixture.
 function buildCollection(opts: {
   world: Array<{ n: number; body: string | null; comments?: any[]; prRow?: { pr_number: number; fetched: boolean; prDoc?: string } }>;
   collectionId?: string;
+  enumRow?: boolean;
 }) {
   const dir = mkdtempSync(join(tmpdir(), "cp-collection-"));
   const collectionId = opts.collectionId ?? "A";
   const enumeration = JSON.stringify(opts.world.map((w) => enumEntry(w.n, w.body)));
   writeFileSync(join(dir, "enumeration.pages"), enumeration);
-  const ledgerRows: string[] = [
-    JSON.stringify({ nonce: NONCE, collection_id: collectionId, resource: "enumeration", fetched: true, path: "enumeration.pages", sha256: sha256(enumeration) }),
-  ];
+  const ledgerRows: string[] = (opts.enumRow ?? true)
+    ? [JSON.stringify({ nonce: NONCE, collection_id: collectionId, resource: "enumeration", fetched: true, path: "enumeration.pages", sha256: sha256(enumeration) })]
+    : [];
   for (const w of opts.world) {
     if (w.comments === undefined) continue; // enumeration-only entry (no lane)
     mkdirSync(join(dir, `issue-${w.n}`), { recursive: true });
@@ -204,14 +210,23 @@ describe("row 1 — issue-slots stage: schema has no PR field at all", () => {
     expect(validateIssueSlotsDocument({ ...base, issue_slots: [41, 41] }).ok).toBe(false);
   });
 
-  it("collector binary: --stage issue-slots writes only the closed document (executable)", () => {
-    const { dir } = buildCollection({ world: [{ n: 41, body: laneBody(), comments: [] }] });
-    const r = runCollector("issue-slots", dir);
+  it("collector binary: --stage issue-slots writes only the closed document + appends the enumeration ledger row (executable)", () => {
+    const { dir, ledgerPath } = buildCollection({ world: [{ n: 41, body: laneBody(), comments: [] }], enumRow: false });
+    const r = runCollector("issue-slots", dir, ["--ledger", ledgerPath]);
     expect(r.status).toBe(0);
     const doc = JSON.parse(execFileSync("cat", [join(dir, "issue-slots.json")], { encoding: "utf8" }));
     expect(doc.schema).toBe(ISSUE_SLOTS_SCHEMA);
     expect(doc.issue_slots).toEqual([41]);
     expect(JSON.stringify(doc)).not.toMatch(/pr_/);
+    // The collector appended the enumeration row itself (J3: bash never
+    // composes a ledger row) and wrote the closed read plan for S2→S3.
+    const enumRows = execFileSync("cat", [ledgerPath], { encoding: "utf8" })
+      .trim().split("\n").map((l) => JSON.parse(l)).filter((r2) => r2.resource === "enumeration");
+    expect(enumRows).toHaveLength(1);
+    expect(enumRows[0]?.fetched).toBe(true);
+    const readPlan = JSON.parse(execFileSync("cat", [join(dir, "read-plan-issues.json")], { encoding: "utf8" }));
+    expect(readPlan.schema).toBe("straylight.read-plan.v1");
+    expect(readPlan.reads).toEqual([{ kind: "issue-comments", issue_number: 41 }]);
   });
 });
 
@@ -226,8 +241,8 @@ describe("row 2 — pr-slots stage requires complete same-collection issue/comme
   });
 
   it("collector binary: --stage pr-slots exits 2 when the ledger names no evidence for a lane slot (executable)", () => {
-    const { dir, ledgerPath } = buildCollection({ world: [{ n: 41, body: laneBody(), comments: [] }] });
-    runCollector("issue-slots", dir);
+    const { dir, ledgerPath } = buildCollection({ world: [{ n: 41, body: laneBody(), comments: [] }], enumRow: false });
+    runCollector("issue-slots", dir, ["--ledger", ledgerPath]);
     // Strip the issue/comment rows: the ledger claims only the enumeration.
     const rows = execFileSync("cat", [ledgerPath], { encoding: "utf8" })
       .trim().split("\n").filter((l) => JSON.parse(l).resource === "enumeration");
@@ -342,9 +357,10 @@ describe("seal — a manifest can never claim what raw evidence does not derive"
     });
     const { dir, ledgerPath } = buildCollection({
       world: [{ n: 41, body: laneBody(), comments: cs, prRow: { pr_number: 117, fetched: true, prDoc: prJson } }],
+      enumRow: false,
     });
     const policyPath = writePolicy(dir);
-    expect(runCollector("issue-slots", dir).status).toBe(0);
+    expect(runCollector("issue-slots", dir, ["--ledger", ledgerPath]).status).toBe(0);
     expect(runCollector("pr-slots", dir, ["--ledger", ledgerPath, "--policy", policyPath, "--now", NOW]).status).toBe(0);
     const sealed = runCollector("seal", dir, ["--ledger", ledgerPath, "--policy", policyPath, "--now", NOW]);
     expect(sealed.status).toBe(0);
@@ -424,8 +440,8 @@ describe("seal — a manifest can never claim what raw evidence does not derive"
   });
 
   it("collector binary: a resource path escaping the collection directory exits 2 (realpath containment)", () => {
-    const { dir, ledgerPath } = buildCollection({ world: [{ n: 41, body: laneBody(), comments: [] }] });
-    runCollector("issue-slots", dir);
+    const { dir, ledgerPath } = buildCollection({ world: [{ n: 41, body: laneBody(), comments: [] }], enumRow: false });
+    runCollector("issue-slots", dir, ["--ledger", ledgerPath]);
     const policyPath = writePolicy(dir);
     // Symlink the issue file out of the collection dir, keeping its digest
     // valid — containment must refuse regardless.

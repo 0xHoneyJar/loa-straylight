@@ -4,18 +4,26 @@
 //   node plan-merge-guard-write.mjs \
 //     --gather-1 <dir1> --gather-2 <dir2> --issue-number <n> \
 //     --request-root <dir> --repository <owner/repo> \
-//     --nonce <id>-<attempt> --now <iso> [--policy <file>]
+//     --nonce <id>-<attempt> --now <iso> \
+//     --claim <claim-file> --read-ledger <ledger-file> [--policy <file>]
 //
 // Two-read stable gather (lane + PR + check-runs + combined status, all
-// through the shared evidence parser with N1/N2 profiles), universal
-// lane-target proof, pure merge-guard evaluation, exact-deduped shadow
-// result plan. THIS PLANNER CANNOT MERGE: it evaluates eligibility and
-// plans one report comment; no merge call exists anywhere in the chain.
+// through the shared evidence parser with N1/N2 profiles), the universal
+// lane-target proof IN BOTH READS (J1), probe-claim rebinding (J2), pure
+// merge-guard evaluation, exact-deduped shadow result plan. THIS PLANNER
+// CANNOT MERGE: it evaluates eligibility and plans one report comment; no
+// merge call exists anywhere in the chain.
 //
-// Each gather directory holds: enumeration.pages, issue.json,
-// comments.pages, and optionally pr.json, check-runs.pages, status.json
-// (present only when the lane records a PR and the head resolved —
-// absence is fail-closed ineligibility, never a guess).
+// CLAIM REBINDING (J2): the probe's fetch-slot claim is NEVER authority.
+// This planner independently rederives the fetch slot (the lane's
+// recorded PR + checks) from BOTH raw reads, requires derived = claim on
+// every field INCLUDING the source digests of the exact evidence bytes,
+// requires the read executor's ledger to account for EXACTLY the claim's
+// slots, digest-verifies every fetched file, and refuses any slot-shaped
+// file the ledger does not account for. A PR/check fetch failure is an
+// explicit {fetched:false} ledger fact — fail-closed ineligibility, never
+// a guess; per-gather evidence must be canonically EQUAL (the live half
+// of the stability fence).
 //
 // Exit 0 = plan written. Exit 3 = valid no-op (result already posted).
 // Exit 2 = refusal (fail closed; nothing written).
@@ -26,12 +34,13 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { parseStrict } from "../lib/strict-json.mjs";
 import { parseIssuePages, parseIssue, parseCommentPages, parsePr, parseCheckRunPages, parseCombinedStatus } from "../lib/evidence.mjs";
-import { assertUniqueLaneTarget } from "../lib/lane-target.mjs";
+import { assertUniqueLaneTarget, scanLanes } from "../lib/lane-target.mjs";
 import { reconstructLane } from "../lib/reconstruct.mjs";
 import { evaluate } from "../lib/merge-guard.mjs";
 import { payloadDigest } from "../lib/canonical.mjs";
 import { renderPayload, MARKERS } from "../lib/markers.mjs";
 import { WRITE_PLAN_SCHEMA, hasFullLineDedupe } from "../lib/write-plan.mjs";
+import { FETCH_SLOT_CLAIM_SCHEMA, parseClaim, parseReadLedger, checkLedgerAgainstClaim, slotFileName } from "../lib/read-plan.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BOT = "github-actions[bot]";
@@ -46,6 +55,8 @@ function fail(reason, detail) {
   process.exit(2);
 }
 
+const sha256 = (text) => "sha256:" + createHash("sha256").update(text, "utf8").digest("hex");
+
 const gather1 = arg("--gather-1");
 const gather2 = arg("--gather-2");
 const issueArg = arg("--issue-number");
@@ -53,7 +64,9 @@ const requestRoot = arg("--request-root");
 const repository = arg("--repository");
 const nonce = arg("--nonce");
 const now = arg("--now");
-for (const [name, v] of [["--gather-1", gather1], ["--gather-2", gather2], ["--issue-number", issueArg], ["--request-root", requestRoot], ["--repository", repository], ["--nonce", nonce], ["--now", now]]) {
+const claimPath = arg("--claim");
+const readLedgerPath = arg("--read-ledger");
+for (const [name, v] of [["--gather-1", gather1], ["--gather-2", gather2], ["--issue-number", issueArg], ["--request-root", requestRoot], ["--repository", repository], ["--nonce", nonce], ["--now", now], ["--claim", claimPath], ["--read-ledger", readLedgerPath]]) {
   if (v === null) fail("usage", `${name} is required`);
 }
 const issueNumber = Number(issueArg);
@@ -73,71 +86,49 @@ let policy;
   policy = parsed.value;
 }
 
-// Parse one complete read. PR/check/status evidence is OPTIONAL on disk
-// (a failed fetch is recorded by absence) but when present it must parse
-// and bind exactly; the pure module fails closed on absence downstream.
+// Parse one complete BASE read (enumeration + issue + comments), retaining
+// raw byte digests so the probe claim can be rebound to the exact
+// evidence bytes (J2). PR/check evidence is NOT read here — it is read
+// only through ledger accounting below.
 function parseRead(dir) {
   const realDir = realpathSync(resolve(dir));
-  const readText = (name) => {
+  const digests = {};
+  const readText = (name, digestKey) => {
     const path = join(realDir, name);
-    if (!existsSync(path)) return null;
-    return readFileSync(path, "utf8");
+    if (!existsSync(path)) fail("gather-incomplete", `${name} missing in ${dir}`);
+    const text = readFileSync(path, "utf8");
+    digests[digestKey] = sha256(text);
+    return text;
   };
-  const enumText = readText("enumeration.pages");
-  if (enumText === null) fail("gather-incomplete", `enumeration.pages missing in ${dir}`);
-  const enumerated = parseIssuePages(enumText, { repository });
+  const enumerated = parseIssuePages(readText("enumeration.pages", "enumeration_sha256"), { repository });
   if (!enumerated.ok) fail(enumerated.reason, `${dir}: ${enumerated.detail ?? ""}`);
-  const issueText = readText("issue.json");
-  if (issueText === null) fail("gather-incomplete", `issue.json missing in ${dir}`);
-  const issue = parseIssue(issueText, { repository, issue_number: issueNumber });
+  const issue = parseIssue(readText("issue.json", "issue_sha256"), { repository, issue_number: issueNumber });
   if (!issue.ok) fail(issue.reason, `${dir}: ${issue.detail ?? ""}`);
-  const commentsText = readText("comments.pages");
-  if (commentsText === null) fail("gather-incomplete", `comments.pages missing in ${dir}`);
-  const comments = parseCommentPages(commentsText, { repository, issue_number: issueNumber });
+  const comments = parseCommentPages(readText("comments.pages", "comments_sha256"), { repository, issue_number: issueNumber });
   if (!comments.ok) fail(comments.reason, `${dir}: ${comments.detail ?? ""}`);
-
   const reconstruction = reconstructLane({
     issue_body: issue.issue.body ?? "",
     comments: comments.comments,
     policy,
     context: { now },
   });
-
-  // PR evidence binds to the lane's recorded PR number.
-  let prMeta = { fetch_ok: false };
-  let checks = null;
-  const lane = reconstruction.ok ? reconstruction.lane : null;
-  if (lane !== null && Number.isInteger(lane.pr_number)) {
-    const prText = readText("pr.json");
-    if (prText !== null) {
-      const pr = parsePr(prText, { repository, pr_number: lane.pr_number });
-      if (!pr.ok) fail(pr.reason, `${dir}: ${pr.detail ?? ""}`);
-      prMeta = pr.pr;
-      const crText = readText("check-runs.pages");
-      const csText = readText("status.json");
-      if (crText !== null && csText !== null) {
-        const cr = parseCheckRunPages(crText, { repository, sha: prMeta.head_sha });
-        if (!cr.ok) fail(cr.reason, `${dir}: ${cr.detail ?? ""}`);
-        const cs = parseCombinedStatus(csText, { repository, sha: prMeta.head_sha });
-        if (!cs.ok) fail(cs.reason, `${dir}: ${cs.detail ?? ""}`);
-        checks = {
-          check_runs_total: cr.check_runs_total,
-          check_run_conclusions: cr.check_run_conclusions,
-          commit_statuses_total: cs.commit_statuses_total,
-          commit_status_state: cs.commit_status_state,
-        };
-      }
-    }
-  }
-  return { issues: enumerated.issues, issue: issue.issue, comments: comments.comments, reconstruction, prMeta, checks };
+  return { realDir, issues: enumerated.issues, issue: issue.issue, comments: comments.comments, reconstruction, digests };
 }
 
 const read1 = parseRead(gather1);
 const read2 = parseRead(gather2);
 
-// TWO-READ STABILITY FENCE over the planning-relevant projection.
+// TWO-READ STABILITY FENCE over the planning-relevant BASE projection —
+// including each read's canonical lane→issue mapping (J1): a lane
+// appearing, vanishing, moving issues, duplicating, or turning unreadable
+// between reads is itself instability.
 function project(read) {
+  const scanned = scanLanes(read.issues);
+  if (!scanned.ok) fail("lane-scan-failed", scanned.reason);
   return {
+    lane_mapping: scanned.lanes.map((l) => ({ issue_number: l.number, lane_id: l.lane_id })),
+    lane_duplicates: scanned.duplicates,
+    lane_unreadable: scanned.unreadable.map((u) => u.number).sort((a, b) => a - b),
     reconstruction: read.reconstruction.ok
       ? { ok: true, frozen: read.reconstruction.frozen === true, lane: read.reconstruction.lane }
       : { ok: false, refusal: read.reconstruction.refusal },
@@ -147,8 +138,6 @@ function project(read) {
         .sort((a, b) => a.id - b.id)
         .map((c) => ({ id: c.id, user: c.user, body: c.body, created_at: c.created_at, updated_at: c.updated_at })),
     ),
-    pr_metadata: read.prMeta,
-    checks: read.checks,
   };
 }
 if (payloadDigest(project(read1)) !== payloadDigest(project(read2))) {
@@ -160,17 +149,118 @@ if (!reconstruction.ok) fail("reconstruction-failed", reconstruction.refusal);
 if (reconstruction.frozen === true) fail("frozen-under-enabled-policy");
 const lane = reconstruction.lane;
 
-// UNIVERSAL LANE-TARGET PROOF (N3).
-const target = assertUniqueLaneTarget(read2.issues, lane.lane_id, { expected_issue: issueNumber });
-if (!target.ok) fail(target.reason, target.detail);
+// UNIVERSAL LANE-TARGET PROOF (N3), IN BOTH READS (J1).
+for (const [label, issues] of [["read 1", read1.issues], ["read 2", read2.issues]]) {
+  const target = assertUniqueLaneTarget(issues, lane.lane_id, { expected_issue: issueNumber });
+  if (!target.ok) fail(target.reason, `${label}: ${target.detail ?? ""}`);
+}
+
+// CLAIM REBINDING (J2): rederive the fetch slot (any-pr mode with checks)
+// from the fence-proven reconstruction + this planner's own raw-byte
+// digests, and require the probe's claim to equal it exactly.
+const hasPr = Number.isInteger(lane.pr_number) && lane.pr_number >= 1;
+const derivedSlot = {
+  schema: FETCH_SLOT_CLAIM_SCHEMA,
+  nonce,
+  repository,
+  issue_number: issueNumber,
+  lane_id: lane.lane_id,
+  state: lane.state,
+  pr_number: hasPr ? lane.pr_number : null,
+  checks: hasPr,
+  sources: { gather_1: read1.digests, gather_2: read2.digests },
+};
+let claimText, readLedgerText;
+try {
+  claimText = readFileSync(resolve(claimPath), "utf8");
+} catch (e) {
+  fail("claim-unreadable", String(e?.message ?? e));
+}
+try {
+  readLedgerText = readFileSync(resolve(readLedgerPath), "utf8");
+} catch (e) {
+  fail("read-ledger-unreadable", String(e?.message ?? e));
+}
+const claimParsed = parseClaim(claimText, { repository, nonce, issue_number: issueNumber });
+if (!claimParsed.ok) fail(claimParsed.reason, claimParsed.detail);
+const claim = claimParsed.claim;
+if (payloadDigest(claim) !== payloadDigest(derivedSlot)) {
+  fail("claim-derivation-mismatch", "the probe's claim does not equal the final planner's own slot derivation from raw reads");
+}
+
+// READ-LEDGER ACCOUNTING: exactly the claim's slots; every fetched file
+// digest-verified in ITS gather; no slot-shaped file without a row.
+const ledgerParsed = parseReadLedger(readLedgerText, { nonce });
+if (!ledgerParsed.ok) fail(ledgerParsed.reason, ledgerParsed.detail);
+const ledgerCheck = checkLedgerAgainstClaim(ledgerParsed.rows, claim);
+if (!ledgerCheck.ok) fail(ledgerCheck.reason, ledgerCheck.detail);
+const gatherDirs = { 1: read1.realDir, 2: read2.realDir };
+for (const row of ledgerParsed.rows) {
+  const full = join(gatherDirs[row.gather], slotFileName(row.slot));
+  if (row.fetched === true) {
+    if (!existsSync(full)) fail("read-ledger-file-missing", `${row.gather}:${row.slot}`);
+    if (sha256(readFileSync(full, "utf8")) !== row.sha256) {
+      fail("read-ledger-digest-mismatch", `${row.gather}:${row.slot}`);
+    }
+  } else if (existsSync(full)) {
+    fail("read-ledger-unaccounted-file", `${row.gather}:${row.slot}: file present but ledger says fetched:false`);
+  }
+}
+for (const gather of [1, 2]) {
+  for (const slot of ["pr", "check-runs", "status"]) {
+    const accounted = ledgerParsed.rows.some((r) => r.gather === gather && r.slot === slot);
+    if (!accounted && existsSync(join(gatherDirs[gather], slotFileName(slot)))) {
+      fail("read-ledger-unaccounted-file", `${gather}:${slot}: slot-shaped file has no ledger row`);
+    }
+  }
+}
+
+// PER-GATHER LIVE EVIDENCE from ledger facts only. A {fetched:false} PR
+// row is fail-closed ineligibility, never a guess; check evidence exists
+// only when BOTH the check-runs and status rows fetched, bound to that
+// gather's own parsed PR head. The two gathers' evidence must be
+// canonically EQUAL (the live half of the stability fence, J2).
+function gatherEvidence(gather) {
+  if (claim.pr_number === null) return { pr_metadata: { fetch_ok: false }, checks: null };
+  const rowOf = (slot) => ledgerParsed.rows.find((r) => r.gather === gather && r.slot === slot);
+  const prRow = rowOf("pr");
+  if (prRow.fetched !== true) return { pr_metadata: { fetch_ok: false }, checks: null };
+  const pr = parsePr(readFileSync(join(gatherDirs[gather], slotFileName("pr")), "utf8"), { repository, pr_number: claim.pr_number });
+  if (!pr.ok) fail(pr.reason, `gather ${gather}: ${pr.detail ?? ""}`);
+  const crRow = rowOf("check-runs");
+  const csRow = rowOf("status");
+  let checks = null;
+  if (crRow.fetched === true && csRow.fetched === true) {
+    // The ledger's bound head must be the head of THIS gather's PR.
+    if (crRow.sha !== pr.pr.head_sha || csRow.sha !== pr.pr.head_sha) {
+      fail("read-ledger-slot-mismatch", `gather ${gather}: check evidence bound to a different head than the fetched PR`);
+    }
+    const cr = parseCheckRunPages(readFileSync(join(gatherDirs[gather], slotFileName("check-runs")), "utf8"), { repository, sha: pr.pr.head_sha });
+    if (!cr.ok) fail(cr.reason, `gather ${gather}: ${cr.detail ?? ""}`);
+    const cs = parseCombinedStatus(readFileSync(join(gatherDirs[gather], slotFileName("status")), "utf8"), { repository, sha: pr.pr.head_sha });
+    if (!cs.ok) fail(cs.reason, `gather ${gather}: ${cs.detail ?? ""}`);
+    checks = {
+      check_runs_total: cr.check_runs_total,
+      check_run_conclusions: cr.check_run_conclusions,
+      commit_statuses_total: cs.commit_statuses_total,
+      commit_status_state: cs.commit_status_state,
+    };
+  }
+  return { pr_metadata: pr.pr, checks };
+}
+const evidence1 = gatherEvidence(1);
+const evidence2 = gatherEvidence(2);
+if (payloadDigest(evidence1) !== payloadDigest(evidence2)) {
+  fail("two-read-instability", "live PR/check evidence differs between gathers; retry next run");
+}
 
 // Pure evaluation — report-only by construction.
 const verdict = evaluate(lane, policy, {
-  pr_metadata: read2.prMeta,
-  ...(read2.checks !== null ? { checks: read2.checks } : {}),
+  pr_metadata: evidence2.pr_metadata,
+  ...(evidence2.checks !== null ? { checks: evidence2.checks } : {}),
 });
 
-const headForKey = read2.prMeta.fetch_ok === true ? read2.prMeta.head_sha : "unknown";
+const headForKey = evidence2.pr_metadata.fetch_ok === true ? evidence2.pr_metadata.head_sha : "unknown";
 const dedupe = `merge-guard:${lane.event_sequence}:${headForKey}:${verdict.eligible}`;
 const already = read2.comments.some(
   (c) => c.user === BOT && c.body.includes(`<!-- ${MARKERS.mergeGuardResult} -->`) && hasFullLineDedupe(c.body, dedupe),
@@ -191,7 +281,6 @@ const commentBody = [
   renderPayload(MARKERS.mergeGuardResult, verdict),
 ].join("\n");
 const content = JSON.stringify({ body: commentBody });
-const sha256 = "sha256:" + createHash("sha256").update(content, "utf8").digest("hex");
 
 const realRoot = realpathSync(resolve(requestRoot));
 writeFileSync(join(realRoot, "op-1.json"), content);
@@ -206,7 +295,7 @@ const plan = {
     issue_number: issueNumber,
     dedupe_key: dedupe,
     body_file: "op-1.json",
-    body_sha256: sha256,
+    body_sha256: sha256(content),
   }],
 };
 writeFileSync(join(realRoot, "plan.json"), JSON.stringify(plan, null, 2) + "\n");

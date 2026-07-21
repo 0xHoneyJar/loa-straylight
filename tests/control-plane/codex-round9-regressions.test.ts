@@ -110,7 +110,8 @@ describe("I1 — lane discovery never depends on the derived cp-lane label", () 
     // fail-closed and proven executably in planner-adversarial /
     // collection / dual-collection suites.
     expect(bootstrap).toMatch(/node \.straylight\/bin\/plan-bootstrap-write\.mjs/);
-    expect(bootstrap).toMatch(/--pages \/tmp\/issue-pages\.json/);
+    expect(bootstrap).toMatch(/--pages-1 \/tmp\/issue-pages-1\.json/);
+    expect(bootstrap).toMatch(/--pages-2 \/tmp\/issue-pages-2\.json/);
     expect(watchdog).toMatch(/node \.straylight\/bin\/collect-watchdog-evidence\.mjs --stage issue-slots/);
     // No workflow-side jq flattening of the page stream survives: the
     // shared parsers own flattening and fail closed on malformed pages.
@@ -293,18 +294,21 @@ describe("I2 — a malformed / unreadable marker-bearing lane is visible, never 
     // marker-bearing body cannot be parsed — the absence proof is blocked
     // because the unreadable genesis could BE the lane in mangled form.
     const dir = mkdtempSync(join(tmpdir(), "cp-r9-boot-"));
-    writeFileSync(join(dir, "pages.json"), JSON.stringify([{
+    const pages = JSON.stringify([{
       number: 9,
       url: "https://api.github.com/repos/0xHoneyJar/loa-straylight/issues/9",
       body: "<!-- straylight:lane:v1 -->\n```json\n{ not json ]\n```",
       created_at: "2026-07-16T11:00:00Z", updated_at: "2026-07-16T12:00:00Z",
-    }]));
+    }]);
+    writeFileSync(join(dir, "pages1.json"), pages);
+    writeFileSync(join(dir, "pages2.json"), pages);
     writeFileSync(join(dir, "labels.json"), "[]");
     let status = 0, out: any = null;
     try {
       execFileSync("node", [
         ".straylight/bin/plan-bootstrap-write.mjs",
-        "--pages", join(dir, "pages.json"), "--labels", join(dir, "labels.json"),
+        "--pages-1", join(dir, "pages1.json"), "--pages-2", join(dir, "pages2.json"),
+        "--labels", join(dir, "labels.json"),
         "--base-sha", "009c4afe34f3f7151db4239fe1c69898833440bb",
         "--request-root", dir, "--repository", "0xHoneyJar/loa-straylight",
         "--nonce", "12345-1",
@@ -530,14 +534,23 @@ describe("I3 — guarded reads: materialized, shape-validated, never pipeline-am
   });
 
   it("a failed watchdog PR fetch is a DURABLE explicit failure record, never 'no PR'", () => {
-    // Workflow-boundary redesign: a failed PR fetch writes an explicit
-    // {fetched:false} ledger row — a durable fact, never filename
-    // absence (S4→S5); the final planner turns agreed failure into the
-    // unresolved-head fail-closed path (pr_head_unresolved), proven
-    // executably in watchdog-dual-collection.test.ts (row 6 + control).
+    // Round-10 J3: the PR fetch itself moved from workflow bash into
+    // execute-read-plan.mjs — a failed fetch appends an explicit
+    // {fetched:false} ledger row (a durable fact, never filename
+    // absence, S4→S5), and the workflow's only involvement is invoking
+    // the read executor with the collector-authored read plan. The final
+    // planner turns agreed failure into the unresolved-head fail-closed
+    // path (pr_head_unresolved), proven executably in
+    // watchdog-dual-collection.test.ts (row 6 + control).
+    const readExecutor = readFileSync(".straylight/bin/execute-read-plan.mjs", "utf8");
+    expect(readExecutor).toMatch(/resource: "pr",\n\s+issue_number: read\.issue_number, pr_number: read\.pr_number,\n\s+fetched: false,/);
     const s = step(watchdog, "Collect evidence (Collection A, then Collection B)");
-    expect(s).toMatch(/if gh api "repos\/\$\{REPO\}\/pulls\/\$\{P\}" > "\$\{DIR\}\/issue-\$\{N\}\/pr-\$\{P\}\.json" 2>\/dev\/null; then/);
-    expect(s).toMatch(/fetched: false/);
+    expect(s).toMatch(/execute-read-plan\.mjs/);
+    expect(s).toMatch(/read-plan-prs\.json/);
+    // Bash no longer fetches PRs or composes ledger rows.
+    const code = s.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
+    expect(code).not.toMatch(/gh api "repos\/\$\{REPO\}\/pulls/);
+    expect(code).not.toMatch(/fetched: false/);
     const plan = readFileSync(".straylight/lib/watchdog-plan.mjs", "utf8");
     expect(plan).toMatch(/pr_head_unresolved\.push/);
   });

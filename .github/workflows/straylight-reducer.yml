@@ -8,30 +8,38 @@
 # machine-readable reducer result. Makes NO semantic decisions, calls NO
 # model API, and holds NO contents:write.
 #
-# WORKFLOW-BOUNDARY CONTRACT (rev. 3 §8, §11): the job is TWO strictly
-# ordered stages, each with its own fresh evidence, proof, plan, and
-# single executor invocation:
+# WORKFLOW-BOUNDARY CONTRACT (rev. 3 §8, §11; round 10 J2/J3): the job is
+# TWO strictly ordered stages, each with its own fresh evidence, proof,
+# plan, and single executor invocation:
 #
 #   STAGE A — eligibility confirmation (state-advancing, TERMINAL):
-#     two-read stable gather → planner --probe (derived state; decides
-#     whether/which PR to fetch) → planner --stage a (lane-target proof,
-#     exact dedupe, carried dry-run, at most ONE confirmation operation)
-#     → one executor invocation. After the confirmation posts, nothing
-#     derived from the pre-write reconstruction may execute — Stage A's
-#     plan contains nothing else, and the executor's structural terminal
-#     barrier independently forbids same-issue operations after it.
+#     two-read stable gather (fixed URLs only) → planner --probe
+#     (validates both reads, proves the lane target in both, writes the
+#     closed fetch-slot CLAIM + the closed READ PLAN) → the shared READ
+#     executor (execute-read-plan.mjs — the only code path performing
+#     DERIVED fetches; explicit read-ledger rows; GET-only by
+#     construction) → planner --stage a (rederives the slot from both raw
+#     reads, requires derived = claim, verifies the read ledger and every
+#     digest, exact dedupe, carried dry-run, at most ONE confirmation
+#     operation) → one WRITE executor invocation. After the confirmation
+#     posts, nothing derived from the pre-write reconstruction may
+#     execute — Stage A's plan contains nothing else, and the executor's
+#     structural terminal barrier independently forbids same-issue
+#     operations after it.
 #
 #   STAGE B — projections and publication (non-state-advancing):
 #     a COMPLETELY FRESH two-read stable gather (never Stage A's
 #     evidence, even when Stage A posted nothing) → planner --stage b
 #     (derived labels vs parsed label evidence, the §9 warning-gated
 #     cp-paused pair, the exact-deduped reducer result; never a
-#     state-advancing operation) → one executor invocation.
+#     state-advancing operation) → one WRITE executor invocation.
 #
-# Bash is confined to fetching bytes to files, switching on validated
-# exit codes, and invoking the planner/executor. Bash never constructs a
-# write request, never interprets evidence content, and never calls
-# `gh api -X POST/PATCH/DELETE` directly.
+# Bash is confined to fetching FIXED urls to files, switching on
+# validated exit codes, and invoking the checked-in Node entry points.
+# Bash never constructs a write request, never interprets evidence
+# content, never extracts a field from any evidence or derived document,
+# and never calls `gh api -X POST/PATCH/DELETE` directly. Every DERIVED
+# fetch flows through the shared read executor.
 #
 # Security posture:
 #   - permissions: contents:read + issues:write + pull-requests:read only;
@@ -134,9 +142,8 @@ jobs:
           fi
 
       # ============================ STAGE A ============================
-      # FETCH ONLY, TWICE: two complete independent reads (the stability
-      # fence). The live-PR fetch target is the planner's DERIVED probe
-      # output — bash never extracts a field from raw evidence.
+      # FETCH ONLY, TWICE, FIXED URLS: two complete independent reads (the
+      # stability fence). Bash extracts NOTHING from any response.
       - name: Stage A — gather evidence twice (raw bytes to files)
         id: gather_a
         if: steps.killswitch.outputs.enabled == 'true'
@@ -144,7 +151,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
           REPO: ${{ github.repository }}
-          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
           gather_once() {
@@ -165,37 +171,72 @@ jobs:
           G1=$(mktemp -d); G2=$(mktemp -d)
           echo "g1=${G1}" >> "$GITHUB_OUTPUT"
           echo "g2=${G2}" >> "$GITHUB_OUTPUT"
-          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          echo "now=${NOW}" >> "$GITHUB_OUTPUT"
+          echo "now=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           gather_once "${G1}"
           gather_once "${G2}"
-          # DERIVED probe: reconstructed state + recorded PR number. A
-          # probe refusal (two-read instability, duplicate lane, …) fails
-          # the job closed before any write-relevant work.
+
+      # PROBE (derivation authority): validates both reads, proves the
+      # lane target in both, and writes the closed fetch-slot CLAIM plus
+      # the closed READ PLAN. Its stdout is never parsed here — the claim
+      # and read plan are the ONLY probe outputs anything consumes, and
+      # the final planner rederives and rebinds them (J2). A probe refusal
+      # (two-read instability, duplicate lane, …) fails the job closed
+      # before any write-relevant work.
+      - name: Stage A — derive fetch slots (probe writes claim + read plan)
+        id: probe_a
+        if: steps.killswitch.outputs.enabled == 'true'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          CLAIM_ROOT=$(mktemp -d)
+          echo "claim_root=${CLAIM_ROOT}" >> "$GITHUB_OUTPUT"
           set +e
-          PROBE=$(node .straylight/bin/plan-reducer-writes.mjs --stage a --probe \
-            --gather-1 "${G1}" --gather-2 "${G2}" \
+          node .straylight/bin/plan-reducer-writes.mjs --stage a --probe \
+            --claim-root "${CLAIM_ROOT}" \
+            --gather-1 "${{ steps.gather_a.outputs.g1 }}" \
+            --gather-2 "${{ steps.gather_a.outputs.g2 }}" \
             --issue-number "${ISSUE_NUMBER}" \
-            --repository "${REPO}" --nonce "${NONCE}" --now "${NOW}")
-          PROBE_EXIT=$?
+            --repository "${REPO}" --nonce "${NONCE}" \
+            --now "${{ steps.gather_a.outputs.now }}"
+          PROBE=$?
           set -e
-          if [[ "$PROBE_EXIT" -ne 0 ]]; then
-            echo "::error::Stage A evidence probe refused (exit ${PROBE_EXIT}); failing closed"
-            echo "$PROBE"
+          if [[ "$PROBE" -ne 0 ]]; then
+            echo "::error::Stage A evidence probe refused (exit ${PROBE}); failing closed"
             exit 1
           fi
-          STATE=$(echo "$PROBE" | jq -r '.state // empty')
-          PRNUM=$(echo "$PROBE" | jq -r '.pr_number // empty')
-          # The live PR is fetched ONLY when the derived state can consume
-          # it (eligibility-pending). A failed fetch is recorded by
-          # absence; the planner then no-ops (fail closed, retry later).
-          if [[ "$STATE" == "eligibility-pending" && "$PRNUM" =~ ^[0-9]+$ ]]; then
-            gh api "repos/${REPO}/pulls/${PRNUM}" > "${G2}/pr.json" 2>/dev/null || rm -f "${G2}/pr.json"
-          fi
 
-      # PLAN Stage A: at most the single eligibility-confirmation
-      # operation. Exit 3 = valid no-op (not pending / already confirmed /
-      # dry-run refusal — retry next run); exit 2 = refusal, zero writes.
+      # EXECUTE DERIVED READS: one invocation of the shared READ executor
+      # per read plan. GET-only by construction; every fetch attempt is an
+      # explicit read-ledger row ({fetched:false} is a durable fact, never
+      # filename absence).
+      - name: Stage A — execute read plan (single shared read executor)
+        if: steps.killswitch.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+          CLAIM_ROOT: ${{ steps.probe_a.outputs.claim_root }}
+        run: |
+          set -euo pipefail
+          node .straylight/bin/execute-read-plan.mjs \
+            --plan "${CLAIM_ROOT}/read-plan.json" \
+            --plan-root "${CLAIM_ROOT}" \
+            --ledger "${CLAIM_ROOT}/read-ledger.jsonl" \
+            --gather-1 "${{ steps.gather_a.outputs.g1 }}" \
+            --gather-2 "${{ steps.gather_a.outputs.g2 }}" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}"
+
+      # PLAN Stage A: the final planner receives the claim + read ledger,
+      # independently rederives the fetch slot from BOTH raw reads,
+      # requires derived = claim, verifies every ledger row and digest,
+      # and plans at most the single eligibility-confirmation operation.
+      # Exit 3 = valid no-op (not pending / already confirmed / explicit
+      # fetch failure / dry-run refusal — retry next run); exit 2 =
+      # refusal, zero writes.
       - name: Stage A — plan eligibility confirmation (planner authority)
         id: plan_a
         if: steps.killswitch.outputs.enabled == 'true'
@@ -203,6 +244,7 @@ jobs:
           ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
           REPO: ${{ github.repository }}
           NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+          CLAIM_ROOT: ${{ steps.probe_a.outputs.claim_root }}
         run: |
           set -euo pipefail
           REQUEST_ROOT=$(mktemp -d)
@@ -213,6 +255,8 @@ jobs:
             --gather-2 "${{ steps.gather_a.outputs.g2 }}" \
             --issue-number "${ISSUE_NUMBER}" \
             --request-root "${REQUEST_ROOT}" \
+            --claim "${CLAIM_ROOT}/claim.json" \
+            --read-ledger "${CLAIM_ROOT}/read-ledger.jsonl" \
             --repository "${REPO}" \
             --nonce "${NONCE}" \
             --now "${{ steps.gather_a.outputs.now }}"
@@ -250,7 +294,7 @@ jobs:
       # NEWLY FETCHED STATE, UNCONDITIONALLY: a completely fresh two-read
       # stable gather — never Stage A's evidence, even when Stage A posted
       # nothing. The fresh reconstruction now includes Stage A's
-      # confirmation if one was posted.
+      # confirmation if one was posted. Fixed URLs only.
       - name: Stage B — gather fresh evidence twice (raw bytes to files)
         id: gather_b
         if: steps.killswitch.outputs.enabled == 'true'
@@ -291,7 +335,8 @@ jobs:
 
       # PLAN Stage B: derived-label convergence, the §9 warning-gated
       # cp-paused pair, and the exact-deduped result comment — never a
-      # state-advancing operation.
+      # state-advancing operation. Stage B performs no derived fetch, so
+      # no claim or read plan exists.
       - name: Stage B — plan projections and publication (planner authority)
         id: plan_b
         if: steps.killswitch.outputs.enabled == 'true'
