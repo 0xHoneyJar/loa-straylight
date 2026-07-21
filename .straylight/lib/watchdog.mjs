@@ -69,13 +69,26 @@ export function scan(lanes, policy, context = {}) {
       // one from readable evidence — an unreadable genesis has no
       // provable lane identity, and the watchdog never fabricates or
       // relays one (F8, round 11 J8: an arbitrary string in the stub is
-      // not identity).
+      // not identity). Every malformed finding is EXACTLY issue-keyed or
+      // lane-keyed (round 12 J3): an entry with NEITHER a trusted issue
+      // number NOR a pattern-valid lane_id is unattributable — no finding
+      // or dedupe identity can honestly exist for it, so the sweep
+      // refuses (fail closed) instead of minting a placeholder identity
+      // that could dedupe away a real lane's escalation.
       const hasDerivedLaneId = typeof lane?.lane_id === "string" && LANE_ID_RE.test(lane.lane_id);
+      if (issueNumber === null && !hasDerivedLaneId) {
+        return {
+          ok: false,
+          refusal: "malformed-lane-unattributable",
+          detail: "a malformed lane entry carries neither a trusted issue number nor a pattern-valid lane_id; the sweep cannot key a finding for it (fail closed)",
+          actions: [],
+        };
+      }
       const finding = {
         type: "escalate-malformed-lane",
         dedupe_key: issueNumber !== null
           ? `malformed:issue:${issueNumber}`
-          : `malformed:${hasDerivedLaneId ? lane.lane_id : "unknown"}:${lane?.event_sequence ?? "na"}`,
+          : `malformed:${lane.lane_id}:${lane?.event_sequence ?? "na"}`,
         detail: lv.errors.join("; "),
       };
       if (hasDerivedLaneId) finding.lane_id = lane.lane_id;

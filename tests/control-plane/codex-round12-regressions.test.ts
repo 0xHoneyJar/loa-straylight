@@ -40,6 +40,13 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseCheckRunPages, parseCombinedStatus } from "../../.straylight/lib/evidence.mjs";
+import { scan } from "../../.straylight/lib/watchdog.mjs";
+import type {
+  WatchdogAction,
+  WatchdogMalformedLaneFinding,
+  WatchdogMalformedIssueKeyedFinding,
+  WatchdogMalformedLaneKeyedFinding,
+} from "../../.straylight/lib/watchdog.mjs";
 import {
   makeLane, makeEvent, makeTaskPacket, makeAuditRecord, makePolicy,
   payloadDigest, REPO, NOW, BASE_SHA, HEAD_SHA, WORKING_BRANCH,
@@ -280,5 +287,173 @@ describe("J1 — identical check/status records in different API page order are 
     const r = runMergeGuard(g1, g2);
     expect(r.status).toBe(2);
     expect(r.out.reason).toBe("two-read-instability");
+  });
+});
+
+// =============================================================================
+// J2 — mutation-checker equivalent-shell bypasses (checker-level pins;
+// the per-workflow rows live in workflow-mutation.test.ts's matrix)
+// =============================================================================
+describe("J2 — the boundary checker refuses the round-12 equivalent-shell spellings", () => {
+  it("each Codex bypass payload is flagged by the checker directly", async () => {
+    const { checkWorkflowBoundary } = await import("./workflow-mutation.test.js");
+    const CASES: ReadonlyArray<readonly [string, string]> = [
+      [`node -p 'JSON.parse(require("fs").readFileSync("pr.json")).state'`, "inline-node"],
+      [`n'o'de -e 'console.log(1)'`, "inline-node"],
+      [`g'h' api "repos/x/y/issues/41" | sed -n p`, "gh-pipe"],
+      [`gh api -fbody=hello "repos/x/y/issues/1/comments"`, "gh-write"],
+      [`VALUE=$(date; cat evidence.json)`, "command-substitution"],
+      [`cat <(gh api "repos/x/y/pulls/1")`, "process-substitution"],
+    ];
+    for (const [payload, rule] of CASES) {
+      const violations = checkWorkflowBoundary(payload);
+      expect(violations.map((v: any) => v.rule), payload).toContain(rule);
+    }
+  });
+
+  it("non-semantic plumbing substitutions stay clean (no false positives on the real workflows' idioms)", async () => {
+    const { checkWorkflowBoundary } = await import("./workflow-mutation.test.js");
+    for (const clean of [
+      `DIR_A=$(mktemp -d); DIR_B=$(mktemp -d)`,
+      `NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)`,
+      `echo "now=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"`,
+    ]) {
+      expect(checkWorkflowBoundary(clean), clean).toEqual([]);
+    }
+  });
+});
+
+// =============================================================================
+// J3 — malformed watchdog findings are exactly issue-keyed or lane-keyed
+// =============================================================================
+describe("J3 — no malformed finding exists without a trusted issue number or a pattern-valid lane_id", () => {
+  it("COMPILER PROBE: a malformed finding with NEITHER issue_number nor lane_id no longer type-checks", () => {
+    // The Codex probe: pre-round-12, issue_number was globally optional
+    // and lane_id optional on the malformed variant, so this object was
+    // a valid WatchdogAction.
+    // @ts-expect-error — malformed findings are issue-keyed OR lane-keyed; neither key is a compile error
+    const rejected: WatchdogAction = {
+      type: "escalate-malformed-lane",
+      dedupe_key: "malformed:unknown:7",
+      detail: "x",
+    };
+    // @ts-expect-error — same through the narrowed union alias
+    const rejectedNarrow: WatchdogMalformedLaneFinding = {
+      type: "escalate-malformed-lane",
+      dedupe_key: "malformed:unknown:7",
+      detail: "x",
+    };
+    // @ts-expect-error — healthy post-event still REQUIRES lane_id (round 11 J8 preserved)
+    const rejectedHealthy: WatchdogAction = {
+      type: "post-event",
+      event_type: "system.lease_expired",
+      event_id: "evt-x",
+      sequence: 4,
+      prior_state: "claude-working",
+      dedupe_key: "lease-expired:lane-phase-49p:lease-1:3",
+      detail: "x",
+    };
+    const rejectedEventFields: WatchdogMalformedLaneFinding = {
+      type: "escalate-malformed-lane",
+      issue_number: 42,
+      // @ts-expect-error — event-only fields remain impossible on malformed variants
+      event_type: "system.escalated",
+      dedupe_key: "malformed:issue:42",
+      detail: "x",
+    };
+    // The valid spellings, for contrast:
+    const issueKeyed: WatchdogMalformedIssueKeyedFinding = {
+      type: "escalate-malformed-lane",
+      issue_number: 42,
+      dedupe_key: "malformed:issue:42",
+      detail: "x",
+    };
+    const issueKeyedWithDerivedLane: WatchdogMalformedIssueKeyedFinding = {
+      type: "escalate-malformed-lane",
+      issue_number: 17,
+      lane_id: "lane-phase-49q",
+      dedupe_key: "malformed:issue:17",
+      detail: "x",
+    };
+    const laneKeyed: WatchdogMalformedLaneKeyedFinding = {
+      type: "escalate-malformed-lane",
+      lane_id: "lane-phase-49q",
+      dedupe_key: "malformed:lane-phase-49q:3",
+      detail: "x",
+    };
+    expect([rejected, rejectedNarrow, rejectedHealthy, rejectedEventFields, issueKeyed, issueKeyedWithDerivedLane, laneKeyed].length).toBe(7);
+  });
+
+  it("RUNTIME: a malformed entry with neither key REFUSES the sweep (fail closed) and emits NO actions", () => {
+    const out = scan(
+      [{ event_sequence: 7 }],
+      makePolicy(),
+      { now: NOW },
+    );
+    expect(out.ok).toBe(false);
+    expect(out.refusal).toBe("malformed-lane-unattributable");
+    expect(out.actions).toEqual([]);
+  });
+
+  it("RUNTIME: a malformed entry whose lane_id fails the pattern AND has no issue number also refuses", () => {
+    const out = scan(
+      [{ lane_id: "unreadable-issue-42", event_sequence: 42 }],
+      makePolicy(),
+      { now: NOW },
+    );
+    expect(out.ok).toBe(false);
+    expect(out.refusal).toBe("malformed-lane-unattributable");
+    expect(out.actions).toEqual([]);
+  });
+
+  it("RUNTIME: an unattributable entry poisons the WHOLE sweep — healthy lanes in the same batch emit nothing either", () => {
+    // A partial result would let the caller post findings while the
+    // unattributable entry silently vanished; refusal must be total.
+    const out = scan(
+      [{ issue_number: 42, event_sequence: 42 }, { event_sequence: 7 }],
+      makePolicy(),
+      { now: NOW },
+    );
+    expect(out.ok).toBe(false);
+    expect(out.refusal).toBe("malformed-lane-unattributable");
+    expect(out.actions).toEqual([]);
+  });
+
+  it("RUNTIME: no scan output ever carries a malformed:unknown:* dedupe identity, and the spelling is gone from the source", () => {
+    const src = readFileSync(".straylight/lib/watchdog.mjs", "utf8");
+    expect(src).not.toMatch(/malformed:unknown|"unknown"/);
+    const issueKeyed = scan([{ issue_number: 42, event_sequence: 42 }], makePolicy(), { now: NOW });
+    expect(issueKeyed.ok).toBe(true);
+    expect(issueKeyed.actions.map((a: any) => a.dedupe_key)).toEqual(["malformed:issue:42"]);
+  });
+
+  it("RUNTIME: a LANE-KEYED malformed entry (pattern-valid lane_id, no issue) still yields its finding", () => {
+    const out = scan(
+      [{ lane_id: "lane-phase-49q", event_sequence: 3 }],
+      makePolicy(),
+      { now: NOW },
+    );
+    expect(out.ok).toBe(true);
+    const findings = out.actions.filter((a: any) => a.type === "escalate-malformed-lane");
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ lane_id: "lane-phase-49q", dedupe_key: "malformed:lane-phase-49q:3" });
+    expect((findings[0] as any).issue_number).toBeUndefined();
+  });
+
+  it("RUNTIME: issue-keyed malformed entries continue exactly as before (rounds 9–11 preserved)", () => {
+    const out = scan(
+      [
+        { issue_number: 42, event_sequence: 42 },
+        { issue_number: 17, lane_id: "lane-phase-49q", event_sequence: 17 },
+      ],
+      makePolicy(),
+      { now: NOW },
+    );
+    expect(out.ok).toBe(true);
+    const findings = out.actions.filter((a: any) => a.type === "escalate-malformed-lane");
+    expect(findings).toHaveLength(2);
+    expect(findings[0]).toMatchObject({ issue_number: 42, dedupe_key: "malformed:issue:42" });
+    expect((findings[0] as any).lane_id).toBeUndefined();
+    expect(findings[1]).toMatchObject({ issue_number: 17, lane_id: "lane-phase-49q", dedupe_key: "malformed:issue:17" });
   });
 });
