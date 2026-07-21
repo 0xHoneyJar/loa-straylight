@@ -79,7 +79,7 @@ import { WRITE_PLAN_SCHEMA, warningDedupeKey, warningBodyFor, hasFullLineDedupe 
 import {
   READ_PLAN_SCHEMA, FETCH_SLOT_CLAIM_SCHEMA, parseClaim, parseReadLedger,
   checkLedgerAgainstClaim, slotFileName,
-} from "../lib/read-plan.mjs";
+} from "../lib/collection.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BOT = "github-actions[bot]";

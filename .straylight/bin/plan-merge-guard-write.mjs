@@ -40,7 +40,7 @@ import { evaluate } from "../lib/merge-guard.mjs";
 import { payloadDigest } from "../lib/canonical.mjs";
 import { renderPayload, MARKERS } from "../lib/markers.mjs";
 import { WRITE_PLAN_SCHEMA, hasFullLineDedupe } from "../lib/write-plan.mjs";
-import { FETCH_SLOT_CLAIM_SCHEMA, parseClaim, parseReadLedger, checkLedgerAgainstClaim, slotFileName } from "../lib/read-plan.mjs";
+import { FETCH_SLOT_CLAIM_SCHEMA, parseClaim, parseReadLedger, checkLedgerAgainstClaim, slotFileName } from "../lib/collection.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const BOT = "github-actions[bot]";

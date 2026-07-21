@@ -80,7 +80,15 @@ that nothing merges.
     collection.mjs           ← watchdog dual-collection stages (issue-slot /
                                PR-slot derivation, seal claims rule),
                                per-collection re-verification, canonical
-                               planning projection, A/B comparison
+                               planning projection, A/B comparison; ALSO
+                               the closed straylight.read-plan.v1 +
+                               straylight.fetch-slot-claim.v1 + gather
+                               read-ledger contracts: the read-kind
+                               allowlist constructs every GET and target
+                               file name (no method/path/URL/filename
+                               expressible); claims digest-bind to the
+                               exact base evidence and are NEVER write
+                               authority
     watchdog-plan.mjs        ← final dual-collection planner (independent
                                reparse of BOTH collections; any planning-
                                relevant difference refuses with its ab-*
@@ -92,14 +100,6 @@ that nothing merges.
                                fatality, structural terminal barriers,
                                §9 cp-paused warning-gate rules, endpoint
                                body-content binding
-    read-plan.mjs            ← closed straylight.read-plan.v1 +
-                               straylight.fetch-slot-claim.v1 + gather
-                               read-ledger contracts: the read-kind
-                               allowlist constructs every GET and target
-                               file name (no method/path/URL/filename
-                               expressible); claims digest-bind to the
-                               exact base evidence and are NEVER write
-                               authority
   bin/                       ← thin CLI adapters (no network calls)
     reduce-issue.mjs
     watchdog-scan.mjs
@@ -170,7 +170,7 @@ Every DERIVED read flows through ONE invocation of
 `straylight.read-plan.v1` document authored by a checked-in binary (the
 reducer probe or the watchdog collector): reads carry validated
 issue/PR numbers only — **no method, path, URL, host, header, or
-filename is expressible**; the read-kind registry (`lib/read-plan.mjs`)
+filename is expressible**; the read-kind registry (`lib/collection.mjs`)
 constructs every GET and every target file name, and the executor never
 passes `-X` at all, so a read plan is structurally unable to smuggle a
 write. The plan is containment-checked beneath `--plan-root` exactly

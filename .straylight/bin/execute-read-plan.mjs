@@ -20,7 +20,7 @@
 //     exactly the realpath'd --plan-root and its name must be a single
 //     safe path component; O_NOFOLLOW, regular file, read exactly once;
 //   - the plan can express NO method, path, URL, host, header, or file
-//     name: the read-kind registry (lib/read-plan.mjs) constructs every
+//     name: the read-kind registry (lib/collection.mjs) constructs every
 //     GET request and every target file, and the constructed path is
 //     guard-checked again here (defense in depth);
 //   - every request is spawnSync("gh", argv, { shell: false }) with a
@@ -53,7 +53,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { join, dirname, basename } from "node:path";
 import { parseStrict } from "../lib/strict-json.mjs";
-import { validateReadPlan, checkConstructedReadPath, READ_KINDS, slotFileName } from "../lib/read-plan.mjs";
+import { validateReadPlan, checkConstructedReadPath, READ_KINDS, slotFileName } from "../lib/collection.mjs";
 import { parsePr } from "../lib/evidence.mjs";
 
 function arg(name) {

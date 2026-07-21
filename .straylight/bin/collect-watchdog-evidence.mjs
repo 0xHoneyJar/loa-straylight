@@ -55,8 +55,8 @@ import {
   parseLedger,
   sha256OfBytes,
   COLLECTION_IDS,
+  READ_PLAN_SCHEMA,
 } from "../lib/collection.mjs";
-import { READ_PLAN_SCHEMA } from "../lib/read-plan.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
