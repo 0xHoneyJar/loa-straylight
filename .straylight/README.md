@@ -206,7 +206,12 @@ over the COMPLETE validated records — the parsed PR metadata, every
 check run's `{id, name, conclusion, head_sha}`, and every
 combined-status entry's `{id, context, state}` — never aggregate
 totals/conclusion lists alone: two reads whose totals and rollup agree
-but whose run or status identities differ refuse as instability.
+but whose run or status identities differ refuse as instability. The
+canonical comparison is ORDER-INSENSITIVE but RECORD-SENSITIVE: records
+and every derived aggregate (the conclusion list included) are
+canonically id-sorted before digesting, so two reads carrying identical
+records in different API page order are the same evidence, while any
+drift in a run's id, name, conclusion, or bound head refuses.
 
 ## Write execution (the shared executor)
 

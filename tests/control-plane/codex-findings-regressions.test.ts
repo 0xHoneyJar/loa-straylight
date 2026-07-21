@@ -683,7 +683,7 @@ describe("C11 — two-page check-run aggregation", () => {
     expect(code).not.toMatch(/jq -s '\[\.\[\]\.check_runs/);
     const evidence = readFileSync(".straylight/lib/evidence.mjs", "utf8");
     expect(evidence).toMatch(/check-run-count-mismatch/);
-    expect(evidence).toMatch(/conclusions\.length !== total/);
+    expect(evidence).toMatch(/runs\.length !== total/);
   });
 });
 

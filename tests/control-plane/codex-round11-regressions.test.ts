@@ -265,12 +265,16 @@ describe("J2 — aggregate-equal but identity-different check/status evidence be
       checkRunsDoc: checkRunsDoc(checkRun(2, { conclusion: "success" }), checkRun(1, { conclusion: "failure" })),
       statusDoc: statusDoc(statusEntry(10)),
     });
-    // Pre-round-11 aggregate profiles were equal by construction:
+    // Pre-round-11 aggregate profiles were equal by construction (the
+    // PAGE-ORDER conclusion lists matched). Post-round-12 every derived
+    // field comes from the id-sorted records, so the binding drift now
+    // shows in the conclusion list too:
     const a = parseCheckRunPages(readFileSync(join(g1, "check-runs.pages"), "utf8"), { repository: REPO, sha: HEAD_SHA }) as any;
     const b = parseCheckRunPages(readFileSync(join(g2, "check-runs.pages"), "utf8"), { repository: REPO, sha: HEAD_SHA }) as any;
-    expect(a.check_run_conclusions).toEqual(b.check_run_conclusions);
+    expect(a.check_run_conclusions).toEqual(["success", "failure"]);
+    expect(b.check_run_conclusions).toEqual(["failure", "success"]);
     expect(a.check_runs_total).toBe(b.check_runs_total);
-    // ...but the sorted record sets are not:
+    // ...and the sorted record sets differ:
     expect(payloadDigest(a.check_runs)).not.toBe(payloadDigest(b.check_runs));
     const r = runMergeGuard(g1, g2);
     expect(r.status).toBe(2);

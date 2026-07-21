@@ -441,7 +441,6 @@ export function parseCheckRunPages(text, { repository, sha }) {
   const stream = parsePageStream(text);
   if (!stream.ok) return stream;
   let total = null;
-  const conclusions = [];
   const runs = [];
   const seen = new Set();
   for (const page of stream.pages) {
@@ -478,16 +477,21 @@ export function parseCheckRunPages(text, { repository, sha }) {
       if (run.conclusion !== null && typeof run.conclusion !== "string") {
         return bad("check-run-invalid", `check run ${run.id}: conclusion is neither string nor null`);
       }
-      // In-progress runs have conclusion null → recorded as the string
-      // "null" (non-passing), matching the merge-guard evidence contract.
-      conclusions.push(run.conclusion === null ? "null" : run.conclusion);
       runs.push({ id: run.id, name: run.name, conclusion: run.conclusion, head_sha: run.head_sha });
     }
   }
-  if (conclusions.length !== total) {
-    return bad("check-run-count-mismatch", `aggregated ${conclusions.length} run(s) but total_count is ${total} (dropped or duplicated page)`);
+  if (runs.length !== total) {
+    return bad("check-run-count-mismatch", `aggregated ${runs.length} run(s) but total_count is ${total} (dropped or duplicated page)`);
   }
+  // Canonical order: EVERY derived field comes from the id-sorted record
+  // set, never from API page order (round 12 J1). Two reads carrying
+  // identical records in different page order are the SAME evidence —
+  // the merge guard's stability digest must be permutation-invariant —
+  // while any id/name/conclusion/head_sha drift still differs.
   runs.sort((a, b) => a.id - b.id);
+  // In-progress runs have conclusion null → recorded as the string
+  // "null" (non-passing), matching the merge-guard evidence contract.
+  const conclusions = runs.map((r) => (r.conclusion === null ? "null" : r.conclusion));
   return { ok: true, check_runs_total: total, check_run_conclusions: conclusions, check_runs: runs };
 }
 
