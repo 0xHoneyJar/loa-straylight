@@ -36,6 +36,8 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseCheckRunPages, parseCombinedStatus } from "../../.straylight/lib/evidence.mjs";
+import { warningBodyFor, warningDedupeKey, validateOperationBody } from "../../.straylight/lib/write-plan.mjs";
+import { hasMarker, MARKERS } from "../../.straylight/lib/markers.mjs";
 import {
   makeLane, makeEvent, makeTaskPacket, makeAuditRecord, makePolicy,
   payloadDigest, REPO, NOW, BASE_SHA, HEAD_SHA, WORKING_BRANCH,
@@ -303,5 +305,107 @@ describe("J2 — aggregate-equal but identity-different check/status evidence be
       { id: 10, context: "ci/status-10", state: "success" },
       { id: 20, context: "ci/status-20", state: "pending" },
     ]);
+  });
+});
+
+// =============================================================================
+// J4 — the canonical cp-paused warning carries and requires its marker
+// =============================================================================
+describe("J4 — the cp-paused warning is positively identified by its dedicated marker", () => {
+  const warningOp = (body: string) => ({
+    op_id: "op-1",
+    kind: "post-cp-paused-warning",
+    issue_number: 41,
+    lane_id: "lane-phase-49p",
+    dedupe_key: warningDedupeKey("lane-phase-49p", 41),
+    body_file: "op-1.json",
+    body_sha256: sha256(JSON.stringify({ body })),
+  });
+  const check = (body: string) => validateOperationBody(warningOp(body), JSON.stringify({ body }));
+
+  it("positive regression: the canonical template embeds <!-- straylight:cp-paused-warning:v1 --> and validates", () => {
+    const body = warningBodyFor("lane-phase-49p", 41);
+    expect(MARKERS.cpPausedWarning).toBe("straylight:cp-paused-warning:v1");
+    expect(hasMarker(body, MARKERS.cpPausedWarning)).toBe(true);
+    expect(body.split("\n")[0]).toBe("<!-- straylight:cp-paused-warning:v1 -->");
+    expect(check(body)).toEqual({ ok: true });
+  });
+
+  it("a body WITHOUT the marker refuses with the dedicated marker error, not only template inequality", () => {
+    const body = warningBodyFor("lane-phase-49p", 41)
+      .split("\n").filter((l) => !l.includes("straylight:cp-paused-warning")).join("\n");
+    const r = check(body) as any;
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e: any) => e.detail.includes("lacks the canonical straylight:cp-paused-warning:v1 marker"))).toBe(true);
+  });
+
+  it("a WRONG marker refuses", () => {
+    const body = warningBodyFor("lane-phase-49p", 41)
+      .replace("straylight:cp-paused-warning:v1", "straylight:cp-paused-warning:v2");
+    const r = check(body) as any;
+    expect(r.ok).toBe(false);
+  });
+
+  it("a DUPLICATED marker is not the canonical byte-exact body → refuses", () => {
+    const canonical = warningBodyFor("lane-phase-49p", 41);
+    const doubled = `<!-- ${MARKERS.cpPausedWarning} -->\n` + canonical;
+    const r = check(doubled) as any;
+    expect(r.ok).toBe(false);
+    expect(r.errors.some((e: any) => e.detail.includes("does not equal the fixed state-neutral template"))).toBe(true);
+  });
+
+  // Stage B planner: the already-present proof requires the marker.
+  function stageB(comments: any[]) {
+    const mk = (issue: number) => {
+      const dir = mkdtempSync(join(tmpdir(), "cp-r11-j4-"));
+      const entry = enumEntry(issue, laneBody());
+      writeFileSync(join(dir, "enumeration.pages"), JSON.stringify([entry]));
+      writeFileSync(join(dir, "issue.json"), JSON.stringify(entry));
+      writeFileSync(join(dir, "comments.pages"), JSON.stringify(comments));
+      writeFileSync(join(dir, "labels.pages"), JSON.stringify(
+        ["cp-lane", "cp-paused"].map((name, i) => ({ id: i + 1, name, url: `${API}/repos/${REPO}/labels/${encodeURIComponent(name)}` })),
+      ));
+      return dir;
+    };
+    const g1 = mk(41);
+    const g2 = mk(41);
+    const requestRoot = mkdtempSync(join(tmpdir(), "cp-r11-j4-req-"));
+    const policyPath = writePolicy(requestRoot);
+    const r = run(REDUCER_PLANNER, [
+      "--stage", "b", "--gather-1", g1, "--gather-2", g2,
+      "--issue-number", "41", "--request-root", requestRoot,
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+    ]);
+    const plan = r.status === 0 ? JSON.parse(readFileSync(join(requestRoot, "plan.json"), "utf8")) : null;
+    return { r, plan };
+  }
+
+  it("a bot comment that is the OLD (marker-less) template plus the dedupe line is NOT a proof — the warning re-posts", () => {
+    // The pre-round-11 canonical body: everything but the marker line.
+    const oldTemplate = warningBodyFor("lane-phase-49p", 41).split("\n").slice(1).join("\n");
+    const { r, plan } = stageB([comment(4200, 41, "github-actions[bot]", oldTemplate)]);
+    expect(r.status).toBe(0);
+    const warning = plan.operations.find((o: any) => o.kind === "post-cp-paused-warning");
+    const removal = plan.operations.find((o: any) => o.kind === "remove-derived-cp-paused-after-warning");
+    expect(warning).toBeDefined();
+    expect(removal.warning_op_id).toBe(warning.op_id);
+    expect(removal.warning_proof).toBeUndefined();
+  });
+
+  it("unrelated bot machine output CONTAINING the dedupe line AND the marker string in prose is still not a proof", () => {
+    const forged = comment(4201, 41, "github-actions[bot]",
+      `## Unrelated output quoting the ban\n\ndedupe:${warningDedupeKey("lane-phase-49p", 41)}\n\nthe marker is <!-- straylight:cp-paused-warning:v1 --> and more prose`);
+    const { r, plan } = stageB([forged]);
+    expect(r.status).toBe(0);
+    expect(plan.operations.some((o: any) => o.kind === "post-cp-paused-warning")).toBe(true);
+  });
+
+  it("control: the byte-exact canonical marker-bearing bot warning IS the proof (no re-post)", () => {
+    const canonical = comment(4202, 41, "github-actions[bot]", warningBodyFor("lane-phase-49p", 41));
+    const { r, plan } = stageB([canonical]);
+    expect(r.status).toBe(0);
+    expect(plan.operations.some((o: any) => o.kind === "post-cp-paused-warning")).toBe(false);
+    const removal = plan.operations.find((o: any) => o.kind === "remove-derived-cp-paused-after-warning");
+    expect(removal.warning_proof).toEqual({ comment_id: 4202, dedupe_key: warningDedupeKey("lane-phase-49p", 41) });
   });
 });

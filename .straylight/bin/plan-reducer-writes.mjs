@@ -74,7 +74,7 @@ import { parseIssuePages, parseIssue, parseCommentPages, parsePr, parseLabelPage
 import { assertUniqueLaneTarget, scanLanes } from "../lib/lane-target.mjs";
 import { reconstructLane, deriveLabels } from "../lib/reconstruct.mjs";
 import { payloadDigest } from "../lib/canonical.mjs";
-import { renderPayload, MARKERS } from "../lib/markers.mjs";
+import { renderPayload, hasMarker, MARKERS } from "../lib/markers.mjs";
 import { WRITE_PLAN_SCHEMA, warningDedupeKey, warningBodyFor, hasFullLineDedupe } from "../lib/write-plan.mjs";
 import {
   READ_PLAN_SCHEMA, FETCH_SLOT_CLAIM_SCHEMA, parseClaim, parseReadLedger,
@@ -499,13 +499,25 @@ for (const label of have) {
   if (label === "cp-paused") {
     // §9: EVERY cp-paused removal goes through the warning-gated kind.
     // Prove the exact warning already present, or post it (fatal) first.
-    // The proof is BYTE-EXACT: only a bot-authored comment whose body
-    // EQUALS the canonical state-neutral warning for THIS lane/issue
-    // authorizes removal — a bot comment that merely CONTAINS the dedupe
-    // line (any other machine comment quoting it) is never a proof.
+    // The proof requires ALL of (round 11 J4):
+    //   - bot authorship (comment identity/chronology already validated
+    //     by parseCommentPages: unique IDs, strict instants);
+    //   - the POSITIVE canonical marker
+    //     <!-- straylight:cp-paused-warning:v1 --> — the condition that
+    //     identifies a comment AS the warning, so unrelated machine
+    //     output that merely CONTAINS the dedupe line is never a proof;
+    //   - the exact full-line dedupe identity for THIS lane/issue;
+    //   - the BYTE-EXACT complete canonical body (which embeds the
+    //     marker and dedupe line by construction — the explicit checks
+    //     above are defense in depth against template regression).
     const wDedupe = warningDedupeKey(lane.lane_id, issueNumber);
+    const canonicalBody = warningBodyFor(lane.lane_id, issueNumber);
     const proofComment = read2.comments.find(
-      (c) => c.user === BOT && c.body === warningBodyFor(lane.lane_id, issueNumber),
+      (c) =>
+        c.user === BOT &&
+        hasMarker(c.body, MARKERS.cpPausedWarning) &&
+        hasFullLineDedupe(c.body, wDedupe) &&
+        c.body === canonicalBody,
     );
     if (proofComment !== undefined) {
       operations.push({

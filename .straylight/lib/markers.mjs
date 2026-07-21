@@ -27,6 +27,9 @@ export const MARKERS = Object.freeze({
   reducerResult: "straylight:reducer-result:v1",
   watchdogResult: "straylight:watchdog-result:v1",
   mergeGuardResult: "straylight:merge-guard-result:v1",
+  // Marker-only (no JSON payload fence): positively identifies the
+  // canonical state-neutral cp-paused warning comment (round 11 J4).
+  cpPausedWarning: "straylight:cp-paused-warning:v1",
 });
 
 const MARKER_RE = /<!--\s*(straylight:[a-z-]+:v\d+)\s*-->/g;

@@ -196,8 +196,17 @@ export function warningDedupeKey(laneId, issueNumber) {
 // projections and that reconstructed protocol state no longer supports
 // cp-paused. It asserts NOTHING about how the label came to be present —
 // label evidence carries no authorship, so "added by hand" is unprovable.
+//
+// The body BEGINS with the dedicated machine marker (round 11 J4):
+// `<!-- straylight:cp-paused-warning:v1 -->` positively identifies a
+// comment AS the canonical warning. The §9 removal proof requires the
+// exact marker IN ADDITION to bot authorship, the byte-exact canonical
+// body for the exact lane/issue, and the exact full-line dedupe
+// identity — unrelated machine output that merely CONTAINS the dedupe
+// line can never be a proof.
 export function warningBodyFor(laneId, issueNumber) {
   return [
+    `<!-- ${MARKERS.cpPausedWarning} -->`,
     "## Straylight cp-paused removal notice (shadow mode)",
     "",
     `dedupe:${warningDedupeKey(laneId, issueNumber)}`,
@@ -505,6 +514,13 @@ export function validateOperationBody(op, text) {
       errors.push(err("body-endpoint-schema", "comment body lacks the exact full-line dedupe identity"));
     }
     if (op.kind === "post-cp-paused-warning") {
+      // The POSITIVE canonical marker first (round 11 J4): a warning
+      // body must identify itself as the warning. Byte-exact template
+      // equality below already implies it — the explicit check is
+      // defense in depth against a template regression that drops it.
+      if (!hasMarker(doc.body, MARKERS.cpPausedWarning)) {
+        errors.push(err("body-endpoint-schema", `cp-paused warning body lacks the canonical ${MARKERS.cpPausedWarning} marker`));
+      }
       // The fixed state-neutral template, byte-exact: exactness is what
       // makes the already-present proof and the dedupe identity sound.
       if (doc.body !== warningBodyFor(op.lane_id, op.issue_number)) {
