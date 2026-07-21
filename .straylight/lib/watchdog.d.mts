@@ -10,7 +10,13 @@ export interface WatchdogAction {
    * lane_id collides with a healthy lane elsewhere.
    */
   issue_number?: number;
-  lane_id: string;
+  /**
+   * Present ONLY when derived from readable evidence. An unreadable /
+   * unreconstructable finding is keyed by the trusted issue number alone
+   * and carries NO lane_id — the watchdog never fabricates a synthetic
+   * lane identity (round 10 J8).
+   */
+  lane_id?: string;
   dedupe_key: string;
   detail: string;
   event_type?: string;
