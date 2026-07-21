@@ -17,31 +17,50 @@
 // checker, the mutation rows fail; if someone reintroduces a construct,
 // the clean rows fail. Both directions are executable.
 //
-// NORMALIZATION (round 11 J3 — each step closes a Codex bypass):
+// NORMALIZATION (rounds 11–12 J3/J2 — each step closes a Codex bypass):
 //   logical lines   — a physical line ending in `\`, `|`, or `&&`
 //                     continues onto the next; rules match the JOINED
 //                     command, so `gh api \` + `-X POST` is one write.
 //   escaped words   — `\<alnum>` → `<alnum>` (an unquoted backslash
 //                     before an alphanumeric is shell identity), so
 //                     `j\q` matches \bjq\b.
+//   quoted words    — a word-content quote pair GLUED to a word char is
+//                     shell identity (`n'o'de` runs node, `g'h'` runs
+//                     gh); joined to fixed point before matching.
 //   substitutions   — $( … ) is scanned nesting-aware across the whole
-//                     logical line; an UNCLOSED `$(` (a substitution
-//                     spanning physical lines) is always flagged;
-//                     backticks are always flagged.
+//                     logical line; EVERY separator-split command inside
+//                     ($(date; cat x), $(mktemp && gh api …)) must be
+//                     non-semantic plumbing with no nested substitution;
+//                     an UNCLOSED `$(` (a substitution spanning physical
+//                     lines) is always flagged; backticks are always
+//                     flagged; process substitution `<( … )` / `>( … )`
+//                     is refused outright as its own class.
+//
+// The checker is a REGRESSION TRIPWIRE over checked-in workflow text —
+// it proves each known bypass class stays caught, not that every
+// possible shell spelling is; structural authority over writes and
+// derived reads remains the fixed Node executors.
 //
 // The classes (each a shell-authority vector Codex exploited in rounds
-// 1–11 or an adjacent spelling):
-//   inline-node          node -e / --eval / --input-type (inline source)
+// 1–12 or an adjacent spelling):
+//   inline-node          node -e / -p / --eval / --print / --input-type
+//                        (inline source or print-evaluation)
 //   authority-jq         any jq invocation (escaped spellings included)
 //   or-true              `|| true` swallowing a gh/node exit status
 //   evidence-loop        while/for/until, read -r, mapfile/readarray
 //   gh-write             api with -X/-XPOST/--method/--method= and a
 //                        mutating verb; gh pr|issue mutation; api with
 //                        an implicit-POST field/body flag (-f/-F/
-//                        --field/--raw-field/--input)
+//                        --field/--raw-field/--input, the compact
+//                        -fkey=value/-Fkey=value spellings included)
 //   gh-pipe              gh api piped into anything (multiline included)
-//   command-substitution $( … ) capturing semantic output (only mktemp/
-//                        date are non-semantic); unclosed $( ; backticks
+//   command-substitution $( … ) capturing semantic output — EVERY
+//                        separator-split command inside must be
+//                        non-semantic plumbing (mktemp/date) with no
+//                        nested substitution; unclosed $( ; backticks
+//   process-substitution <( … ) / >( … ) anywhere (a fetch or write
+//                        smuggled through a substituted FD is the same
+//                        authority as a pipe)
 //   command-indirection  a variable expansion in command position
 //                        ("$GH" api …, ${NODE_BIN} … — a checker that
 //                        keys on the literal words gh/node/jq must also
@@ -170,11 +189,25 @@ export function checkWorkflowBoundary(src: string): Violation[] {
     // Escaped-word normalization: an unquoted backslash before an
     // alphanumeric is shell identity (j\q runs jq). Continuation
     // backslashes were already consumed by the join above.
-    const t = text.replace(/\\([A-Za-z0-9_-])/g, "$1").trim();
+    let t = text.replace(/\\([A-Za-z0-9_-])/g, "$1").trim();
+    // Quoted-word concatenation: a quote pair GLUED to a word character
+    // on either side is shell word-identity (n'o'de runs node, g'h' runs
+    // gh — round 12 J2). Joined to fixed point BEFORE matching so every
+    // rule below sees the word the shell would resolve.
+    for (;;) {
+      const joined = t
+        .replace(/(\w)'([^']*)'/g, "$1$2")
+        .replace(/'([^']*)'(\w)/g, "$1$2")
+        .replace(/(\w)"([^"]*)"/g, "$1$2")
+        .replace(/"([^"]*)"(\w)/g, "$1$2");
+      if (joined === t) break;
+      t = joined;
+    }
     const flag = (rule: string) => violations.push({ rule, line, text: t });
 
-    // inline-node: any inline Node source on the shell boundary.
-    if (/\bnode\s+(-e\b|--eval\b|--input-type)/.test(t)) flag("inline-node");
+    // inline-node: any inline Node source OR print-evaluation on the
+    // shell boundary (-p/--print evaluate and print — round 12 J2).
+    if (/\bnode\s+(-e\b|-p\b|--eval\b|--print\b|--input-type)/.test(t)) flag("inline-node");
 
     // authority-jq: jq anywhere on a logical line (escaped spellings
     // normalized above). There is no non-authority jq left in these
@@ -200,8 +233,10 @@ export function checkWorkflowBoundary(src: string): Violation[] {
     if (/\bapi\b/.test(t) && /(^|\s)-X\s*(POST|PATCH|PUT|DELETE)\b/.test(t)) flag("gh-write");
     if (/\bapi\b/.test(t) && /--method[=\s]\s*(POST|PATCH|PUT|DELETE)\b/i.test(t)) flag("gh-write");
     // gh api runs an implicit POST when any field/body flag is present —
-    // a write needs no -X at all.
-    if (/\bapi\b/.test(t) && /(^|\s)(-f|-F|--field|--raw-field|--input)\b/.test(t)) flag("gh-write");
+    // a write needs no -X at all. The compact short-option spelling glues
+    // the key to the flag (-fbody=hello ≡ -f body=hello — round 12 J2).
+    if (/\bapi\b/.test(t) && /(^|\s)(-f|-F)(\b|[A-Za-z_])/.test(t)) flag("gh-write");
+    if (/\bapi\b/.test(t) && /(^|\s)(--field|--raw-field|--input)\b/.test(t)) flag("gh-write");
     if (/\bgh\s+(pr|issue)\s+(create|edit|comment|close|reopen|merge|lock|unlock|transfer|delete|pin|unpin)\b/.test(t)) flag("gh-write");
     if (/--input\s*<\(/.test(t)) flag("gh-write");
 
@@ -211,16 +246,29 @@ export function checkWorkflowBoundary(src: string): Violation[] {
 
     // command-substitution: $( … ) capturing SEMANTIC output. mktemp and
     // date are environment plumbing, not evidence; everything else —
-    // gh/node/jq/cat/echo arithmetic — is interpretation. An UNCLOSED
-    // $( (a substitution spanning physical lines) always flags; so do
-    // backticks.
+    // gh/node/jq/cat/echo arithmetic — is interpretation. EVERY
+    // separator-split command inside the substitution must be
+    // non-semantic, with no nested substitution: $(date; cat evidence.json)
+    // and $(mktemp && gh api …) are interpretation smuggled behind a
+    // plumbing prefix (round 12 J2). An UNCLOSED $( (a substitution
+    // spanning physical lines) always flags; so do backticks.
     for (const sub of commandSubstitutions(t)) {
       const inner = sub.inner.trim();
-      if (!sub.closed || (!/^mktemp\b/.test(inner) && !/^date\b/.test(inner))) {
-        flag("command-substitution");
-      }
+      const commands = inner.split(/\|\||&&|[;|&\n]/).map((c) => c.trim()).filter((c) => c.length > 0);
+      const nonSemantic =
+        sub.closed &&
+        !inner.includes("$(") &&
+        !inner.includes("`") &&
+        commands.length > 0 &&
+        commands.every((c) => /^(mktemp|date)\b/.test(c));
+      if (!nonSemantic) flag("command-substitution");
     }
     if (t.includes("`")) flag("command-substitution");
+
+    // process-substitution: <( … ) / >( … ) anywhere — a fetch or write
+    // smuggled through a substituted file descriptor (cat <(gh api …))
+    // is pipe authority by another spelling (round 12 J2).
+    if (/[<>]\(/.test(t)) flag("process-substitution");
 
     // command-indirection: a variable expansion standing where a command
     // goes. Every rule above keys on literal command words; a workflow
@@ -285,6 +333,10 @@ describe("mutation matrix — each prohibited construct class is demonstrably ca
     // [expected rule, payload, description]
     ["inline-node", `PROBE=$(node --input-type=module -e 'console.log(1)')`, "inline Node with --input-type"],
     ["inline-node", `node -e 'require("fs")' file.json`, "inline Node with -e"],
+    ["inline-node", `node -p 'JSON.parse(require("fs").readFileSync("pr.json")).state'`, "Node print-evaluation -p (round-12 bypass)"],
+    ["inline-node", `node --print 'process.version'`, "Node print-evaluation --print (round-12 bypass)"],
+    ["inline-node", `n'o'de -e 'console.log(1)'`, "quoted-word-concatenated n'o'de (round-12 bypass)"],
+    ["inline-node", `n"o"de -p '1+1'`, "double-quoted-word-concatenated n\"o\"de (round-12 bypass)"],
     ["authority-jq", `STATE=$(echo "$PROBE" | jq -r '.state // empty')`, "jq field extraction (the round-10 repro)"],
     ["authority-jq", `jq -cn --arg nonce "$NONCE" '{nonce: $nonce}' >> ledger.jsonl`, "jq ledger-row composition"],
     ["authority-jq", `j\\q -r '.state' < pr.json`, "ESCAPED command word j\\q (round-11 bypass)"],
@@ -301,14 +353,23 @@ describe("mutation matrix — each prohibited construct class is demonstrably ca
     ["gh-write", `gh api \\\n  -X POST "repos/x/y/issues/1/comments" --input body.json`, "multiline continuation write (round-11 bypass)"],
     ["gh-write", `"$GH" api -X POST "repos/x/y/issues/1/comments" --input body.json`, "variable command name write (round-11 bypass)"],
     ["gh-write", `gh api "repos/x/y/issues/1/comments" -f body=hi`, "implicit POST via field flag (no -X at all)"],
+    ["gh-write", `gh api -fbody=hello "repos/x/y/issues/1/comments"`, "compact -fbody=hello field spelling (round-12 bypass)"],
+    ["gh-write", `gh api -Fname=value "repos/x/y/issues/1/comments"`, "compact -Fname=value field spelling (round-12 bypass)"],
+    ["gh-write", `g'h' api -fbody=hello "repos/x/y/issues/1/comments"`, "quoted-word-concatenated g'h' write (round-12 bypass)"],
     ["gh-write", `gh issue comment 41 --body hi`, "gh issue mutation"],
     ["gh-pipe", `gh api "repos/x/y/issues" | grep -q cp-lane`, "gh piped into grep"],
     ["gh-pipe", `gh api "repos/x/y/issues" |\n  grep -q cp-lane`, "multiline gh pipe (round-11 bypass)"],
+    ["gh-pipe", `g'h' api "repos/x/y/issues/41" | sed -n 's/.*"state": "\\([a-z]*\\)".*/\\1/p'`, "quoted-word g'h' piped into sed (round-12 bypass)"],
     ["command-substitution", `HEAD=$(gh api "repos/x/y/pulls/1")`, "capturing gh output"],
     ["command-substitution", `HEAD=$(\n  gh api "repos/x/y/pulls/1"\n)`, "MULTILINE semantic substitution (round-11 bypass)"],
     ["command-substitution", `SHA=$(sha256sum file | cut -d' ' -f1)`, "capturing digest computation"],
     ["command-substitution", `BASE=$(cat /tmp/base-sha.txt)`, "capturing file content"],
+    ["command-substitution", `VALUE=$(date; cat evidence.json)`, "semantic command behind a date prefix (round-12 bypass)"],
+    ["command-substitution", `TMP=$(mktemp && gh api "repos/x/y/pulls/1")`, "semantic command behind a mktemp prefix (round-12 bypass)"],
+    ["command-substitution", `T=$(date -u +%s | tee /tmp/now)`, "plumbing piped into a semantic consumer"],
     ["command-substitution", "HEAD=`gh api \"repos/x/y/pulls/1\"`", "backtick substitution"],
+    ["process-substitution", `cat <(gh api "repos/x/y/pulls/1")`, "fetch smuggled through process substitution (round-12 bypass)"],
+    ["process-substitution", `tee >(sha256sum > /tmp/d) < pr.json`, "write-side process substitution"],
     ["command-indirection", `"$GH" api "repos/x/y/pulls/1" > pr.json`, "variable command name fetch (round-11 bypass)"],
     ["command-indirection", `\${NODE_BIN} .straylight/bin/execute-write-plan.mjs --plan evil.json`, "variable node binary"],
     ["eval", `eval "$CMD"`, "eval of dynamic content"],
@@ -337,8 +398,8 @@ describe("mutation matrix — each prohibited construct class is demonstrably ca
   it("the matrix is exhaustive over the checker's rule set (a rule with no mutation row is untested)", () => {
     const rulesInChecker = [
       "inline-node", "authority-jq", "or-true", "evidence-loop", "gh-write",
-      "gh-pipe", "command-substitution", "command-indirection", "eval",
-      "ledger-append", "redirect-derived",
+      "gh-pipe", "command-substitution", "process-substitution",
+      "command-indirection", "eval", "ledger-append", "redirect-derived",
     ];
     const rulesCovered = new Set(MUTATIONS.map(([rule]) => rule));
     for (const rule of rulesInChecker) {

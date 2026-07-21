@@ -157,19 +157,24 @@ performs a GitHub write, and every DERIVED fetch (a target computed from
 evidence: a lane's recorded PR, a PR's head, a collection's issue slots)
 flows through `bin/execute-read-plan.mjs` driven by a closed
 `straylight.read-plan.v1` authored by a probe or collector. The boundary
-is enforced by an executable mutation matrix
+is guarded by an executable mutation matrix
 (`tests/control-plane/workflow-mutation.test.ts`): a checker over the
 workflows' LOGICAL shell lines — backslash/pipe/&& continuations
-joined, escaped command words (`j\q`) normalized, `$( … )` scanned
-nesting-aware with unclosed substitutions and backticks always flagged,
-and variable expansions in command position (`"$GH" api …`) refused as
-their own class — whose every prohibited-construct class is proven
-caught by mutating a real workflow, including the split/spelled
-variants (`gh api \` + `-X POST`, `-XPOST`, `--method=POST`, implicit
-POST via `-f`/`--field`/`--input`, multiline pipes and substitutions).
-The checker is a heuristic tripwire over checked-in workflow text — the
-structural guarantee remains that writes/derived reads exist only in
-the two executors. They never call model APIs and never hold
+joined, escaped command words (`j\q`) and quoted-word concatenation
+(`n'o'de`, `g'h'`) normalized, `$( … )` scanned nesting-aware with
+every separator-split inner command required to be non-semantic
+plumbing and unclosed substitutions/backticks always flagged, process
+substitution (`<( … )`/`>( … )`) refused outright, and variable
+expansions in command position (`"$GH" api …`) refused as their own
+class — where each KNOWN prohibited-construct spelling is proven
+caught by mutating a real workflow (`gh api \` + `-X POST`, `-XPOST`,
+`--method=POST`, implicit POST via `-f`/`-fkey=value`/`--field`/
+`--input`, `node -e/-p/--eval/--print`, `$(date; cat …)` multi-command
+substitutions, multiline pipes). The checker is a REGRESSION TRIPWIRE
+over checked-in workflow text, not a proof over every possible shell
+spelling — structural authority over writes and derived reads remains
+the fixed Node executors, which are the only paths that construct
+requests. They never call model APIs and never hold
 `contents: write`.
 
 ## Read execution (the shared read executor + fetch-slot claims)
