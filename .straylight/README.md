@@ -159,9 +159,18 @@ flows through `bin/execute-read-plan.mjs` driven by a closed
 `straylight.read-plan.v1` authored by a probe or collector. The boundary
 is enforced by an executable mutation matrix
 (`tests/control-plane/workflow-mutation.test.ts`): a checker over the
-workflows' executable lines whose every prohibited-construct class is
-proven caught by mutating a real workflow. They never call model APIs
-and never hold `contents: write`.
+workflows' LOGICAL shell lines — backslash/pipe/&& continuations
+joined, escaped command words (`j\q`) normalized, `$( … )` scanned
+nesting-aware with unclosed substitutions and backticks always flagged,
+and variable expansions in command position (`"$GH" api …`) refused as
+their own class — whose every prohibited-construct class is proven
+caught by mutating a real workflow, including the split/spelled
+variants (`gh api \` + `-X POST`, `-XPOST`, `--method=POST`, implicit
+POST via `-f`/`--field`/`--input`, multiline pipes and substitutions).
+The checker is a heuristic tripwire over checked-in workflow text — the
+structural guarantee remains that writes/derived reads exist only in
+the two executors. They never call model APIs and never hold
+`contents: write`.
 
 ## Read execution (the shared read executor + fetch-slot claims)
 
