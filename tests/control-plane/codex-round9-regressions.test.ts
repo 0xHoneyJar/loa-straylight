@@ -408,7 +408,11 @@ describe("I3 — guarded reads: materialized, shape-validated, never pipeline-am
   // All four workflows are converted to the gather → plan → execute
   // boundary: dedupe guarantees live in planner code, proven executably
   // in planner-adversarial.test.ts / watchdog-dual-collection.test.ts.
-  const GUARDED: ReadonlyArray<readonly [string, string, string]> = [];
+  // The structural boundary itself is enforced by the NON-VACUOUS
+  // mutation matrix in workflow-mutation.test.ts (round 10 J3): a single
+  // checker over executable lines, with every prohibited-construct class
+  // proven caught by mutating a real workflow — this replaced the empty
+  // GUARDED table that round 10 flagged as vacuous.
 
   it("converted workflows own dedupe in the planner: reducer + merge-guard read ALL comment pages and dedupe on parsed evidence", () => {
     // Planners derive dedupe proofs from the complete parsed comment
