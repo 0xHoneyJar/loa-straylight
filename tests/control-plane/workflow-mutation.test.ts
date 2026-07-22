@@ -92,17 +92,26 @@
 //                        ("$GH" api …, ${NODE_BIN} … — a checker that
 //                        keys on the literal words gh/node/jq must also
 //                        refuse a variable standing where a command goes)
-//   gh-api-derived       (round 13) ANY effective gh invocation — api or
-//                        any subcommand; direct, quoted-word (g'h'),
-//                        wrapped (command/env/exec/timeout/nice/stdbuf/
-//                        setsid/assignment prefix, path spellings
-//                        included), inside any substitution, or as a
-//                        bare gh argv word under an unmodeled head —
-//                        that is not the EXACT fail-closed guarded
-//                        fixed read
-//                        `if ! gh api [--paginate] "repos/${REPO}/…" > file`;
-//                        judged over resolved effective commands, never
-//                        raw text
+//   gh-api-derived       (round 13, exact since round 15) ANY effective
+//                        gh invocation — api or any subcommand; direct,
+//                        quoted-word (g'h'), wrapped (command/env/exec/
+//                        timeout/nice/stdbuf/setsid/assignment prefix,
+//                        path spellings included), inside any
+//                        substitution, or as a bare gh argv word under
+//                        an unmodeled head — whose normalized argv is
+//                        not a member of the CLOSED allowlist of the
+//                        seven checked-in read tuples
+//                        (PERMITTED_FIXED_READS: exact endpoint incl.
+//                        query string and pagination flags, exact
+//                        output path, bound to its exact workflows) OR
+//                        that is not the SOLE condition of a
+//                        fail-closed `if ! <read>; then` (a compound
+//                        condition — `; false; then`, `&& true`,
+//                        `|| true`, a pipeline, any command before
+//                        `then` — lets another status replace the
+//                        read's); judged over resolved effective
+//                        commands with retained separator context,
+//                        never raw text
 //   wrapper-unresolved   (round 14) an allowlisted wrapper whose command
 //                        position cannot be proven from its fixed syntax
 //                        (env --split-string/-S, unknown options, a
@@ -268,7 +277,13 @@ function normalizeLogical(text: string): string {
 interface EffectiveCommand {
   /** Resolved words: quotes stripped, wrappers/assignments unwrapped. */
   words: string[];
-  /** The command is the condition of a fail-closed `if !` guard. */
+  /**
+   * The command is the SOLE condition of a fail-closed `if ! <cmd>; then`
+   * (round 15): it starts with `if !`, ends at `;`/newline, and the very
+   * next segment is exactly `then`. A compound condition (`; false; then`,
+   * `&& true; then`, `| cat; then`) lets another command replace the
+   * read's exit status before `then` — that is NOT guarded.
+   */
   guarded: boolean;
   /** A wrapper word or assignment prefix stood before the executable. */
   wrapped: boolean;
@@ -305,16 +320,24 @@ function parenBody(text: string, from: number): { body: string; end: number } {
 // inside double quotes (bash semantics); <( … ) / >( … ) substitute only
 // unquoted. Substitution spans are replaced by a $SUB placeholder so the
 // outer command tokenizes cleanly (and a command-position substitution
-// surfaces as a $-word in command position — indirection).
-function splitSimple(text: string): { segments: string[]; bodies: string[] } {
-  const segments: string[] = [];
+// surfaces as a $-word in command position — indirection). Each segment
+// RETAINS the separator that ended it (round 15): condition-list
+// structure — `; then` vs `; false; then` vs `&& true; then` — is
+// authority-relevant and must survive decomposition.
+interface SimpleSegment {
+  text: string;
+  /** The separator that ENDED this segment: ";", "&", "&&", "|", "||", "\n", or "" at end-of-text. */
+  sep: string;
+}
+function splitSimple(text: string): { segments: SimpleSegment[]; bodies: string[] } {
+  const segments: SimpleSegment[] = [];
   const bodies: string[] = [];
   let cur = "";
   let inDouble = false;
   let i = 0;
-  const push = () => {
+  const push = (sep: string) => {
     const s = cur.trim();
-    if (s.length > 0) segments.push(s);
+    if (s.length > 0) segments.push({ text: s, sep });
     cur = "";
   };
   while (i < text.length) {
@@ -358,14 +381,19 @@ function splitSimple(text: string): { segments: string[]; bodies: string[] } {
       continue;
     }
     if (!inDouble && (c === ";" || c === "&" || c === "|" || c === "\n")) {
-      push();
+      let sep = c;
+      if ((c === "&" || c === "|") && text[i + 1] === c) {
+        sep = c + c;
+        i++;
+      }
+      push(sep);
       i++;
       continue;
     }
     cur += c;
     i++;
   }
-  push();
+  push("");
   return { segments, bodies };
 }
 
@@ -573,17 +601,26 @@ function resolveEffective(tokens: string[]): { words: string[]; guarded: boolean
 }
 
 // Decompose one normalized logical line into every effective command at
-// every substitution depth.
+// every substitution depth. Guardedness is computed WITH condition-list
+// context (round 15): a segment's `if !` prefix counts only when the
+// segment is the SOLE condition — it ends at `;`/newline (never `&&`,
+// `||`, `|`, `&`, where another command consumes or replaces its status)
+// and the immediately following segment is exactly `then`.
 function decomposeCommands(t: string): EffectiveCommand[] {
   const out: EffectiveCommand[] = [];
   const walk = (text: string, inSubstitution: boolean) => {
     const { segments, bodies } = splitSimple(text);
-    for (const seg of segments) {
-      const tokens = tokenizeWords(seg);
+    for (let s = 0; s < segments.length; s++) {
+      const seg = segments[s] ?? { text: "", sep: "" };
+      const tokens = tokenizeWords(seg.text);
       if (tokens.length === 0) continue;
-      const { words, guarded, wrapped, unresolved } = resolveEffective(tokens);
+      const { words, guarded: negatedIf, wrapped, unresolved } = resolveEffective(tokens);
       if (words.length === 0) continue;
-      out.push({ words, guarded, wrapped, inSubstitution, unresolved });
+      const soleCondition =
+        negatedIf &&
+        (seg.sep === ";" || seg.sep === "\n") &&
+        (segments[s + 1]?.text ?? "") === "then";
+      out.push({ words, guarded: soleCondition, wrapped, inSubstitution, unresolved });
     }
     for (const body of bodies) walk(body, true);
   };
@@ -591,37 +628,72 @@ function decomposeCommands(t: string): EffectiveCommand[] {
   return out;
 }
 
-// The ONE permitted effective-gh shape: the fail-closed guarded FIXED
-// read — unwrapped, unsubstituted, `api` (optionally --paginate), a
-// fixed issues/labels url, one redirect target drawn from the fixed
-// gather/collection variables, and NOTHING after the target.
-const FIXED_READ_URL_RE = /^repos\/\$\{REPO\}\/(issues|labels)([/?]|$)/;
-const FIXED_TARGET_VARS = new Set(["DIR", "G1", "G2", "DIR_A", "DIR_B", "REPO", "ISSUE_NUMBER"]);
+// The CLOSED allowlist of permitted fixed reads (round 15): the exact
+// seven endpoint/pagination/output tuples checked into the four
+// workflows, as NORMALIZED argv (per-word quotes stripped) plus the
+// workflows each tuple may appear in. Shape predicates ("under /issues",
+// "safe-looking variable names") are gone: `repos/${REPO}/issues/999/
+// events`, an arbitrary descendant, a changed query string, a missing
+// --paginate, an alternate output file, or a valid endpoint paired with
+// another tuple's output all mismatch and are refused. Adding an eighth
+// read to a workflow REQUIRES adding its tuple here — the tripwire fires
+// on anything else.
+interface FixedReadTuple {
+  /** Normalized argv: gh api [--paginate] <url> > <output>. */
+  argv: readonly string[];
+  /** Workflow basenames this exact tuple is checked into. */
+  workflows: readonly string[];
+}
+const GATHER_WORKFLOWS = ["straylight-merge-guard.yml", "straylight-reducer.yml"] as const;
+const PERMITTED_FIXED_READS: readonly FixedReadTuple[] = [
+  // bootstrap: two independent all-issues enumerations + label enumeration
+  {
+    argv: ["gh", "api", "--paginate", "repos/${REPO}/issues?state=all&per_page=100", ">", "/tmp/issue-pages-1.json"],
+    workflows: ["straylight-bootstrap.yml"],
+  },
+  {
+    argv: ["gh", "api", "--paginate", "repos/${REPO}/issues?state=all&per_page=100", ">", "/tmp/issue-pages-2.json"],
+    workflows: ["straylight-bootstrap.yml"],
+  },
+  {
+    argv: ["gh", "api", "--paginate", "repos/${REPO}/labels?per_page=100", ">", "/tmp/label-pages.json"],
+    workflows: ["straylight-bootstrap.yml"],
+  },
+  // open-issues enumeration (merge-guard/reducer gathers + watchdog collections)
+  {
+    argv: ["gh", "api", "--paginate", "repos/${REPO}/issues?state=open&per_page=100", ">", "${DIR}/enumeration.pages"],
+    workflows: [...GATHER_WORKFLOWS, "straylight-watchdog.yml"],
+  },
+  // per-issue gather reads (merge-guard/reducer)
+  {
+    argv: ["gh", "api", "repos/${REPO}/issues/${ISSUE_NUMBER}", ">", "${DIR}/issue.json"],
+    workflows: [...GATHER_WORKFLOWS],
+  },
+  {
+    argv: ["gh", "api", "--paginate", "repos/${REPO}/issues/${ISSUE_NUMBER}/comments", ">", "${DIR}/comments.pages"],
+    workflows: [...GATHER_WORKFLOWS],
+  },
+  // label evidence (reducer stage B only)
+  {
+    argv: ["gh", "api", "--paginate", "repos/${REPO}/issues/${ISSUE_NUMBER}/labels", ">", "${DIR}/labels.pages"],
+    workflows: ["straylight-reducer.yml"],
+  },
+];
 
-function isPermittedFixedRead(cmd: EffectiveCommand): boolean {
+// Exact-tuple membership: unwrapped, unsubstituted, resolved, the SOLE
+// `if ! …; then` condition, and argv byte-equal to a checked-in tuple.
+// When the caller names the workflow, the tuple must also be checked
+// into THAT workflow (an issue.json read inside bootstrap is a
+// violation even though the tuple exists elsewhere).
+function isPermittedFixedRead(cmd: EffectiveCommand, workflowFile?: string): boolean {
   if (cmd.inSubstitution || cmd.wrapped || !cmd.guarded || cmd.unresolved) return false;
-  const w = cmd.words;
-  // The literal word gh — a path spelling (/usr/bin/gh) is not the
-  // checked-in shape even when it names the same binary.
-  if (w[0] !== "gh") return false;
-  let k = 1;
-  if (w[k] !== "api") return false;
-  k++;
-  if (w[k] === "--paginate") k++;
-  const url = w[k] ?? "";
-  if (!FIXED_READ_URL_RE.test(url) || /\/(pulls|commits)(\/|$)/.test(url)) return false;
-  // Every variable in the url AND the target must come from the fixed
-  // gather/collection set — a url built from a shell-parsed variable
-  // (repos/${REPO}/issues/${TARGET}) is a derived read even when its
-  // prefix looks fixed.
-  const fixedVarsOnly = (s: string) =>
-    [...s.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g)].every((m) => FIXED_TARGET_VARS.has(m[1] ?? ""));
-  if (!fixedVarsOnly(url) || url.includes("$SUB")) return false;
-  k++;
-  if (w[k] !== ">") return false;
-  const target = w[k + 1] ?? "";
-  if (target.length === 0 || w.length > k + 2) return false;
-  return fixedVarsOnly(target) && !target.includes("$SUB");
+  const base = workflowFile === undefined ? undefined : wordBasename(workflowFile);
+  return PERMITTED_FIXED_READS.some(
+    (t) =>
+      t.argv.length === cmd.words.length &&
+      t.argv.every((x, i) => x === cmd.words[i]) &&
+      (base === undefined || t.workflows.includes(base)),
+  );
 }
 
 export interface GhInvocation {
@@ -642,7 +714,7 @@ export interface GhInvocation {
 // head still carrying a gh word in its argv — is REPORTED as a
 // non-permitted invocation, never silently dropped: "unresolved" must
 // not read as "no gh invocation here".
-export function collectEffectiveGhInvocations(src: string): GhInvocation[] {
+export function collectEffectiveGhInvocations(src: string, workflowFile?: string): GhInvocation[] {
   const out: GhInvocation[] = [];
   for (const { line, text } of logicalLines(src)) {
     // Decomposition runs on the RAW logical line: its tokenizer resolves
@@ -657,7 +729,7 @@ export function collectEffectiveGhInvocations(src: string): GhInvocation[] {
         head === "gh" ||
         cmd.words.some((x, i) => i > 0 && wordBasename(x) === "gh");
       if (head === "gh" || cmd.unresolved || head === XARGS || carriesGh) {
-        out.push({ line, ...cmd, permitted: isPermittedFixedRead(cmd) });
+        out.push({ line, ...cmd, permitted: isPermittedFixedRead(cmd, workflowFile) });
       }
     }
   }
@@ -666,8 +738,9 @@ export function collectEffectiveGhInvocations(src: string): GhInvocation[] {
 
 // The boundary checker: examine every LOGICAL shell line (comments and
 // blank lines dropped; continuations joined; escaped command words
-// normalized).
-export function checkWorkflowBoundary(src: string): Violation[] {
+// normalized). When the caller names the workflow file, fixed-read
+// tuples are additionally bound to their exact workflow identity.
+export function checkWorkflowBoundary(src: string, workflowFile?: string): Violation[] {
   const violations: Violation[] = [];
   for (const { line, text } of logicalLines(src)) {
     const t = normalizeLogical(text);
@@ -763,7 +836,7 @@ export function checkWorkflowBoundary(src: string): Violation[] {
       // xargs constructs and invokes commands from its input stream — no
       // static resolution is sound; refused categorically.
       if (head === XARGS) flag("xargs");
-      if (head === "gh" && !isPermittedFixedRead(cmd)) flag("gh-api-derived");
+      if (head === "gh" && !isPermittedFixedRead(cmd, workflowFile)) flag("gh-api-derived");
       // Belt for wrappers OUTSIDE the closed allowlist (doas gh api …)
       // and for gh handed to a resolved-but-untrusted head (xargs gh …):
       // a bare gh word ANYWHERE in the argv of a non-gh command is the
@@ -804,7 +877,7 @@ export function checkWorkflowBoundary(src: string): Violation[] {
 describe("boundary checker — the four converted workflows carry zero violations", () => {
   for (const f of WORKFLOWS) {
     it(`${f} is clean`, () => {
-      const violations = checkWorkflowBoundary(readFileSync(f, "utf8"));
+      const violations = checkWorkflowBoundary(readFileSync(f, "utf8"), f);
       expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
     });
   }
@@ -897,6 +970,18 @@ describe("mutation matrix — each prohibited construct class is demonstrably ca
     ["wrapper-unresolved", `timeout \$DUR gh api "repos/x/y/pulls/1" > /tmp/pr.json`, "timeout with a non-literal duration (unproven command position)"],
     ["wrapper-unresolved", `stdbuf --weird gh api "repos/x/y/pulls/1"`, "unknown stdbuf option (unproven command position)"],
     ["command-indirection", `\${GH} api "repos/x/y/pulls/1" > pr.json`, "brace-expansion command name fetch (round-13)"],
+    ["gh-api-derived", `if ! gh api --paginate "repos/\${REPO}/issues?state=open&per_page=100" > "\${DIR}/enumeration.pages"; false; then\n  exit 97\nfi`, "compound condition — `; false` replaces the read's exit status before then (round-15 bypass)"],
+    ["gh-api-derived", `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/issue.json" && true; then\n  exit 97\nfi`, "compound condition — `&& true` masks the status (round-15)"],
+    ["gh-api-derived", `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/issue.json" || true; then\n  exit 97\nfi`, "compound condition — `|| true` masks the status (round-15)"],
+    ["gh-api-derived", `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" | cat > "\${DIR}/issue.json"; then\n  exit 97\nfi`, "pipeline in the condition — cat's status stands in for the read's (round-15)"],
+    ["gh-api-derived", `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/issue.json"; echo pre-then; then\n  exit 97\nfi`, "another command before then (round-15)"],
+    ["gh-api-derived", `if ! gh api "repos/\${REPO}/issues/999/events" > /tmp/arbitrary.json; then\n  exit 97\nfi`, "arbitrary ISSUE subroute — issues/999/events is not a checked-in tuple (round-15 bypass)"],
+    ["gh-api-derived", `if ! gh api --paginate "repos/\${REPO}/labels/bug/something" > "\${DIR}/labels.pages"; then\n  exit 97\nfi`, "arbitrary LABELS subroute (round-15)"],
+    ["gh-api-derived", `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > /tmp/arbitrary.json; then\n  exit 97\nfi`, "valid endpoint, arbitrary output filename (round-15)"],
+    ["gh-api-derived", `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/enumeration.pages"; then\n  exit 97\nfi`, "valid endpoint paired with ANOTHER tuple's output path (round-15)"],
+    ["gh-api-derived", `if ! gh api "repos/\${REPO}/issues?state=open&per_page=100" > "\${DIR}/enumeration.pages"; then\n  exit 97\nfi`, "missing required --paginate flag (round-15)"],
+    ["gh-api-derived", `if ! gh api --paginate "repos/\${REPO}/issues?state=closed&per_page=100" > "\${DIR}/enumeration.pages"; then\n  exit 97\nfi`, "changed query string — state=closed is not a checked-in tuple (round-15)"],
+    ["gh-api-derived", `if ! gh api --paginate --include "repos/\${REPO}/issues?state=open&per_page=100" > "\${DIR}/enumeration.pages"; then\n  exit 97\nfi`, "extra flag beyond the tuple's argv (round-15)"],
     ["eval", `eval "$CMD"`, "eval of dynamic content"],
     ["eval", `source /tmp/dynamic.sh`, "dynamic source"],
     ["ledger-append", `echo '{"resource":"pr"}' >> "\${DIR}/ledger.jsonl"`, "bash appending a ledger row"],
@@ -907,7 +992,7 @@ describe("mutation matrix — each prohibited construct class is demonstrably ca
     for (const [rule, payload, description] of MUTATIONS) {
       it(`${workflow.split("/").pop()}: ${description} → flagged as ${rule}`, () => {
         const mutated = mutate(workflow, payload);
-        const violations = checkWorkflowBoundary(mutated);
+        const violations = checkWorkflowBoundary(mutated, workflow);
         expect(violations.map((v) => v.rule)).toContain(rule);
       });
     }
@@ -916,7 +1001,7 @@ describe("mutation matrix — each prohibited construct class is demonstrably ca
   it("a COMMENT containing a prohibited construct is NOT flagged (comments may explain the ban)", () => {
     for (const workflow of WORKFLOWS) {
       const mutated = mutate(workflow, `# example of the banned pattern: gh api -X POST | jq -r '.x' || true`);
-      expect(checkWorkflowBoundary(mutated)).toEqual([]);
+      expect(checkWorkflowBoundary(mutated, workflow)).toEqual([]);
     }
   });
 
@@ -947,20 +1032,38 @@ describe("fixed entry points own every derived fetch and every write", () => {
       // resolve to their effective executable — a raw-text scan that a
       // g'h' spelling or an `env gh` prefix slips past cannot happen
       // here by construction.
-      const invocations = collectEffectiveGhInvocations(src);
+      const invocations = collectEffectiveGhInvocations(src, f);
       // The real workflows DO fetch — an empty list would mean the
       // decomposition went blind, which must fail this test too.
       expect(invocations.length, `${f}: no effective gh invocations found`).toBeGreaterThan(0);
       for (const inv of invocations) {
         expect(inv.permitted, `${f}:${inv.line}: ${inv.words.join(" ")}`).toBe(true);
         // Redundant belt: permitted implies unwrapped, unsubstituted,
-        // guarded, api-subcommand, fixed url, no derived pulls/commits.
+        // sole-condition guarded, api-subcommand, no derived pulls/commits.
         expect(inv.wrapped).toBe(false);
         expect(inv.inSubstitution).toBe(false);
         expect(inv.guarded).toBe(true);
         expect(inv.words[1]).toBe("api");
         expect(inv.words.join(" ")).not.toMatch(/\/(pulls|commits)\//);
       }
+    }
+  });
+
+  it("the closed tuple allowlist matches the four workflows EXACTLY: per-workflow found-argv sets equal the declared tuple sets", () => {
+    // Two directions, set-equal per workflow: (a) no tuple is stale —
+    // each declared tuple appears in every workflow that declares it;
+    // (b) no read is unlisted — a workflow carries no argv outside its
+    // declared set. (The reducer legitimately repeats its gather tuples
+    // across stages A and B, so this compares SETS, not counts.)
+    for (const f of WORKFLOWS) {
+      const wf = f.split("/").pop() ?? "";
+      const found = new Set(
+        collectEffectiveGhInvocations(readFileSync(f, "utf8"), f).map((i) => i.words.join(" ")),
+      );
+      const declared = new Set(
+        PERMITTED_FIXED_READS.filter((t) => t.workflows.includes(wf)).map((t) => t.argv.join(" ")),
+      );
+      expect([...found].sort(), wf).toEqual([...declared].sort());
     }
   });
 
@@ -1015,6 +1118,51 @@ describe("fixed entry points own every derived fetch and every write", () => {
       expect(invocations.length, payload).toBeGreaterThan(0);
       expect(invocations.some((i) => i.unresolved), payload).toBe(true);
     }
+  });
+
+  it("FAIL CLOSED: compound conditions and tuple mismatches surface from the collector as NON-permitted (round 15)", () => {
+    // Codex round-15 repro 1: `; false` replaces the read's exit status
+    // before `then` — the segment is no longer the sole condition.
+    const compound = [
+      `if ! gh api --paginate "repos/\${REPO}/issues?state=open&per_page=100" > "\${DIR}/enumeration.pages"; false; then`,
+      `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/issue.json" && true; then`,
+      `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/issue.json" || true; then`,
+      `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" | cat > "\${DIR}/issue.json"; then`,
+      `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/issue.json"; echo pre-then; then`,
+    ];
+    for (const payload of compound) {
+      const invocations = collectEffectiveGhInvocations(payload);
+      expect(invocations.length, payload).toBeGreaterThan(0);
+      for (const inv of invocations) {
+        expect(inv.guarded, `${payload}: sole-condition context lost`).toBe(false);
+        expect(inv.permitted, payload).toBe(false);
+      }
+    }
+    // Codex round-15 repro 2: shape-passing reads outside the closed
+    // tuple set — arbitrary subroutes, arbitrary outputs, tuple swaps.
+    const offTuple = [
+      `if ! gh api "repos/\${REPO}/issues/999/events" > /tmp/arbitrary.json; then`,
+      `if ! gh api --paginate "repos/\${REPO}/labels/bug/something" > "\${DIR}/labels.pages"; then`,
+      `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > /tmp/arbitrary.json; then`,
+      `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/enumeration.pages"; then`,
+      `if ! gh api "repos/\${REPO}/issues?state=open&per_page=100" > "\${DIR}/enumeration.pages"; then`,
+      `if ! gh api --paginate "repos/\${REPO}/issues?state=closed&per_page=100" > "\${DIR}/enumeration.pages"; then`,
+    ];
+    for (const payload of offTuple) {
+      const invocations = collectEffectiveGhInvocations(payload);
+      expect(invocations.length, payload).toBeGreaterThan(0);
+      for (const inv of invocations) {
+        expect(inv.guarded, payload).toBe(true); // the guard is intact — the TUPLE is what fails
+        expect(inv.permitted, payload).toBe(false);
+      }
+    }
+    // Workflow-identity binding: a tuple is permitted only in a workflow
+    // that declares it — issue.json's read inside bootstrap is refused.
+    const issueRead = `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/issue.json"; then`;
+    const inReducer = collectEffectiveGhInvocations(issueRead, ".github/workflows/straylight-reducer.yml");
+    const inBootstrap = collectEffectiveGhInvocations(issueRead, ".github/workflows/straylight-bootstrap.yml");
+    expect(inReducer[0]?.permitted).toBe(true);
+    expect(inBootstrap[0]?.permitted).toBe(false);
   });
 
   it("the read executor is GET-only by construction: no -X flag exists anywhere in it", () => {

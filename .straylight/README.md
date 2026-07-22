@@ -180,12 +180,19 @@ their fixed syntax (`command`, `env` — assignments, options, `--`,
 path spellings like `/usr/bin/env` — `exec`, `nohup`, `builtin`,
 `setsid`, `stdbuf` incl. `-o L`, `timeout` incl. its duration operand
 and `--signal`, `nice` incl. `-n`) — and ANY effective `gh` invocation
-is categorically refused unless it is the EXACT fail-closed guarded
-fixed read
-(`if ! gh api [--paginate] "repos/${REPO}/issues|labels…" > <fixed
-target>`), so `g'h' api …`, `command gh api …`,
-`env TOKEN=x gh api …`, and `timeout 30 gh api …` are the same
-violation as `gh api …`. The resolution is FAIL CLOSED: a wrapper
+is categorically refused unless its normalized argv is a member of a
+CLOSED allowlist of the exact checked-in read tuples (endpoint
+including query string and pagination flags, exact output path, bound
+to the exact workflows that carry it — arbitrary `/issues` or
+`/labels` descendants, changed queries, missing/extra flags,
+alternate output files, and endpoint/output swaps all mismatch) AND
+the read is the SOLE condition of a fail-closed `if ! <read>; then` —
+separator context is retained through decomposition, so a compound
+condition (`; false; then`, `&& true`, `|| true`, a pipeline, any
+command before `then`) that lets another status replace the read's is
+refused. `g'h' api …`, `command gh api …`, `env TOKEN=x gh api …`,
+and `timeout 30 gh api …` are the same violation as `gh api …`. The
+resolution is FAIL CLOSED: a wrapper
 whose command position cannot be proven (`env --split-string`, an
 unknown option, a non-literal `timeout` duration) is a violation in
 itself, `xargs` is refused categorically (it constructs commands from
