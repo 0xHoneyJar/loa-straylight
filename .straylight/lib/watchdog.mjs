@@ -31,6 +31,24 @@ import { validatePolicy, validateLane, parseIsoInstant } from "./validate.mjs";
 // (or a synthetic stub id) never enters the durable finding record.
 const LANE_ID_RE = /^lane-[a-z0-9][a-z0-9-]{1,62}$/;
 
+// BRANDED KEY VALIDATORS (round 13 J2) — the ONLY constructors of the
+// PositiveIssueNumber / ValidLaneId types on the declared surface. Every
+// raw key value flows through one of these before an action is built;
+// invalid input yields null and the caller fails closed (no action, no
+// dedupe identity). At runtime the brand is purely nominal: the value
+// returned IS the validated primitive.
+
+/** Positive safe integer or null — 0, negatives, non-integers, unsafe
+ *  integers, and non-numbers all fail closed. */
+export function asPositiveIssueNumber(value) {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 ? value : null;
+}
+
+/** Canonical-pattern lane id or null — any other value fails closed. */
+export function asValidLaneId(value) {
+  return typeof value === "string" && LANE_ID_RE.test(value) ? value : null;
+}
+
 // Deterministic, collision-resistant event id for a recovery action:
 // sha256 over the full dedupe key (complete lane id + recovery key + seq).
 // 48 hex chars (192 bits) fits the evt- pattern's 63-char budget.
@@ -54,9 +72,10 @@ export function scan(lanes, policy, context = {}) {
     // ISSUE-KEYED ACTION CONTRACT (C8): a lane entry may carry the issue
     // number it was reconstructed from; every action for that lane then
     // carries `issue_number`, and callers key posting/dedupe by it —
-    // never by a first-match lane-id → issue mapping.
-    const issueNumber =
-      Number.isInteger(entry?.issue_number) && entry.issue_number >= 1 ? entry.issue_number : null;
+    // never by a first-match lane-id → issue mapping. The raw value is
+    // validated-and-branded here (round 13 J2): anything but a positive
+    // safe integer is null, and null never keys a finding.
+    const issueNumber = asPositiveIssueNumber(entry?.issue_number);
     const withIssue = (action) => (issueNumber !== null ? { issue_number: issueNumber, ...action } : action);
     const lane = entry;
     const lv = validateLane(lane);
@@ -75,8 +94,8 @@ export function scan(lanes, policy, context = {}) {
       // or dedupe identity can honestly exist for it, so the sweep
       // refuses (fail closed) instead of minting a placeholder identity
       // that could dedupe away a real lane's escalation.
-      const hasDerivedLaneId = typeof lane?.lane_id === "string" && LANE_ID_RE.test(lane.lane_id);
-      if (issueNumber === null && !hasDerivedLaneId) {
+      const derivedLaneId = asValidLaneId(lane?.lane_id);
+      if (issueNumber === null && derivedLaneId === null) {
         return {
           ok: false,
           refusal: "malformed-lane-unattributable",
@@ -88,10 +107,13 @@ export function scan(lanes, policy, context = {}) {
         type: "escalate-malformed-lane",
         dedupe_key: issueNumber !== null
           ? `malformed:issue:${issueNumber}`
-          : `malformed:${lane.lane_id}:${lane?.event_sequence ?? "na"}`,
+          : `malformed:${derivedLaneId}:${lane?.event_sequence ?? "na"}`,
         detail: lv.errors.join("; "),
       };
-      if (hasDerivedLaneId) finding.lane_id = lane.lane_id;
+      // Issue-keyed findings may carry a separately derived pattern-valid
+      // lane identity; a LANE-KEYED finding (no issue) uses the validated
+      // lane_id as its identity and never an issue_number (strict union).
+      if (derivedLaneId !== null) finding.lane_id = derivedLaneId;
       actions.push(withIssue(finding));
       continue;
     }

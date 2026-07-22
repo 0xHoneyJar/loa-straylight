@@ -38,7 +38,7 @@ import { join } from "node:path";
 import { parseCheckRunPages, parseCombinedStatus } from "../../.straylight/lib/evidence.mjs";
 import { warningBodyFor, warningDedupeKey, validateOperationBody } from "../../.straylight/lib/write-plan.mjs";
 import { hasMarker, MARKERS } from "../../.straylight/lib/markers.mjs";
-import { scan } from "../../.straylight/lib/watchdog.mjs";
+import { scan, asPositiveIssueNumber, asValidLaneId } from "../../.straylight/lib/watchdog.mjs";
 import type { WatchdogAction, WatchdogPostEventAction, WatchdogMalformedLaneFinding } from "../../.straylight/lib/watchdog.mjs";
 import {
   makeLane, makeEvent, makeTaskPacket, makeAuditRecord, makePolicy, laneClaudeWorking,
@@ -440,10 +440,11 @@ describe("J8 — healthy actions require lane_id at the type level; only issue-k
       dedupe_key: "head-unverifiable:x",
       detail: "x",
     };
-    // The valid spellings, for contrast:
+    // The valid spellings, for contrast (keys constructed through the
+    // round-13 validated brand constructors — the only way in):
     const event: WatchdogPostEventAction = {
       type: "post-event",
-      lane_id: "lane-phase-49p",
+      lane_id: asValidLaneId("lane-phase-49p")!,
       event_type: "system.lease_expired",
       event_id: "evt-x",
       sequence: 4,
@@ -453,14 +454,14 @@ describe("J8 — healthy actions require lane_id at the type level; only issue-k
     };
     const malformedWithout: WatchdogMalformedLaneFinding = {
       type: "escalate-malformed-lane",
-      issue_number: 42,
+      issue_number: asPositiveIssueNumber(42)!,
       dedupe_key: "malformed:issue:42",
       detail: "x",
     };
     const malformedWith: WatchdogMalformedLaneFinding = {
       type: "escalate-malformed-lane",
-      issue_number: 17,
-      lane_id: "lane-phase-49q",
+      issue_number: asPositiveIssueNumber(17)!,
+      lane_id: asValidLaneId("lane-phase-49q")!,
       dedupe_key: "malformed:issue:17",
       detail: "x",
     };
@@ -506,7 +507,8 @@ describe("J8 — healthy actions require lane_id at the type level; only issue-k
     expect(watchdogPlan).not.toMatch(/unreadable-issue-|malformed-issue-/);
     expect(watchdog).not.toMatch(/unreadable-issue-|malformed-issue-/);
     // The watchdog relays a stub lane_id onto a finding only through the
-    // pattern gate.
-    expect(watchdog).toMatch(/LANE_ID_RE\.test\(lane\.lane_id\)/);
+    // validated brand constructor (round 13: the pattern gate BECAME the
+    // constructor).
+    expect(watchdog).toMatch(/asValidLaneId\(lane\?\.lane_id\)/);
   });
 });

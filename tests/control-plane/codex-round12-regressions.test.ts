@@ -40,7 +40,7 @@ import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseCheckRunPages, parseCombinedStatus } from "../../.straylight/lib/evidence.mjs";
-import { scan } from "../../.straylight/lib/watchdog.mjs";
+import { scan, asPositiveIssueNumber, asValidLaneId } from "../../.straylight/lib/watchdog.mjs";
 import type {
   WatchdogAction,
   WatchdogMalformedLaneFinding,
@@ -355,29 +355,30 @@ describe("J3 — no malformed finding exists without a trusted issue number or a
     };
     const rejectedEventFields: WatchdogMalformedLaneFinding = {
       type: "escalate-malformed-lane",
-      issue_number: 42,
+      issue_number: asPositiveIssueNumber(42)!,
       // @ts-expect-error — event-only fields remain impossible on malformed variants
       event_type: "system.escalated",
       dedupe_key: "malformed:issue:42",
       detail: "x",
     };
-    // The valid spellings, for contrast:
+    // The valid spellings, for contrast (keys constructed through the
+    // round-13 validated brand constructors — the only way in):
     const issueKeyed: WatchdogMalformedIssueKeyedFinding = {
       type: "escalate-malformed-lane",
-      issue_number: 42,
+      issue_number: asPositiveIssueNumber(42)!,
       dedupe_key: "malformed:issue:42",
       detail: "x",
     };
     const issueKeyedWithDerivedLane: WatchdogMalformedIssueKeyedFinding = {
       type: "escalate-malformed-lane",
-      issue_number: 17,
-      lane_id: "lane-phase-49q",
+      issue_number: asPositiveIssueNumber(17)!,
+      lane_id: asValidLaneId("lane-phase-49q")!,
       dedupe_key: "malformed:issue:17",
       detail: "x",
     };
     const laneKeyed: WatchdogMalformedLaneKeyedFinding = {
       type: "escalate-malformed-lane",
-      lane_id: "lane-phase-49q",
+      lane_id: asValidLaneId("lane-phase-49q")!,
       dedupe_key: "malformed:lane-phase-49q:3",
       detail: "x",
     };

@@ -7,11 +7,50 @@
 // unreconstructable evidence) may omit it — and that finding is itself
 // a two-variant union (round 12 J3): ISSUE-KEYED (required trusted
 // issue_number; lane_id present only when a pattern-valid identity was
-// separately derived) or LANE-KEYED (required pattern-valid lane_id).
-// No action type-checks with BOTH issue_number and lane_id absent,
-// matching the runtime, which fails the sweep closed on an
-// unattributable malformed entry rather than fabricating an "unknown"
-// finding identity.
+// separately derived) or LANE-KEYED (required pattern-valid lane_id,
+// issue_number statically impossible). No action type-checks with BOTH
+// issue_number and lane_id absent, matching the runtime, which fails
+// the sweep closed on an unattributable malformed entry rather than
+// fabricating an "unknown" finding identity.
+//
+// BRANDED KEYS (round 13 J2): both finding keys are runtime-VALIDATED
+// branded types. `issue_number: 0`, a negative or non-integer number,
+// and an arbitrary string lane_id (`"unreadable-issue-42"`) no longer
+// type-check anywhere on the action surface — the ONLY way to construct
+// a PositiveIssueNumber or ValidLaneId is through the exported validator
+// functions, which return null (fail closed) on invalid input. The
+// runtime (scan) routes every raw key through these same validators
+// before constructing an action.
+
+declare const PositiveIssueNumberBrand: unique symbol;
+/**
+ * A positive safe integer proven by asPositiveIssueNumber — the only
+ * constructor. A raw number literal is a compile error wherever this
+ * type is required.
+ */
+export type PositiveIssueNumber = number & { readonly [PositiveIssueNumberBrand]: true };
+
+declare const ValidLaneIdBrand: unique symbol;
+/**
+ * A lane id proven against the canonical lane-id pattern
+ * (^lane-[a-z0-9][a-z0-9-]{1,62}$) by asValidLaneId — the only
+ * constructor. A raw string literal is a compile error wherever this
+ * type is required.
+ */
+export type ValidLaneId = string & { readonly [ValidLaneIdBrand]: true };
+
+/**
+ * Validate-and-brand an issue number: a positive safe integer passes;
+ * 0, negatives, non-integers, unsafe integers, and non-numbers return
+ * null (fail closed).
+ */
+export declare function asPositiveIssueNumber(value: unknown): PositiveIssueNumber | null;
+
+/**
+ * Validate-and-brand a lane id against the canonical pattern; any other
+ * value returns null (fail closed).
+ */
+export declare function asValidLaneId(value: unknown): ValidLaneId | null;
 
 interface WatchdogActionBase {
   /**
@@ -21,7 +60,7 @@ interface WatchdogActionBase {
    * mapping, which could post a finding on the wrong issue when a parsed
    * lane_id collides with a healthy lane elsewhere.
    */
-  issue_number?: number;
+  issue_number?: PositiveIssueNumber;
   dedupe_key: string;
   detail: string;
 }
@@ -29,7 +68,7 @@ interface WatchdogActionBase {
 export interface WatchdogPostEventAction extends WatchdogActionBase {
   type: "post-event";
   /** REQUIRED: a recovery event exists only for a validated lane. */
-  lane_id: string;
+  lane_id: ValidLaneId;
   event_type: string;
   /**
    * Deterministic, collision-resistant event id: "evt-" +
@@ -47,7 +86,7 @@ export interface WatchdogPostEventAction extends WatchdogActionBase {
 export interface WatchdogUnverifiableFinding extends WatchdogActionBase {
   type: "flag-unverifiable-head" | "flag-unverifiable-activity";
   /** REQUIRED: these findings exist only for a validated lane. */
-  lane_id: string;
+  lane_id: ValidLaneId;
   event_type?: never;
   event_id?: never;
   sequence?: never;
@@ -62,14 +101,16 @@ export interface WatchdogMalformedIssueKeyedFinding extends WatchdogActionBase {
    * REQUIRED: the trusted issue number the malformed entry was scanned
    * from — the finding identity (dedupe `malformed:issue:N`).
    */
-  issue_number: number;
+  issue_number: PositiveIssueNumber;
   /**
    * Present ONLY when the caller derived a PATTERN-VALID lane identity
    * from READABLE evidence (a failed reconstruction whose enumeration
    * still scanned). The watchdog never fabricates or relays an
-   * arbitrary string as identity (round 10 J8 / round 11 J8).
+   * arbitrary string as identity (round 10 J8 / round 11 J8) — and the
+   * brand makes an UNVALIDATED lane_id a compile error here too
+   * (round 13 J2).
    */
-  lane_id?: string;
+  lane_id?: ValidLaneId;
   event_type?: never;
   event_id?: never;
   sequence?: never;
@@ -85,7 +126,13 @@ export interface WatchdogMalformedLaneKeyedFinding extends WatchdogActionBase {
    * evidence — the finding identity when no trusted issue number
    * exists (dedupe `malformed:<lane_id>:<sequence>`).
    */
-  lane_id: string;
+  lane_id: ValidLaneId;
+  /**
+   * Statically impossible (round 13 J2): a lane-keyed finding carrying
+   * an issue number would be the issue-keyed variant — its dedupe
+   * identity MUST be the issue number, never the lane id.
+   */
+  issue_number?: never;
   event_type?: never;
   event_id?: never;
   sequence?: never;
