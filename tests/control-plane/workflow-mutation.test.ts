@@ -35,6 +35,20 @@
 //                     lines) is always flagged; backticks are always
 //                     flagged; process substitution `<( … )` / `>( … )`
 //                     is refused outright as its own class.
+//   effective commands — (round 13) each escape-normalized logical
+//                     line is further split into SIMPLE COMMANDS
+//                     (quote-aware, on ; & | && || and newline — a
+//                     separator inside quotes or a substitution does
+//                     not split), every substitution body ($( … ),
+//                     backticks, <( … ), >( … )) recurses through the
+//                     same decomposition, per-word quote stripping
+//                     resolves the spelling bash would execute (g'h' is
+//                     the word gh), and each command's wrapper prefix —
+//                     control words (if/then/!/…), `command`, `env`
+//                     (options and NAME=value assignments), `exec`,
+//                     `nohup`, `builtin`, and bare VAR=value assignment
+//                     prefixes — is unwrapped so rules see the
+//                     EFFECTIVE executable and argv, never raw text.
 //
 // The checker is a REGRESSION TRIPWIRE over checked-in workflow text —
 // it proves each known bypass class stays caught, not that every
@@ -65,6 +79,14 @@
 //                        ("$GH" api …, ${NODE_BIN} … — a checker that
 //                        keys on the literal words gh/node/jq must also
 //                        refuse a variable standing where a command goes)
+//   gh-api-derived       (round 13) ANY effective gh invocation — api or
+//                        any subcommand; direct, quoted-word (g'h'),
+//                        wrapped (command/env/exec/assignment prefix),
+//                        or inside any substitution — that is not the
+//                        EXACT fail-closed guarded fixed read
+//                        `if ! gh api [--paginate] "repos/${REPO}/…" > file`;
+//                        judged over resolved effective commands, never
+//                        raw text
 //   eval                 eval / source of dynamic content
 //   ledger-append        bash writing ledger rows (any redirect into
 //                        a .jsonl)
@@ -180,29 +202,330 @@ function commandSubstitutions(t: string): Array<{ inner: string; closed: boolean
 // as a command.
 const CMD_POS = String.raw`(?:^|;|&&|\|\|?|\$\(|` + "`" + String.raw`|\bif\b|\bthen\b|\belse\b|\bdo\b|\{|!)\s*`;
 
+// Escaped-word + quoted-word normalization shared by the line rules and
+// the effective-command decomposition: an unquoted backslash before an
+// alphanumeric is shell identity (j\q runs jq), and a quote pair GLUED
+// to a word character on either side is shell word-identity (n'o'de
+// runs node, g'h' runs gh — round 12 J2). Joined to fixed point BEFORE
+// matching so every rule sees the word the shell would resolve.
+function normalizeLogical(text: string): string {
+  let t = text.replace(/\\([A-Za-z0-9_-])/g, "$1").trim();
+  for (;;) {
+    const joined = t
+      .replace(/(\w)'([^']*)'/g, "$1$2")
+      .replace(/'([^']*)'(\w)/g, "$1$2")
+      .replace(/(\w)"([^"]*)"/g, "$1$2")
+      .replace(/"([^"]*)"(\w)/g, "$1$2");
+    if (joined === t) break;
+    t = joined;
+  }
+  return t;
+}
+
+// ---------------------------------------------------------------------------
+// Round 13 — EFFECTIVE-COMMAND decomposition. Round 12 joined quoted-word
+// spellings on the LINE, but the fixed-read guard still ran over raw text
+// and no rule resolved what bash would actually EXECUTE: `g'h' api … > f`
+// (no pipe, no -X, no field flag), `command gh api …`, and
+// `env TOKEN=x gh api …` evaded every class. Every normalized logical
+// line is now decomposed into the SIMPLE COMMANDS bash would run —
+// quote-aware split on ; & | && || and newline; substitution bodies
+// ($( … ), backticks, <( … ), >( … )) recursed through the same
+// decomposition; per-word quote stripping; command-position wrappers
+// (command/env/exec/nohup/builtin — options and NAME=value assignments
+// included) and bare assignment prefixes unwrapped — and the rules judge
+// the EFFECTIVE executable and argv. An effective `gh` invocation is
+// categorically refused (gh-api-derived) unless the command is the EXACT
+// fail-closed guarded fixed read, unwrapped and unsubstituted:
+//   if ! gh api [--paginate] "repos/${REPO}/(issues|labels)…" > <fixed target>
+// ---------------------------------------------------------------------------
+
+interface EffectiveCommand {
+  /** Resolved words: quotes stripped, wrappers/assignments unwrapped. */
+  words: string[];
+  /** The command is the condition of a fail-closed `if !` guard. */
+  guarded: boolean;
+  /** A wrapper word or assignment prefix stood before the executable. */
+  wrapped: boolean;
+  /** The command lives inside $( … ), ` … `, <( … ) or >( … ). */
+  inSubstitution: boolean;
+}
+
+// Nesting-aware paren scan shared by the substitution extractors. An
+// unclosed body extends to end-of-text (the command-substitution rule
+// independently flags the unclosed spelling).
+function parenBody(text: string, from: number): { body: string; end: number } {
+  let depth = 1;
+  for (let m = from; m < text.length; m++) {
+    const c = text[m];
+    if (c === "(") depth++;
+    else if (c === ")") {
+      depth--;
+      if (depth === 0) return { body: text.slice(from, m), end: m + 1 };
+    }
+  }
+  return { body: text.slice(from), end: text.length };
+}
+
+// Quote-aware split of one shell text into simple-command segments plus
+// the bodies of every substitution found at this level. Separators inside
+// single/double quotes do not split; $( … ) and backticks still substitute
+// inside double quotes (bash semantics); <( … ) / >( … ) substitute only
+// unquoted. Substitution spans are replaced by a $SUB placeholder so the
+// outer command tokenizes cleanly (and a command-position substitution
+// surfaces as a $-word in command position — indirection).
+function splitSimple(text: string): { segments: string[]; bodies: string[] } {
+  const segments: string[] = [];
+  const bodies: string[] = [];
+  let cur = "";
+  let inDouble = false;
+  let i = 0;
+  const push = () => {
+    const s = cur.trim();
+    if (s.length > 0) segments.push(s);
+    cur = "";
+  };
+  while (i < text.length) {
+    const c = text[i] ?? "";
+    if (!inDouble && c === "'") {
+      const end = text.indexOf("'", i + 1);
+      cur += text.slice(i, end === -1 ? text.length : end + 1);
+      i = end === -1 ? text.length : end + 1;
+      continue;
+    }
+    if (c === "\\") {
+      cur += text.slice(i, i + 2);
+      i += 2;
+      continue;
+    }
+    if (c === '"') {
+      inDouble = !inDouble;
+      cur += c;
+      i++;
+      continue;
+    }
+    if (c === "$" && text[i + 1] === "(") {
+      const { body, end } = parenBody(text, i + 2);
+      bodies.push(body);
+      cur += "$SUB";
+      i = end;
+      continue;
+    }
+    if (c === "`") {
+      const end = text.indexOf("`", i + 1);
+      bodies.push(text.slice(i + 1, end === -1 ? text.length : end));
+      cur += "$SUB";
+      i = end === -1 ? text.length : end + 1;
+      continue;
+    }
+    if (!inDouble && (c === "<" || c === ">") && text[i + 1] === "(") {
+      const { body, end } = parenBody(text, i + 2);
+      bodies.push(body);
+      cur += "$SUB";
+      i = end;
+      continue;
+    }
+    if (!inDouble && (c === ";" || c === "&" || c === "|" || c === "\n")) {
+      push();
+      i++;
+      continue;
+    }
+    cur += c;
+    i++;
+  }
+  push();
+  return { segments, bodies };
+}
+
+// Word tokenizer with per-word quote stripping: `g"h"` and `"g"'h'` both
+// resolve to the word gh, exactly as bash joins adjacent quoted and
+// unquoted fragments of one word.
+function tokenizeWords(segment: string): string[] {
+  const words: string[] = [];
+  let cur = "";
+  let has = false;
+  let i = 0;
+  while (i < segment.length) {
+    const c = segment[i] ?? "";
+    if (c === "'" || c === '"') {
+      const end = segment.indexOf(c, i + 1);
+      cur += segment.slice(i + 1, end === -1 ? segment.length : end);
+      has = true;
+      i = end === -1 ? segment.length : end + 1;
+      continue;
+    }
+    if (c === "\\" && i + 1 < segment.length) {
+      cur += segment[i + 1] ?? "";
+      has = true;
+      i += 2;
+      continue;
+    }
+    if (/\s/.test(c)) {
+      if (has) {
+        words.push(cur);
+        cur = "";
+        has = false;
+      }
+      i++;
+      continue;
+    }
+    cur += c;
+    has = true;
+    i++;
+  }
+  if (has) words.push(cur);
+  return words;
+}
+
+const CONTROL_WORDS = new Set(["if", "then", "elif", "else", "fi", "do", "done", "while", "until", "case", "esac", "!", "{", "}", "time"]);
+// Wrappers whose prefix is exhausted by options/assignments — words like
+// `timeout 30 …` (a non-option argument before the command) are NOT here:
+// half-unwrapping them would misidentify the effective executable, and a
+// wrapper this decomposition cannot resolve still fails the fixed-read
+// test's permitted shape (fail closed for the clean direction).
+const WRAPPER_WORDS = new Set(["command", "env", "exec", "nohup", "builtin", "setsid", "stdbuf"]);
+const ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
+// env options that consume a separate argument word.
+const ENV_OPT_WITH_ARG = new Set(["-u", "--unset", "-C", "--chdir"]);
+
+// Resolve the EFFECTIVE executable: drop control-word prefixes (recording
+// the fail-closed `if !` guard), bare assignment prefixes, and wrapper
+// words with their options/assignments, to a fixed point.
+function resolveEffective(tokens: string[]): { words: string[]; guarded: boolean; wrapped: boolean } {
+  let w = [...tokens];
+  let guarded = false;
+  let wrapped = false;
+  while (w.length > 0 && CONTROL_WORDS.has(w[0] ?? "")) {
+    if (w[0] === "if" && w[1] === "!") {
+      guarded = true;
+      w = w.slice(2);
+      continue;
+    }
+    w = w.slice(1);
+  }
+  for (;;) {
+    const head = w[0] ?? "";
+    if (ASSIGNMENT_WORD_RE.test(head)) {
+      if (w.length > 1) wrapped = true;
+      w = w.slice(1);
+      continue;
+    }
+    if (WRAPPER_WORDS.has(head)) {
+      wrapped = true;
+      w = w.slice(1);
+      while (w.length > 0) {
+        const x = w[0] ?? "";
+        if (head === "env" && ENV_OPT_WITH_ARG.has(x)) {
+          w = w.slice(2);
+          continue;
+        }
+        // Any option-looking word, the bare `-` (env's clear-environment
+        // spelling) included: consuming MORE prefix words only makes MORE
+        // spellings resolve to their effective executable — the closed
+        // direction for a tripwire.
+        if (x.startsWith("-")) {
+          w = w.slice(1);
+          continue;
+        }
+        if (ASSIGNMENT_WORD_RE.test(x)) {
+          w = w.slice(1);
+          continue;
+        }
+        break;
+      }
+      continue;
+    }
+    break;
+  }
+  return { words: w, guarded, wrapped };
+}
+
+// Decompose one normalized logical line into every effective command at
+// every substitution depth.
+function decomposeCommands(t: string): EffectiveCommand[] {
+  const out: EffectiveCommand[] = [];
+  const walk = (text: string, inSubstitution: boolean) => {
+    const { segments, bodies } = splitSimple(text);
+    for (const seg of segments) {
+      const tokens = tokenizeWords(seg);
+      if (tokens.length === 0) continue;
+      const { words, guarded, wrapped } = resolveEffective(tokens);
+      if (words.length === 0) continue;
+      out.push({ words, guarded, wrapped, inSubstitution });
+    }
+    for (const body of bodies) walk(body, true);
+  };
+  walk(t, false);
+  return out;
+}
+
+// The ONE permitted effective-gh shape: the fail-closed guarded FIXED
+// read — unwrapped, unsubstituted, `api` (optionally --paginate), a
+// fixed issues/labels url, one redirect target drawn from the fixed
+// gather/collection variables, and NOTHING after the target.
+const FIXED_READ_URL_RE = /^repos\/\$\{REPO\}\/(issues|labels)([/?]|$)/;
+const FIXED_TARGET_VARS = new Set(["DIR", "G1", "G2", "DIR_A", "DIR_B", "REPO", "ISSUE_NUMBER"]);
+
+function isPermittedFixedRead(cmd: EffectiveCommand): boolean {
+  if (cmd.inSubstitution || cmd.wrapped || !cmd.guarded) return false;
+  const w = cmd.words;
+  let k = 1;
+  if (w[k] !== "api") return false;
+  k++;
+  if (w[k] === "--paginate") k++;
+  const url = w[k] ?? "";
+  if (!FIXED_READ_URL_RE.test(url) || /\/(pulls|commits)(\/|$)/.test(url)) return false;
+  // Every variable in the url AND the target must come from the fixed
+  // gather/collection set — a url built from a shell-parsed variable
+  // (repos/${REPO}/issues/${TARGET}) is a derived read even when its
+  // prefix looks fixed.
+  const fixedVarsOnly = (s: string) =>
+    [...s.matchAll(/\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?/g)].every((m) => FIXED_TARGET_VARS.has(m[1] ?? ""));
+  if (!fixedVarsOnly(url) || url.includes("$SUB")) return false;
+  k++;
+  if (w[k] !== ">") return false;
+  const target = w[k + 1] ?? "";
+  if (target.length === 0 || w.length > k + 2) return false;
+  return fixedVarsOnly(target) && !target.includes("$SUB");
+}
+
+export interface GhInvocation {
+  line: number;
+  words: string[];
+  guarded: boolean;
+  wrapped: boolean;
+  inSubstitution: boolean;
+  permitted: boolean;
+}
+
+// Every effective gh invocation in a workflow source, with its verdict —
+// the NORMALIZED surface the fixed-read test asserts over (never raw
+// text).
+export function collectEffectiveGhInvocations(src: string): GhInvocation[] {
+  const out: GhInvocation[] = [];
+  for (const { line, text } of logicalLines(src)) {
+    // Decomposition runs on the RAW logical line: its tokenizer resolves
+    // quotes per-word with real shell semantics (g'h' is the word gh; a
+    // quoted url keeps its & and > INSIDE the word). The line-level
+    // quote-join in normalizeLogical is only for the regex rules — it
+    // glues ACROSS whitespace (`s" > "` → `s > `), which would corrupt
+    // command splitting here.
+    for (const cmd of decomposeCommands(text.trim())) {
+      if ((cmd.words[0] ?? "") === "gh") {
+        out.push({ line, ...cmd, permitted: isPermittedFixedRead(cmd) });
+      }
+    }
+  }
+  return out;
+}
+
 // The boundary checker: examine every LOGICAL shell line (comments and
 // blank lines dropped; continuations joined; escaped command words
 // normalized).
 export function checkWorkflowBoundary(src: string): Violation[] {
   const violations: Violation[] = [];
   for (const { line, text } of logicalLines(src)) {
-    // Escaped-word normalization: an unquoted backslash before an
-    // alphanumeric is shell identity (j\q runs jq). Continuation
-    // backslashes were already consumed by the join above.
-    let t = text.replace(/\\([A-Za-z0-9_-])/g, "$1").trim();
-    // Quoted-word concatenation: a quote pair GLUED to a word character
-    // on either side is shell word-identity (n'o'de runs node, g'h' runs
-    // gh — round 12 J2). Joined to fixed point BEFORE matching so every
-    // rule below sees the word the shell would resolve.
-    for (;;) {
-      const joined = t
-        .replace(/(\w)'([^']*)'/g, "$1$2")
-        .replace(/'([^']*)'(\w)/g, "$1$2")
-        .replace(/(\w)"([^"]*)"/g, "$1$2")
-        .replace(/"([^"]*)"(\w)/g, "$1$2");
-      if (joined === t) break;
-      t = joined;
-    }
+    const t = normalizeLogical(text);
     const flag = (rule: string) => violations.push({ rule, line, text: t });
 
     // inline-node: any inline Node source OR print-evaluation on the
@@ -275,6 +598,24 @@ export function checkWorkflowBoundary(src: string): Violation[] {
     // that spells the command as "$GH" or ${NODE_BIN} must be refused as
     // a class, not chased per spelling.
     if (new RegExp(CMD_POS + String.raw`"?\$\{?[A-Za-z_]`).test(t)) flag("command-indirection");
+
+    // gh-api-derived (round 13): judge the EFFECTIVE commands, not the
+    // text. The rules above catch known spellings; this rule refuses the
+    // CLASS — g'h' api, command gh api, env TOKEN=x gh api, exec gh api,
+    // an assignment-prefixed gh, and gh inside any substitution all
+    // resolve to the same effective executable and are all refused
+    // unless the command IS the exact fail-closed guarded fixed read
+    // (unwrapped, unsubstituted, fixed issues/labels url, fixed target).
+    // Decomposition runs on the RAW logical line — its tokenizer resolves
+    // quotes with real shell semantics; the line-level quote-join above
+    // glues ACROSS whitespace and would corrupt command splitting.
+    for (const cmd of decomposeCommands(text.trim())) {
+      if ((cmd.words[0] ?? "") === "gh" && !isPermittedFixedRead(cmd)) flag("gh-api-derived");
+      // Decomposition-level sibling of the line rule above: a variable
+      // (or substitution result) standing where a command goes, after a
+      // separator the line regex cannot anchor on (the single `&`).
+      if (/^\$/.test(cmd.words[0] ?? "") && cmd.words.length > 1) flag("command-indirection");
+    }
 
     // eval / dynamic source.
     if (/\beval\b/.test(t)) flag("eval");
@@ -372,6 +713,17 @@ describe("mutation matrix — each prohibited construct class is demonstrably ca
     ["process-substitution", `tee >(sha256sum > /tmp/d) < pr.json`, "write-side process substitution"],
     ["command-indirection", `"$GH" api "repos/x/y/pulls/1" > pr.json`, "variable command name fetch (round-11 bypass)"],
     ["command-indirection", `\${NODE_BIN} .straylight/bin/execute-write-plan.mjs --plan evil.json`, "variable node binary"],
+    ["gh-api-derived", `gh api "repos/x/y/pulls/1" > /tmp/pr.json`, "direct UNGUARDED derived read — no pipe, no write flag (round-13 class)"],
+    ["gh-api-derived", `g'h' api "repos/x/y/pulls/1" > /tmp/pr.json`, "quoted-word g'h' derived read (round-13 bypass)"],
+    ["gh-api-derived", `command g'h' api "repos/x/y/pulls/1" > /tmp/pr.json`, "command-wrapped quoted-word derived read (round-13 bypass)"],
+    ["gh-api-derived", `env g'h' api "repos/x/y/pulls/1" > /tmp/pr.json`, "env-wrapped quoted-word derived read (round-13 bypass)"],
+    ["gh-api-derived", `env TOKEN=x gh api "repos/x/y/pulls/1" > /tmp/pr.json`, "env-with-assignment derived read (round-13 bypass)"],
+    ["gh-api-derived", `exec gh api "repos/x/y/pulls/1" > /tmp/pr.json`, "exec-wrapped derived read"],
+    ["gh-api-derived", `GH_PAGER= gh api "repos/x/y/pulls/1" > /tmp/pr.json`, "bare-assignment-prefixed derived read"],
+    ["gh-api-derived", `HEAD=$(gh api "repos/x/y/pulls/1")`, "gh api inside command substitution (effective-command row)"],
+    ["gh-api-derived", `cat <(gh api "repos/x/y/pulls/1")`, "gh api inside process substitution (effective-command row)"],
+    ["gh-api-derived", `gh api "repos/\${REPO}/issues?state=open&per_page=100" > "\${DIR}/enumeration.pages"`, "fixed-shape read WITHOUT the fail-closed if ! guard"],
+    ["command-indirection", `\${GH} api "repos/x/y/pulls/1" > pr.json`, "brace-expansion command name fetch (round-13)"],
     ["eval", `eval "$CMD"`, "eval of dynamic content"],
     ["eval", `source /tmp/dynamic.sh`, "dynamic source"],
     ["ledger-append", `echo '{"resource":"pr"}' >> "\${DIR}/ledger.jsonl"`, "bash appending a ledger row"],
@@ -399,7 +751,8 @@ describe("mutation matrix — each prohibited construct class is demonstrably ca
     const rulesInChecker = [
       "inline-node", "authority-jq", "or-true", "evidence-loop", "gh-write",
       "gh-pipe", "command-substitution", "process-substitution",
-      "command-indirection", "eval", "ledger-append", "redirect-derived",
+      "command-indirection", "gh-api-derived", "eval", "ledger-append",
+      "redirect-derived",
     ];
     const rulesCovered = new Set(MUTATIONS.map(([rule]) => rule));
     for (const rule of rulesInChecker) {
@@ -412,17 +765,28 @@ describe("mutation matrix — each prohibited construct class is demonstrably ca
 // The read boundary itself — the executors are the only fetch/write paths
 // =============================================================================
 describe("fixed entry points own every derived fetch and every write", () => {
-  it("every gh api call remaining in a workflow is a FIXED-url fetch guarded by `if !` (fail-closed, no interpretation)", () => {
+  it("every EFFECTIVE gh invocation in a workflow is the guarded FIXED read (normalized commands, never raw text — round 13)", () => {
     for (const f of WORKFLOWS) {
       const src = readFileSync(f, "utf8");
-      const code = src.split("\n").filter((l) => !l.trim().startsWith("#"));
-      // Invocations only — echo lines may mention "gh api" in an error
-      // message explaining the fail-closed abort.
-      for (const line of code.filter((l) => l.includes("gh api") && !l.trim().startsWith("echo"))) {
-        // Fail-closed guard + fixed issues/labels url; derived urls
-        // (pulls, commits) may not appear in any workflow.
-        expect(line.trim(), `${f}: ${line}`).toMatch(/^if ! gh api (--paginate )?"repos\/\$\{REPO\}\/(issues|labels)(\/\$\{ISSUE_NUMBER\})?[^"]*"/);
-        expect(line, `${f}: ${line}`).not.toMatch(/\/(pulls|commits)\//);
+      // The invocation list comes from the same effective-command
+      // decomposition the checker uses: quoted-word spellings, wrappers
+      // (command/env/exec/assignments), and substitution bodies all
+      // resolve to their effective executable — a raw-text scan that a
+      // g'h' spelling or an `env gh` prefix slips past cannot happen
+      // here by construction.
+      const invocations = collectEffectiveGhInvocations(src);
+      // The real workflows DO fetch — an empty list would mean the
+      // decomposition went blind, which must fail this test too.
+      expect(invocations.length, `${f}: no effective gh invocations found`).toBeGreaterThan(0);
+      for (const inv of invocations) {
+        expect(inv.permitted, `${f}:${inv.line}: ${inv.words.join(" ")}`).toBe(true);
+        // Redundant belt: permitted implies unwrapped, unsubstituted,
+        // guarded, api-subcommand, fixed url, no derived pulls/commits.
+        expect(inv.wrapped).toBe(false);
+        expect(inv.inSubstitution).toBe(false);
+        expect(inv.guarded).toBe(true);
+        expect(inv.words[1]).toBe("api");
+        expect(inv.words.join(" ")).not.toMatch(/\/(pulls|commits)\//);
       }
     }
   });

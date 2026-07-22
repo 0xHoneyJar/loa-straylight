@@ -170,12 +170,24 @@ class — where each KNOWN prohibited-construct spelling is proven
 caught by mutating a real workflow (`gh api \` + `-X POST`, `-XPOST`,
 `--method=POST`, implicit POST via `-f`/`-fkey=value`/`--field`/
 `--input`, `node -e/-p/--eval/--print`, `$(date; cat …)` multi-command
-substitutions, multiline pipes). The checker is a REGRESSION TRIPWIRE
-over checked-in workflow text, not a proof over every possible shell
-spelling — structural authority over writes and derived reads remains
-the fixed Node executors, which are the only paths that construct
-requests. They never call model APIs and never hold
-`contents: write`.
+substitutions, multiline pipes). On top of the line rules, every
+normalized logical line is decomposed into the EFFECTIVE simple
+commands bash would run — quote-aware separator split (`;`, `&`, `|`,
+`&&`, `||`, newline), substitution bodies recursed through the same
+decomposition, per-word quote stripping, and command-position wrappers
+(`command`, `env` with its options and `NAME=value` assignments,
+`exec`, `nohup`, `builtin`, bare assignment prefixes) unwrapped — and
+ANY effective `gh` invocation is categorically refused unless it is
+the EXACT fail-closed guarded fixed read
+(`if ! gh api [--paginate] "repos/${REPO}/issues|labels…" > <fixed
+target>`), so `g'h' api …`, `command gh api …`, and
+`env TOKEN=x gh api …` are the same violation as `gh api …`; the
+fixed-read boundary test asserts over this normalized command surface,
+never raw text. The checker is a REGRESSION TRIPWIRE over checked-in
+workflow text, not a proof over every possible shell spelling —
+structural authority over writes and derived reads remains the fixed
+Node executors, which are the only paths that construct requests. They
+never call model APIs and never hold `contents: write`.
 
 ## Read execution (the shared read executor + fetch-slot claims)
 
