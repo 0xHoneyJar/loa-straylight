@@ -44,11 +44,24 @@
 //                     same decomposition, per-word quote stripping
 //                     resolves the spelling bash would execute (g'h' is
 //                     the word gh), and each command's wrapper prefix —
-//                     control words (if/then/!/…), `command`, `env`
-//                     (options and NAME=value assignments), `exec`,
-//                     `nohup`, `builtin`, and bare VAR=value assignment
-//                     prefixes — is unwrapped so rules see the
-//                     EFFECTIVE executable and argv, never raw text.
+//                     control words (if/then/!/…), bare VAR=value
+//                     assignment prefixes, and a CLOSED allowlist of
+//                     executable wrappers resolved per their fixed
+//                     syntax (round 14: command, env — assignments,
+//                     options, `--`, path spellings like /usr/bin/env —
+//                     exec, nohup, builtin, setsid, stdbuf incl. -o L,
+//                     timeout incl. duration/--signal, nice incl. -n) —
+//                     is unwrapped so rules see the EFFECTIVE
+//                     executable and argv, never raw text. FAIL CLOSED:
+//                     a wrapper whose command position cannot be proven
+//                     (env --split-string, an unknown option, a
+//                     non-duration timeout operand) is a violation in
+//                     itself (wrapper-unresolved); xargs is refused
+//                     categorically (it builds commands from its input
+//                     stream); and a bare gh word in the argv of any
+//                     unmodeled head (doas gh api …) is refused as a
+//                     derived invocation — "unresolved" never reads as
+//                     "no gh invocation here".
 //
 // The checker is a REGRESSION TRIPWIRE over checked-in workflow text —
 // it proves each known bypass class stays caught, not that every
@@ -81,12 +94,24 @@
 //                        refuse a variable standing where a command goes)
 //   gh-api-derived       (round 13) ANY effective gh invocation — api or
 //                        any subcommand; direct, quoted-word (g'h'),
-//                        wrapped (command/env/exec/assignment prefix),
-//                        or inside any substitution — that is not the
-//                        EXACT fail-closed guarded fixed read
+//                        wrapped (command/env/exec/timeout/nice/stdbuf/
+//                        setsid/assignment prefix, path spellings
+//                        included), inside any substitution, or as a
+//                        bare gh argv word under an unmodeled head —
+//                        that is not the EXACT fail-closed guarded
+//                        fixed read
 //                        `if ! gh api [--paginate] "repos/${REPO}/…" > file`;
 //                        judged over resolved effective commands, never
 //                        raw text
+//   wrapper-unresolved   (round 14) an allowlisted wrapper whose command
+//                        position cannot be proven from its fixed syntax
+//                        (env --split-string/-S, unknown options, a
+//                        non-literal timeout duration) — fail closed:
+//                        unproven is a violation, never "no command"
+//   xargs                (round 14) xargs anywhere in workflow shell —
+//                        it constructs and invokes commands from its
+//                        input stream, so no static wrapped-command
+//                        resolution is sound; refused categorically
 //   eval                 eval / source of dynamic content
 //   ledger-append        bash writing ledger rows (any redirect into
 //                        a .jsonl)
@@ -249,6 +274,13 @@ interface EffectiveCommand {
   wrapped: boolean;
   /** The command lives inside $( … ), ` … `, <( … ) or >( … ). */
   inSubstitution: boolean;
+  /**
+   * An allowlisted wrapper's command position could NOT be proven from
+   * its fixed syntax (unknown option, env --split-string, non-duration
+   * timeout operand). MUST be treated as a violation by every consumer —
+   * never as "no command found" (round 14, fail closed).
+   */
+  unresolved: boolean;
 }
 
 // Nesting-aware paren scan shared by the substitution extractors. An
@@ -378,20 +410,139 @@ function tokenizeWords(segment: string): string[] {
 }
 
 const CONTROL_WORDS = new Set(["if", "then", "elif", "else", "fi", "do", "done", "while", "until", "case", "esac", "!", "{", "}", "time"]);
-// Wrappers whose prefix is exhausted by options/assignments — words like
-// `timeout 30 …` (a non-option argument before the command) are NOT here:
-// half-unwrapping them would misidentify the effective executable, and a
-// wrapper this decomposition cannot resolve still fails the fixed-read
-// test's permitted shape (fail closed for the clean direction).
-const WRAPPER_WORDS = new Set(["command", "env", "exec", "nohup", "builtin", "setsid", "stdbuf"]);
 const ASSIGNMENT_WORD_RE = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
-// env options that consume a separate argument word.
-const ENV_OPT_WITH_ARG = new Set(["-u", "--unset", "-C", "--chdir"]);
+
+// A wrapper may be spelled through a path (/usr/bin/env, /usr/bin/gh);
+// match on the final path component.
+function wordBasename(w: string): string {
+  const i = w.lastIndexOf("/");
+  return i === -1 ? w : w.slice(i + 1);
+}
+
+// WRAPPER-RESOLUTION CONTRACT (round 14, fail closed): a CLOSED allowlist
+// of executables whose command position can be proven from their fixed
+// syntax. Each resolver consumes the wrapper's own options/operands and
+// returns the wrapped command's argv — or null when the command position
+// cannot be proven (an unknown option, an env --split-string that embeds
+// a command in a string, a timeout whose duration operand is not a
+// duration). null NEVER means "no command": the caller flags it as a
+// boundary violation (wrapper-unresolved). Wrappers NOT on this list are
+// not silently trusted either — any command whose argv still carries a
+// bare `gh` word after resolution is flagged, so an unknown wrapper
+// (doas gh api …) fails closed rather than hiding the invocation.
+type WrapperResolver = (args: string[]) => string[] | null;
+const WRAPPERS: Record<string, WrapperResolver> = {
+  command: (a) => {
+    let i = 0;
+    while (i < a.length) {
+      const x = a[i] ?? "";
+      if (x === "--") { i++; break; }
+      if (/^-[pvV]+$/.test(x)) { i++; continue; }
+      if (x.startsWith("-")) return null;
+      break;
+    }
+    return a.slice(i);
+  },
+  env: (a) => {
+    let i = 0;
+    while (i < a.length) {
+      const x = a[i] ?? "";
+      if (x === "--") { i++; break; }
+      if (x === "-") { i++; continue; } // clear-environment spelling
+      // -S/--split-string re-splits a STRING into a command — the command
+      // position lives inside an embedded word this tokenizer must not
+      // guess at. Fail closed.
+      if (x.startsWith("-S") || x.startsWith("--split-string")) return null;
+      if (x === "-u" || x === "--unset" || x === "-C" || x === "--chdir") { i += 2; continue; }
+      if (/^--(unset|chdir)=/.test(x) || /^-u./.test(x) || /^-C./.test(x)) { i++; continue; }
+      if (x === "-i" || x === "--ignore-environment" || x === "-0" || x === "--null" || x === "-v" || x === "--debug") { i++; continue; }
+      if (x.startsWith("-")) return null; // unknown env option → unproven command position
+      if (ASSIGNMENT_WORD_RE.test(x)) { i++; continue; }
+      break;
+    }
+    return a.slice(i);
+  },
+  exec: (a) => {
+    let i = 0;
+    while (i < a.length) {
+      const x = a[i] ?? "";
+      if (x === "--") { i++; break; }
+      if (x === "-a") { i += 2; continue; }
+      if (/^-[cl]+$/.test(x)) { i++; continue; }
+      if (x.startsWith("-")) return null;
+      break;
+    }
+    return a.slice(i);
+  },
+  nohup: (a) => a,
+  builtin: (a) => a,
+  setsid: (a) => {
+    let i = 0;
+    while (i < a.length) {
+      const x = a[i] ?? "";
+      if (x === "--") { i++; break; }
+      if (/^-[cwf]+$/.test(x)) { i++; continue; }
+      if (x.startsWith("-")) return null;
+      break;
+    }
+    return a.slice(i);
+  },
+  stdbuf: (a) => {
+    let i = 0;
+    while (i < a.length) {
+      const x = a[i] ?? "";
+      if (x === "--") { i++; break; }
+      if (x === "-i" || x === "-o" || x === "-e") { i += 2; continue; } // -o L
+      if (/^-[ioe]./.test(x)) { i++; continue; }                        // -oL
+      if (/^--(input|output|error)=/.test(x)) { i++; continue; }
+      if (x.startsWith("-")) return null;
+      break;
+    }
+    return a.slice(i);
+  },
+  timeout: (a) => {
+    let i = 0;
+    while (i < a.length) {
+      const x = a[i] ?? "";
+      if (x === "--") { i++; break; }
+      if (x === "-s" || x === "--signal" || x === "-k" || x === "--kill-after") { i += 2; continue; }
+      if (/^--(signal|kill-after)=/.test(x) || /^-s./.test(x) || /^-k./.test(x)) { i++; continue; }
+      if (x === "--preserve-status" || x === "--foreground" || x === "-v" || x === "--verbose") { i++; continue; }
+      if (x.startsWith("-")) return null;
+      break;
+    }
+    // The first operand is the DURATION; the command follows. A word that
+    // is not provably a duration means the command position is unproven.
+    const dur = a[i] ?? "";
+    if (!/^\d+(\.\d+)?[smhd]?$/.test(dur)) return null;
+    return a.slice(i + 1);
+  },
+  nice: (a) => {
+    let i = 0;
+    while (i < a.length) {
+      const x = a[i] ?? "";
+      if (x === "--") { i++; break; }
+      if (x === "-n" || x === "--adjustment") { i += 2; continue; }
+      if (/^-n-?\d+$/.test(x) || /^--adjustment=/.test(x) || /^-\d+$/.test(x)) { i++; continue; }
+      if (x.startsWith("-")) return null;
+      break;
+    }
+    return a.slice(i);
+  },
+};
+
+// xargs is NOT a transparent single-command wrapper: it constructs and
+// invokes commands from its INPUT stream (-I replacement, argument
+// batching), so no static resolution of "the wrapped command" is sound.
+// It is refused categorically in workflow shell.
+const XARGS = "xargs";
 
 // Resolve the EFFECTIVE executable: drop control-word prefixes (recording
-// the fail-closed `if !` guard), bare assignment prefixes, and wrapper
-// words with their options/assignments, to a fixed point.
-function resolveEffective(tokens: string[]): { words: string[]; guarded: boolean; wrapped: boolean } {
+// the fail-closed `if !` guard) and bare assignment prefixes, then unwrap
+// allowlisted wrappers per their fixed syntax to a fixed point. A wrapper
+// whose command position cannot be proven yields unresolved:true — the
+// caller MUST treat that as a violation, never as "no command found".
+function resolveEffective(tokens: string[]): { words: string[]; guarded: boolean; wrapped: boolean; unresolved: boolean } {
   let w = [...tokens];
   let guarded = false;
   let wrapped = false;
@@ -410,34 +561,15 @@ function resolveEffective(tokens: string[]): { words: string[]; guarded: boolean
       w = w.slice(1);
       continue;
     }
-    if (WRAPPER_WORDS.has(head)) {
-      wrapped = true;
-      w = w.slice(1);
-      while (w.length > 0) {
-        const x = w[0] ?? "";
-        if (head === "env" && ENV_OPT_WITH_ARG.has(x)) {
-          w = w.slice(2);
-          continue;
-        }
-        // Any option-looking word, the bare `-` (env's clear-environment
-        // spelling) included: consuming MORE prefix words only makes MORE
-        // spellings resolve to their effective executable — the closed
-        // direction for a tripwire.
-        if (x.startsWith("-")) {
-          w = w.slice(1);
-          continue;
-        }
-        if (ASSIGNMENT_WORD_RE.test(x)) {
-          w = w.slice(1);
-          continue;
-        }
-        break;
-      }
-      continue;
-    }
-    break;
+    const resolver = WRAPPERS[wordBasename(head)];
+    if (resolver === undefined) break; // xargs and unknown heads stay put — judged by the caller
+    wrapped = true;
+    const rest = resolver(w.slice(1));
+    if (rest === null) return { words: w, guarded, wrapped, unresolved: true };
+    w = rest;
+    if (w.length === 0) break;
   }
-  return { words: w, guarded, wrapped };
+  return { words: w, guarded, wrapped, unresolved: false };
 }
 
 // Decompose one normalized logical line into every effective command at
@@ -449,9 +581,9 @@ function decomposeCommands(t: string): EffectiveCommand[] {
     for (const seg of segments) {
       const tokens = tokenizeWords(seg);
       if (tokens.length === 0) continue;
-      const { words, guarded, wrapped } = resolveEffective(tokens);
+      const { words, guarded, wrapped, unresolved } = resolveEffective(tokens);
       if (words.length === 0) continue;
-      out.push({ words, guarded, wrapped, inSubstitution });
+      out.push({ words, guarded, wrapped, inSubstitution, unresolved });
     }
     for (const body of bodies) walk(body, true);
   };
@@ -467,8 +599,11 @@ const FIXED_READ_URL_RE = /^repos\/\$\{REPO\}\/(issues|labels)([/?]|$)/;
 const FIXED_TARGET_VARS = new Set(["DIR", "G1", "G2", "DIR_A", "DIR_B", "REPO", "ISSUE_NUMBER"]);
 
 function isPermittedFixedRead(cmd: EffectiveCommand): boolean {
-  if (cmd.inSubstitution || cmd.wrapped || !cmd.guarded) return false;
+  if (cmd.inSubstitution || cmd.wrapped || !cmd.guarded || cmd.unresolved) return false;
   const w = cmd.words;
+  // The literal word gh — a path spelling (/usr/bin/gh) is not the
+  // checked-in shape even when it names the same binary.
+  if (w[0] !== "gh") return false;
   let k = 1;
   if (w[k] !== "api") return false;
   k++;
@@ -495,12 +630,18 @@ export interface GhInvocation {
   guarded: boolean;
   wrapped: boolean;
   inSubstitution: boolean;
+  /** The command position behind a wrapper could not be proven. */
+  unresolved: boolean;
   permitted: boolean;
 }
 
 // Every effective gh invocation in a workflow source, with its verdict —
 // the NORMALIZED surface the fixed-read test asserts over (never raw
-// text).
+// text). FAIL CLOSED (round 14): a command this decomposition cannot see
+// through — an unresolved allowlisted wrapper, an xargs, or a non-gh
+// head still carrying a gh word in its argv — is REPORTED as a
+// non-permitted invocation, never silently dropped: "unresolved" must
+// not read as "no gh invocation here".
 export function collectEffectiveGhInvocations(src: string): GhInvocation[] {
   const out: GhInvocation[] = [];
   for (const { line, text } of logicalLines(src)) {
@@ -511,7 +652,11 @@ export function collectEffectiveGhInvocations(src: string): GhInvocation[] {
     // glues ACROSS whitespace (`s" > "` → `s > `), which would corrupt
     // command splitting here.
     for (const cmd of decomposeCommands(text.trim())) {
-      if ((cmd.words[0] ?? "") === "gh") {
+      const head = wordBasename(cmd.words[0] ?? "");
+      const carriesGh =
+        head === "gh" ||
+        cmd.words.some((x, i) => i > 0 && wordBasename(x) === "gh");
+      if (head === "gh" || cmd.unresolved || head === XARGS || carriesGh) {
         out.push({ line, ...cmd, permitted: isPermittedFixedRead(cmd) });
       }
     }
@@ -610,7 +755,20 @@ export function checkWorkflowBoundary(src: string): Violation[] {
     // quotes with real shell semantics; the line-level quote-join above
     // glues ACROSS whitespace and would corrupt command splitting.
     for (const cmd of decomposeCommands(text.trim())) {
-      if ((cmd.words[0] ?? "") === "gh" && !isPermittedFixedRead(cmd)) flag("gh-api-derived");
+      const head = wordBasename(cmd.words[0] ?? "");
+      // A wrapper whose command position could not be proven is a
+      // violation in itself — "unresolved" must NEVER read as "no gh
+      // invocation here" (round 14, fail closed).
+      if (cmd.unresolved) flag("wrapper-unresolved");
+      // xargs constructs and invokes commands from its input stream — no
+      // static resolution is sound; refused categorically.
+      if (head === XARGS) flag("xargs");
+      if (head === "gh" && !isPermittedFixedRead(cmd)) flag("gh-api-derived");
+      // Belt for wrappers OUTSIDE the closed allowlist (doas gh api …)
+      // and for gh handed to a resolved-but-untrusted head (xargs gh …):
+      // a bare gh word ANYWHERE in the argv of a non-gh command is the
+      // same derived invocation, spelled through an unmodeled indirection.
+      if (head !== "gh" && cmd.words.some((x, i) => i > 0 && wordBasename(x) === "gh")) flag("gh-api-derived");
       // Decomposition-level sibling of the line rule above: a variable
       // (or substitution result) standing where a command goes, after a
       // separator the line regex cannot anchor on (the single `&`).
@@ -723,6 +881,21 @@ describe("mutation matrix — each prohibited construct class is demonstrably ca
     ["gh-api-derived", `HEAD=$(gh api "repos/x/y/pulls/1")`, "gh api inside command substitution (effective-command row)"],
     ["gh-api-derived", `cat <(gh api "repos/x/y/pulls/1")`, "gh api inside process substitution (effective-command row)"],
     ["gh-api-derived", `gh api "repos/\${REPO}/issues?state=open&per_page=100" > "\${DIR}/enumeration.pages"`, "fixed-shape read WITHOUT the fail-closed if ! guard"],
+    ["gh-api-derived", `timeout 30 gh api "repos/x/y/pulls/1" > /tmp/pr.json`, "timeout-wrapped derived read (round-14 bypass)"],
+    ["gh-api-derived", `timeout --signal=TERM 30 gh api "repos/x/y/pulls/1" > /tmp/pr.json`, "timeout with --signal= option (round-14 bypass)"],
+    ["gh-api-derived", `nice gh api "repos/x/y/pulls/1" > /tmp/pr.json`, "nice-wrapped derived read (round-14 bypass)"],
+    ["gh-api-derived", `nice -n 5 gh api "repos/x/y/pulls/1" > /tmp/pr.json`, "nice -n 5 derived read (round-14 bypass)"],
+    ["gh-api-derived", `/usr/bin/env gh api "repos/x/y/pulls/1" > /tmp/pr.json`, "path-spelled /usr/bin/env wrapper (round-14 bypass)"],
+    ["gh-api-derived", `env -- gh api "repos/x/y/pulls/1" > /tmp/pr.json`, "env -- end-of-options wrapper (round-14 bypass)"],
+    ["gh-api-derived", `stdbuf -o L gh api "repos/x/y/pulls/1" > /tmp/pr.json`, "stdbuf -o L wrapped derived read (round-14 bypass)"],
+    ["gh-api-derived", `timeout 30 g'h' api "repos/x/y/pulls/1" > /tmp/pr.json`, "timeout + quoted-word g'h' (round-14 concatenated variant)"],
+    ["gh-api-derived", `doas gh api "repos/x/y/pulls/1" > /tmp/pr.json`, "UNKNOWN wrapper before gh — bare gh argv word refused"],
+    ["xargs", `echo "repos/x/y/pulls/1" | xargs gh api`, "xargs constructing a gh invocation (round-14: categorical)"],
+    ["xargs", `printf '%s\\n' 1 2 | xargs -I{} echo {}`, "any xargs in workflow shell (dynamic command construction)"],
+    ["wrapper-unresolved", `env --split-string='gh api repos/x/y/pulls/1' > /tmp/pr.json`, "env --split-string hides the command in a string (unproven position)"],
+    ["wrapper-unresolved", `env -S 'gh api' "repos/x/y/pulls/1"`, "env -S short split-string spelling (unproven position)"],
+    ["wrapper-unresolved", `timeout \$DUR gh api "repos/x/y/pulls/1" > /tmp/pr.json`, "timeout with a non-literal duration (unproven command position)"],
+    ["wrapper-unresolved", `stdbuf --weird gh api "repos/x/y/pulls/1"`, "unknown stdbuf option (unproven command position)"],
     ["command-indirection", `\${GH} api "repos/x/y/pulls/1" > pr.json`, "brace-expansion command name fetch (round-13)"],
     ["eval", `eval "$CMD"`, "eval of dynamic content"],
     ["eval", `source /tmp/dynamic.sh`, "dynamic source"],
@@ -751,8 +924,8 @@ describe("mutation matrix — each prohibited construct class is demonstrably ca
     const rulesInChecker = [
       "inline-node", "authority-jq", "or-true", "evidence-loop", "gh-write",
       "gh-pipe", "command-substitution", "process-substitution",
-      "command-indirection", "gh-api-derived", "eval", "ledger-append",
-      "redirect-derived",
+      "command-indirection", "gh-api-derived", "wrapper-unresolved",
+      "xargs", "eval", "ledger-append", "redirect-derived",
     ];
     const rulesCovered = new Set(MUTATIONS.map(([rule]) => rule));
     for (const rule of rulesInChecker) {
@@ -788,6 +961,59 @@ describe("fixed entry points own every derived fetch and every write", () => {
         expect(inv.words[1]).toBe("api");
         expect(inv.words.join(" ")).not.toMatch(/\/(pulls|commits)\//);
       }
+    }
+  });
+
+  it("FAIL CLOSED: wrapped, unresolved, and xargs-hidden gh invocations surface as NON-permitted — never as an empty invocation set (round 14)", () => {
+    for (const hidden of [
+      `timeout 30 gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
+      `timeout --signal=TERM 30 gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
+      `nice gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
+      `nice -n 5 gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
+      `/usr/bin/env gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
+      `env -- gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
+      `env --split-string='gh api repos/x/y/pulls/1' > /tmp/pr.json`,
+      `stdbuf -o L gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
+      `echo "repos/x/y/pulls/1" | xargs gh api`,
+      `doas gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
+      `timeout \$DUR gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
+    ]) {
+      const invocations = collectEffectiveGhInvocations(hidden);
+      expect(invocations.length, `${hidden}: collector returned an empty set — the wrapper hid the invocation`).toBeGreaterThan(0);
+      for (const inv of invocations) {
+        expect(inv.permitted, `${hidden}: ${inv.words.join(" ")}`).toBe(false);
+      }
+    }
+  });
+
+  it("wrapper resolution is exact where provable: the resolved argv behind timeout/nice/env/stdbuf is the gh command itself", () => {
+    for (const [payload, viaWrapper] of [
+      [`timeout 30 gh api "repos/x/y/pulls/1" > /tmp/pr.json`, true],
+      [`timeout --signal=TERM 30 gh api "repos/x/y/pulls/1" > /tmp/pr.json`, true],
+      [`nice -n 5 gh api "repos/x/y/pulls/1" > /tmp/pr.json`, true],
+      [`env -- gh api "repos/x/y/pulls/1" > /tmp/pr.json`, true],
+      [`/usr/bin/env gh api "repos/x/y/pulls/1" > /tmp/pr.json`, true],
+      [`stdbuf -o L gh api "repos/x/y/pulls/1" > /tmp/pr.json`, true],
+      [`stdbuf -oL gh api "repos/x/y/pulls/1" > /tmp/pr.json`, true],
+      [`setsid gh api "repos/x/y/pulls/1" > /tmp/pr.json`, true],
+    ] as const) {
+      const invocations = collectEffectiveGhInvocations(payload);
+      expect(invocations, payload).toHaveLength(1);
+      expect(invocations[0]?.words[0], payload).toBe("gh");
+      expect(invocations[0]?.words[1], payload).toBe("api");
+      expect(invocations[0]?.wrapped, payload).toBe(viaWrapper);
+      expect(invocations[0]?.unresolved, payload).toBe(false);
+    }
+    // And the unprovable positions carry unresolved:true explicitly.
+    for (const payload of [
+      `env --split-string='gh api repos/x/y/pulls/1' > /tmp/pr.json`,
+      `env -S 'gh api' "repos/x/y/pulls/1"`,
+      `timeout \$DUR gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
+      `stdbuf --weird gh api "repos/x/y/pulls/1"`,
+    ]) {
+      const invocations = collectEffectiveGhInvocations(payload);
+      expect(invocations.length, payload).toBeGreaterThan(0);
+      expect(invocations.some((i) => i.unresolved), payload).toBe(true);
     }
   });
 
