@@ -760,28 +760,95 @@ export function collectEffectiveGhInvocations(src: string, workflowFile: string)
 // compares the observed sequence against it in both directions.
 // ---------------------------------------------------------------------------
 
-// Stage boundaries, located by an exact marker string in the YAML. The
-// base stage ("" marker) starts at line 0; a named marker starts its
-// stage at the marker's line.
-const STAGE_MARKERS: Record<string, ReadonlyArray<{ stage: string; marker: string }>> = {
-  [WF_BOOTSTRAP]: [{ stage: "fetch-evidence", marker: "" }],
-  [WF_MERGE_GUARD]: [{ stage: "gather", marker: "" }],
-  [WF_WATCHDOG]: [{ stage: "collect", marker: "" }],
+// STRUCTURAL stage classification (round 17). Round 16 classified the
+// reducer's stages by the first occurrence of a free-text step-name
+// string — a spoofed COMMENT carrying that text relabeled Stage A code
+// as Stage B. Stage authority now comes ONLY from the workflow's YAML
+// step structure: step boundaries are `      - ` list items under
+// steps:, and a stage anchor is the exact step-property line
+// `        id: <anchor>` inside such a step. Comments and step names
+// carry no authority. Each anchor must occur EXACTLY once, on exactly
+// one step, in the declared order — anything else fails the contract
+// closed (never a silent reclassification).
+interface WorkflowStep {
+  id: string | null;
+  /** 1-indexed inclusive line span. */
+  startLine: number;
+  endLine: number;
+}
+
+const STEP_START_RE = /^ {6}- /;
+const STEP_ID_RE = /^ {8}id: ([A-Za-z_][A-Za-z0-9_]*)\s*$/;
+
+function parseWorkflowSteps(src: string): WorkflowStep[] {
+  const lines = src.split("\n");
+  const steps: WorkflowStep[] = [];
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i] ?? "";
+    if (STEP_START_RE.test(l)) {
+      const prev = steps[steps.length - 1];
+      if (prev !== undefined) prev.endLine = i;
+      steps.push({ id: null, startLine: i + 1, endLine: lines.length });
+      continue;
+    }
+    const m = l.match(STEP_ID_RE);
+    if (m !== null) {
+      const cur = steps[steps.length - 1];
+      if (cur !== undefined && cur.id === null) cur.id = m[1] ?? null;
+    }
+  }
+  return steps;
+}
+
+// Reducer stages are anchored to the unique structural step ids the
+// checked-in YAML carries (gather_a / gather_b). Single-stage workflows
+// have no anchors: every read classifies into the one named stage.
+const STAGE_ANCHORS: Record<string, ReadonlyArray<{ stage: string; stepId: string }>> = {
   [WF_REDUCER]: [
-    { stage: "stage-a", marker: "" },
-    { stage: "stage-b", marker: "Stage B — gather fresh evidence twice" },
+    { stage: "stage-a", stepId: "gather_a" },
+    { stage: "stage-b", stepId: "gather_b" },
   ],
 };
+const SINGLE_STAGE: Record<string, string> = {
+  [WF_BOOTSTRAP]: "fetch-evidence",
+  [WF_MERGE_GUARD]: "gather",
+  [WF_WATCHDOG]: "collect",
+};
 
-function stageOfLine(workflowFile: string, src: string, line: number): string {
-  const markers = STAGE_MARKERS[workflowFile] ?? [];
-  let stage = markers[0]?.stage ?? "workflow";
-  for (const m of markers) {
-    if (m.marker === "") continue;
-    const at = src.indexOf(m.marker);
-    if (at !== -1 && line >= src.slice(0, at).split("\n").length) stage = m.stage;
+// Validate the anchor structure: each anchor's id-property line occurs
+// exactly once in the source, exactly one parsed step carries it, and
+// the anchored steps appear in declared order. Returns null when sound,
+// else the failure detail (the contract fails closed on it).
+function validateStageAnchors(workflowFile: string, src: string, steps: WorkflowStep[]): string | null {
+  const anchors = STAGE_ANCHORS[workflowFile];
+  if (anchors === undefined) return null;
+  let prevIndex = -1;
+  for (const a of anchors) {
+    const rawIdLines = src.split("\n").filter((l) => {
+      const m = l.match(STEP_ID_RE);
+      return m !== null && m[1] === a.stepId;
+    }).length;
+    const carriers = steps.map((s, i) => ({ s, i })).filter(({ s }) => s.id === a.stepId);
+    if (rawIdLines !== 1 || carriers.length !== 1) {
+      return `stage anchor ${a.stepId} must occur exactly once (id lines: ${rawIdLines}, steps: ${carriers.length})`;
+    }
+    const idx = carriers[0]?.i ?? -1;
+    if (idx <= prevIndex) return `stage anchor ${a.stepId} out of declared order`;
+    prevIndex = idx;
   }
-  return stage;
+  return null;
+}
+
+// A read's stage is decided ONLY by the structural step containing its
+// line: the anchored stage when that step carries an anchor id, the
+// single stage for single-stage workflows, and "unanchored" (which can
+// never match a contract entry) for a read outside every anchored step.
+function stageOfLine(workflowFile: string, steps: WorkflowStep[], line: number): string {
+  const anchors = STAGE_ANCHORS[workflowFile];
+  if (anchors === undefined) return SINGLE_STAGE[workflowFile] ?? "workflow";
+  const step = steps.find((s) => line >= s.startLine && line <= s.endLine);
+  const anchor = anchors.find((a) => a.stepId === (step?.id ?? ""));
+  return anchor?.stage ?? "unanchored";
 }
 
 // The exact ordered occurrence contract per workflow: "<stage> <argv>",
@@ -827,18 +894,25 @@ export interface ReadContractResult {
 }
 
 // Compare the OBSERVED ordered occurrence sequence (every effective gh
-// invocation the collector surfaces, stage-classified, in source order)
-// against the workflow's contract. Ordered equality asserts both
-// directions at once: an extra permitted tuple, a duplicate, a move
-// across stages, a missing read, or a reorder all mismatch — even when
-// the tuple SET is unchanged.
+// invocation the collector surfaces, stage-classified by STRUCTURAL
+// step identity, in source order) against the workflow's contract.
+// Ordered equality asserts both directions at once: an extra permitted
+// tuple, a duplicate, a move across stages, a missing read, or a
+// reorder all mismatch — even when the tuple SET is unchanged. An
+// unsound anchor structure (missing, duplicate, or reordered gather_a/
+// gather_b) fails the contract BEFORE any classification runs.
 export function checkWorkflowReadContract(src: string, workflowFile: string): ReadContractResult {
   const expected = [...(WORKFLOW_READ_CONTRACTS[workflowFile] ?? [])];
   if (!KNOWN_WORKFLOWS.has(workflowFile)) {
     return { ok: false, expected, found: [], detail: `unknown workflow identity: ${String(workflowFile)}` };
   }
+  const steps = parseWorkflowSteps(src);
+  const anchorFailure = validateStageAnchors(workflowFile, src, steps);
+  if (anchorFailure !== null) {
+    return { ok: false, expected, found: [], detail: anchorFailure };
+  }
   const found = collectEffectiveGhInvocations(src, workflowFile).map(
-    (inv) => `${stageOfLine(workflowFile, src, inv.line)} ${inv.words.join(" ")}`,
+    (inv) => `${stageOfLine(workflowFile, steps, inv.line)} ${inv.words.join(" ")}`,
   );
   const ok = found.length === expected.length && found.every((x, i) => x === expected[i]);
   return {
@@ -1243,6 +1317,88 @@ describe("fixed entry points own every derived fetch and every write", () => {
     const swapped = mgSrc.replace(issueLine, SWAP).replace(commentsLine, issueLine).replace(SWAP, commentsLine);
     expect(swapped).not.toBe(mgSrc);
     expect(checkWorkflowReadContract(swapped, WF_MERGE_GUARD).ok, "reordered reads must fail").toBe(false);
+  });
+
+  it("stage authority is STRUCTURAL: Codex's marker-spoofed cross-stage move fails even though the free-text marker precedes the moved read (round 17)", () => {
+    // The exact round-17 repro: move the Stage B enumeration into Stage
+    // A and insert the OLD free-text marker before it. Under round-16's
+    // first-occurrence-of-marker classification this relabeled the rest
+    // of Stage A as Stage B and the contract passed; structural step-id
+    // classification gives the comment no authority.
+    const ENUM_LINE = `            if ! gh api --paginate "repos/\${REPO}/issues?state=open&per_page=100" > "\${DIR}/enumeration.pages"; then`;
+    const lines = readFileSync(WF_REDUCER, "utf8").split("\n");
+    const hits = lines.flatMap((line, i) => (line === ENUM_LINE ? [i] : []));
+    expect(hits).toHaveLength(2);
+    const moved = lines.splice(hits[1] ?? 0, 4);
+    const close = lines.findIndex((line, i) => i > (hits[0] ?? 0) && line === "          }");
+    expect(close).toBeGreaterThan(-1);
+    lines.splice(close, 0, "            # Stage B — gather fresh evidence twice", ...moved);
+    const spoofed = lines.join("\n");
+    expect(checkWorkflowReadContract(spoofed, WF_REDUCER).ok).toBe(false);
+    expect(checkWorkflowComplete(spoofed, WF_REDUCER)).not.toEqual([]);
+  });
+
+  it("stage anchors are validated structurally: duplicate/missing/reordered gather_a|gather_b and spoofed anchor text all fail closed (round 17)", () => {
+    const src = readFileSync(WF_REDUCER, "utf8");
+    const failsBoth = (mutated: string, why: string) => {
+      expect(checkWorkflowReadContract(mutated, WF_REDUCER).ok, why).toBe(false);
+      expect(checkWorkflowComplete(mutated, WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
+    };
+
+    // Duplicate anchors: a second id line for either anchor — even
+    // smuggled into an EXISTING step at property indent — fails.
+    failsBoth(src.replace("        id: probe_a", "        id: gather_a"), "duplicate gather_a");
+    failsBoth(src.replace("        id: plan_b", "        id: gather_b"), "duplicate gather_b");
+
+    // Missing anchors.
+    failsBoth(src.replace("        id: gather_a\n", ""), "missing gather_a");
+    failsBoth(src.replace("        id: gather_b\n", ""), "missing gather_b");
+
+    // Reordered anchors: swap the two id lines (gather_b then gather_a).
+    const SWAP = "        id: __SWAP__";
+    const reordered = src
+      .replace("        id: gather_a", SWAP)
+      .replace("        id: gather_b", "        id: gather_a")
+      .replace(SWAP, "        id: gather_b");
+    failsBoth(reordered, "gather_b before gather_a");
+
+    // A COMMENT or STEP NAME containing the anchor text carries no
+    // authority — and cannot break the real anchors either: the clean
+    // contract still holds with them present.
+    const withFakes = src.replace(
+      "      - name: Stage B — gather fresh evidence twice (raw bytes to files)",
+      "      # id: gather_b (documentation only)\n      - name: gather_b — Stage B — gather fresh evidence twice (raw bytes to files)",
+    );
+    expect(checkWorkflowReadContract(withFakes, WF_REDUCER).ok, "fake comment/step-name must not affect classification").toBe(true);
+
+    // The labels read (Stage-B-only) placed in gather_a fails (structural
+    // restatement of the round-16 injection, no marker involved).
+    const anchor = `            if ! gh api --paginate "repos/\${REPO}/issues/\${ISSUE_NUMBER}/comments" > "\${DIR}/comments.pages"; then`;
+    const first = src.indexOf(anchor);
+    const ls = src.lastIndexOf("\n", first) + 1;
+    const indent = src.slice(ls, src.indexOf("if !", ls));
+    const labelsRead = `${indent}if ! gh api --paginate "repos/\${REPO}/issues/\${ISSUE_NUMBER}/labels" > "\${DIR}/labels.pages"; then\n${indent}  exit 97\n${indent}fi\n`;
+    failsBoth(src.slice(0, ls) + labelsRead + src.slice(ls), "labels read in gather_a");
+
+    // A read OUTSIDE both structural gather steps (the killswitch step)
+    // classifies as unanchored and fails the contract.
+    const killswitchAnchor = "          set -euo pipefail\n          set +e";
+    const outside = src.replace(
+      killswitchAnchor,
+      `          set -euo pipefail\n          if ! gh api --paginate "repos/\${REPO}/issues?state=open&per_page=100" > "\${DIR}/enumeration.pages"; then\n            exit 97\n          fi\n          set +e`,
+    );
+    expect(outside).not.toBe(src);
+    failsBoth(outside, "read outside both structural gather steps");
+
+    // An extra EIGHTH permitted-shape occurrence inside gather_b fails.
+    const bAnchor = src.lastIndexOf(anchor);
+    const bls = src.lastIndexOf("\n", bAnchor) + 1;
+    const bIndent = src.slice(bls, src.indexOf("if !", bls));
+    const extra = `${bIndent}if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/issue.json"; then\n${bIndent}  exit 97\n${bIndent}fi\n`;
+    failsBoth(src.slice(0, bls) + extra + src.slice(bls), "extra eighth permitted occurrence");
+
+    // Positive control: the clean reducer passes.
+    expect(checkWorkflowReadContract(src, WF_REDUCER).ok).toBe(true);
   });
 
   it("workflow identity is MANDATORY and exact: missing, basename-only, absolute, and same-basename-elsewhere identities permit nothing (round 16)", () => {

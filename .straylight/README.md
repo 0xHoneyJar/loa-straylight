@@ -198,7 +198,13 @@ exact ORDERED PER-STAGE OCCURRENCE CONTRACT of its checked-in reads
 (duplicates represented separately — the reducer's seven occurrences
 across stages A and B, with the labels read only in Stage B), so an
 extra, missing, duplicated, moved, or reordered read fails even when
-every individual line is a permitted tuple. `g'h' api …`,
+every individual line is a permitted tuple. Reducer occurrences are
+bound to the UNIQUE STRUCTURAL YAML STEP IDS `gather_a`/`gather_b` —
+each anchor required exactly once and in order, a read classified
+only by the structural step containing it, and a read outside both
+anchored steps never matching any contract entry — so comments and
+step names carry no stage authority and a spoofed free-text marker
+cannot relabel a moved read. `g'h' api …`,
 `command gh api …`, `env TOKEN=x gh api …`, and `timeout 30 gh api …`
 are the same violation as `gh api …`. The resolution is FAIL CLOSED:
 a wrapper
