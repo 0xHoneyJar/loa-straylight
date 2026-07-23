@@ -296,7 +296,7 @@ describe("J1 — identical check/status records in different API page order are 
 // =============================================================================
 describe("J2 — the boundary checker refuses the round-12 equivalent-shell spellings", () => {
   it("each Codex bypass payload is flagged by the checker directly", async () => {
-    const { checkWorkflowBoundary } = await import("./workflow-mutation.test.js");
+    const { diagnoseWorkflowBoundary } = await import("./workflow-mutation.test.js");
     const CASES: ReadonlyArray<readonly [string, string]> = [
       [`node -p 'JSON.parse(require("fs").readFileSync("pr.json")).state'`, "inline-node"],
       [`n'o'de -e 'console.log(1)'`, "inline-node"],
@@ -309,20 +309,20 @@ describe("J2 — the boundary checker refuses the round-12 equivalent-shell spel
     // identity is mandatory); the reducer stands in for "any workflow".
     const WF = ".github/workflows/straylight-reducer.yml";
     for (const [payload, rule] of CASES) {
-      const violations = checkWorkflowBoundary(payload, WF);
+      const violations = diagnoseWorkflowBoundary(payload, WF);
       expect(violations.map((v: any) => v.rule), payload).toContain(rule);
     }
   });
 
   it("non-semantic plumbing substitutions stay clean (no false positives on the real workflows' idioms)", async () => {
-    const { checkWorkflowBoundary } = await import("./workflow-mutation.test.js");
+    const { diagnoseWorkflowBoundary } = await import("./workflow-mutation.test.js");
     const WF = ".github/workflows/straylight-reducer.yml";
     for (const clean of [
       `DIR_A=$(mktemp -d); DIR_B=$(mktemp -d)`,
       `NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)`,
       `echo "now=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"`,
     ]) {
-      expect(checkWorkflowBoundary(clean, WF), clean).toEqual([]);
+      expect(diagnoseWorkflowBoundary(clean, WF), clean).toEqual([]);
     }
   });
 });

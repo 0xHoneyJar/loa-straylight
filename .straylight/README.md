@@ -157,82 +157,38 @@ performs a GitHub write, and every DERIVED fetch (a target computed from
 evidence: a lane's recorded PR, a PR's head, a collection's issue slots)
 flows through `bin/execute-read-plan.mjs` driven by a closed
 `straylight.read-plan.v1` authored by a probe or collector. The boundary
-is guarded by an executable mutation matrix
-(`tests/control-plane/workflow-mutation.test.ts`): a checker over the
-workflows' LOGICAL shell lines — backslash/pipe/&& continuations
-joined, escaped command words (`j\q`) and quoted-word concatenation
-(`n'o'de`, `g'h'`) normalized, `$( … )` scanned nesting-aware with
-every separator-split inner command required to be non-semantic
-plumbing and unclosed substitutions/backticks always flagged, process
-substitution (`<( … )`/`>( … )`) refused outright, and variable
-expansions in command position (`"$GH" api …`) refused as their own
-class — where each KNOWN prohibited-construct spelling is proven
-caught by mutating a real workflow (`gh api \` + `-X POST`, `-XPOST`,
-`--method=POST`, implicit POST via `-f`/`-fkey=value`/`--field`/
-`--input`, `node -e/-p/--eval/--print`, `$(date; cat …)` multi-command
-substitutions, multiline pipes). On top of the line rules, every
-normalized logical line is decomposed into the EFFECTIVE simple
-commands bash would run — quote-aware separator split (`;`, `&`, `|`,
-`&&`, `||`, newline), substitution bodies recursed through the same
-decomposition, per-word quote stripping, bare assignment prefixes
-dropped, and a CLOSED allowlist of executable wrappers resolved per
-their fixed syntax (`command`, `env` — assignments, options, `--`,
-path spellings like `/usr/bin/env` — `exec`, `nohup`, `builtin`,
-`setsid`, `stdbuf` incl. `-o L`, `timeout` incl. its duration operand
-and `--signal`, `nice` incl. `-n`) — and ANY effective `gh` invocation
-is categorically refused unless its normalized argv is a member of a
-CLOSED allowlist of the exact checked-in read tuples (endpoint
-including query string and pagination flags, exact output path, bound
-to the exact repository-relative workflow path that carries it —
-identity is MANDATORY, and a missing, basename-only, absolute, or
-same-basename-elsewhere identity permits nothing; arbitrary `/issues`
-or `/labels` descendants, changed queries, missing/extra flags,
-alternate output files, and endpoint/output swaps all mismatch) AND
-the read is the exact SINGLE-NEGATED condition `if ! <read>; then` —
-separator context is retained through decomposition, so a compound
-condition (`; false; then`, `&& true`, `|| true`, a pipeline, any
-command before `then`), a double negation (`if ! ! …`), or a nested
-conditional (`if ! if …`) that lets another status control the branch
-is refused. Beyond per-line rules, each workflow is pinned to an
-exact ORDERED PER-STAGE OCCURRENCE CONTRACT of its checked-in reads
-(duplicates represented separately — the reducer's seven occurrences
-across stages A and B, with the labels read only in Stage B), so an
-extra, missing, duplicated, moved, or reordered read fails even when
-every individual line is a permitted tuple. Reducer occurrences are
-bound to the UNIQUE STRUCTURAL YAML STEP IDS `gather_a`/`gather_b`,
-resolved by a deterministic structural scan SCOPED to the parsed
-`jobs.reduce.steps` sequence. The scanner is a STRICT parser for the
-checked-in YAML subset — block mappings, one step sequence, dash
-items whose payload is empty or one plain inline `key: value`
-property, standalone step properties, block-scalar `run` bodies —
-and REJECTS every parseable construct outside that subset rather
-than ignoring it: scalar or sequence-valued step items, flow
-mappings/sequences, aliases/anchors/merges, inline `run` forms, and
-unparseable payloads all fail closed. `jobs`, `jobs.reduce`, and
-`jobs.reduce.steps` must each occur exactly once (duplicate keys are
-refused, in any value form). Comments, quoted strings, and
-literal/folded block-scalar bodies are masked out of key
-recognition; every step-level `id`/`run` property — inline or
-standalone — is recorded (duplicate or malformed ones reject the
-step); each anchor must resolve to exactly one step in order with
-the anchor id appearing in no other structural position in the file
-(another job's step, inline or standalone, is ambiguity); and a
-read classifies into a stage ONLY when its line lies inside that
-step's actual `run` block scalar — a read anywhere else is
-unanchored and never matches a contract entry. `g'h' api …`,
-`command gh api …`, `env TOKEN=x gh api …`, and `timeout 30 gh api …`
-are the same violation as `gh api …`. The resolution is FAIL CLOSED:
-a wrapper
-whose command position cannot be proven (`env --split-string`, an
-unknown option, a non-literal `timeout` duration) is a violation in
-itself, `xargs` is refused categorically (it constructs commands from
-its input stream), and a bare `gh` word in the argv of any unmodeled
-head is refused as a derived invocation — "unresolved" never reads as
-"no gh invocation here". The fixed-read boundary test asserts over
-this normalized command surface, never raw text. The checker is a
-fail-closed REGRESSION TRIPWIRE over checked-in workflow shell, not a
-proof over every possible spelling — structural authority over writes
-and derived reads remains the fixed Node executors, which are the only
+is guarded by an executable contract
+(`tests/control-plane/workflow-mutation.test.ts`) whose fail-closed
+authorization layer is EXACT-BYTE WORKFLOW FINGERPRINTS: each of the
+four checked-in workflow files is pinned by a literal committed
+SHA-256 constant, and every enforcement surface (boundary check, read
+contract, complete check, invocation collector) verifies exact
+repository-relative identity + exact byte fingerprint through ONE
+shared verifier before any result may read as permitted or clean. ANY
+byte difference — a flipped quote, an appended comment, a changed
+line ending, whitespace — fails all four surfaces closed, and a
+fingerprint mismatch is never reported as an empty/clean result.
+Editing a workflow therefore REQUIRES updating its pinned fingerprint
+alongside explicit test review — that reviewed step is the contract's
+purpose. Beneath the fingerprint gate, a diagnostic layer names the
+specific construct a mutation introduced: an executable mutation
+matrix over the workflows' LOGICAL shell lines (continuations joined,
+escaped/quoted command words normalized, substitutions scanned
+nesting-aware, process substitution refused), effective-command
+decomposition (quote-aware separator split, substitution bodies
+recursed, a closed allowlist of executable wrappers — `command`,
+`env`, `exec`, `nohup`, `builtin`, `setsid`, `stdbuf`, `timeout`,
+`nice` — resolved per their fixed syntax with unproven command
+positions and `xargs` refused), a closed allowlist of the exact
+checked-in read tuples in the exact single-negated `if ! <read>;
+then` form, ordered per-stage occurrence contracts (the reducer's
+seven occurrences, labels only in Stage B), and a strict structural
+scan of the reducer's `jobs.reduce.steps` bound to the unique step
+ids `gather_a`/`gather_b`. These diagnostics are SUPPLEMENTARY — they
+classify and explain, but they authorize nothing: no shell or YAML
+analysis grants a permitted result on mutated bytes, and the scan
+claims no general YAML parsing. Structural authority over writes and
+derived reads remains the fixed Node executors, which are the only
 paths that construct requests. They never call model APIs and never
 hold `contents: write`.
 
