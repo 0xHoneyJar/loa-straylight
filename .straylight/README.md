@@ -199,12 +199,20 @@ exact ORDERED PER-STAGE OCCURRENCE CONTRACT of its checked-in reads
 across stages A and B, with the labels read only in Stage B), so an
 extra, missing, duplicated, moved, or reordered read fails even when
 every individual line is a permitted tuple. Reducer occurrences are
-bound to the UNIQUE STRUCTURAL YAML STEP IDS `gather_a`/`gather_b` —
-each anchor required exactly once and in order, a read classified
-only by the structural step containing it, and a read outside both
-anchored steps never matching any contract entry — so comments and
-step names carry no stage authority and a spoofed free-text marker
-cannot relabel a moved read. `g'h' api …`,
+bound to the UNIQUE STRUCTURAL YAML STEP IDS `gather_a`/`gather_b`,
+resolved by a deterministic structural scan SCOPED to the parsed
+`jobs.reduce.steps` sequence (not indentation matching, and not a
+general YAML parser — it enforces exactly this workflow shape):
+comments, quoted strings, and literal/folded block-scalar bodies are
+masked out of key recognition, every step-level `id` property is
+recorded (duplicate or malformed ids reject the step), each anchor
+must resolve to exactly one step in order with the anchor id
+appearing nowhere else in the file, and a read classifies into a
+stage ONLY when its line lies inside that step's actual `run` block
+scalar — a read anywhere else is unanchored and never matches a
+contract entry. Renaming `jobs.reduce` or `steps:`, hiding apparent
+steps inside a block scalar, appending a second `id` line, or
+spoofing a free-text marker all fail the contract closed. `g'h' api …`,
 `command gh api …`, `env TOKEN=x gh api …`, and `timeout 30 gh api …`
 are the same violation as `gh api …`. The resolution is FAIL CLOSED:
 a wrapper

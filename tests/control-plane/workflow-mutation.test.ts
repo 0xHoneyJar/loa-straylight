@@ -760,95 +760,222 @@ export function collectEffectiveGhInvocations(src: string, workflowFile: string)
 // compares the observed sequence against it in both directions.
 // ---------------------------------------------------------------------------
 
-// STRUCTURAL stage classification (round 17). Round 16 classified the
-// reducer's stages by the first occurrence of a free-text step-name
-// string — a spoofed COMMENT carrying that text relabeled Stage A code
-// as Stage B. Stage authority now comes ONLY from the workflow's YAML
-// step structure: step boundaries are `      - ` list items under
-// steps:, and a stage anchor is the exact step-property line
-// `        id: <anchor>` inside such a step. Comments and step names
-// carry no authority. Each anchor must occur EXACTLY once, on exactly
-// one step, in the declared order — anything else fails the contract
-// closed (never a silent reclassification).
-interface WorkflowStep {
-  id: string | null;
-  /** 1-indexed inclusive line span. */
-  startLine: number;
-  endLine: number;
+// STRUCTURAL stage classification (round 17, structural parse round 18).
+// Round 16 classified stages by a free-text marker; round 17 replaced it
+// with step ids but recognized them by INDENTATION REGEX over raw lines
+// and kept only the FIRST id per step — so renaming jobs.reduce or
+// steps:, hiding apparent steps inside a block scalar, or appending a
+// second id line all passed. The scanner below is a narrow DETERMINISTIC
+// YAML structural walk scoped to the exact checked-in workflow shape —
+// it is NOT a general YAML parser; it fails closed on anything outside
+// that shape:
+//   - a structural-line mask excludes comments, literal/folded block
+//     scalar bodies (run: | …), and multi-line quoted scalar
+//     continuations from key recognition;
+//   - the walk requires top-level `jobs:`, the exact `reduce:` job, and
+//     a `steps:` key whose entries are a real sequence of `- ` items;
+//   - EVERY step-level id property is recorded; a step with duplicate
+//     ids, a malformed id, or a duplicate `run` property is rejected;
+//   - a gather anchor id appearing anywhere outside jobs.reduce.steps
+//     is rejected (no ambiguity about which structure owns the anchor);
+//   - reads classify ONLY when their line lies inside the actual `run`
+//     block-scalar body of the gather_a / gather_b step; anything else
+//     is "unanchored" and can never satisfy the occurrence contract.
+
+interface StructuralLine {
+  /** 0-based raw line index. */
+  idx: number;
+  indent: number;
+  text: string;
 }
 
-const STEP_START_RE = /^ {6}- /;
-const STEP_ID_RE = /^ {8}id: ([A-Za-z_][A-Za-z0-9_]*)\s*$/;
+// A mapping line opening a literal/folded block scalar: `key: |`,
+// `key: >-`, `key: |2`, sequence-item forms included.
+const BLOCK_SCALAR_OPEN_RE = /:\s*[|>][0-9+-]*\s*(#.*)?$/;
 
-function parseWorkflowSteps(src: string): WorkflowStep[] {
+// Structural mask: walk raw lines, emitting only lines that carry YAML
+// STRUCTURE — skipping blank lines, full-line comments, block-scalar
+// bodies (any line more indented than the opening key while the scalar
+// is open), and continuations of an unclosed quoted value.
+function structuralLines(src: string): StructuralLine[] {
   const lines = src.split("\n");
-  const steps: WorkflowStep[] = [];
+  const out: StructuralLine[] = [];
+  let scalarIndent = -1;
+  let openQuote: '"' | "'" | null = null;
+  const unbalanced = (s: string, q: '"' | "'"): boolean => {
+    let n = 0;
+    for (let i = 0; i < s.length; i++) {
+      if (s[i] === "\\") { i++; continue; }
+      if (s[i] === q) n++;
+    }
+    return n % 2 === 1;
+  };
   for (let i = 0; i < lines.length; i++) {
-    const l = lines[i] ?? "";
-    if (STEP_START_RE.test(l)) {
-      const prev = steps[steps.length - 1];
-      if (prev !== undefined) prev.endLine = i;
-      steps.push({ id: null, startLine: i + 1, endLine: lines.length });
+    const raw = lines[i] ?? "";
+    const trimmed = raw.trim();
+    if (openQuote !== null) {
+      if (unbalanced(raw, openQuote)) openQuote = null;
       continue;
     }
-    const m = l.match(STEP_ID_RE);
-    if (m !== null) {
-      const cur = steps[steps.length - 1];
-      if (cur !== undefined && cur.id === null) cur.id = m[1] ?? null;
+    if (scalarIndent >= 0) {
+      if (trimmed.length === 0) continue;
+      const ind = raw.length - raw.trimStart().length;
+      if (ind > scalarIndent) continue;
+      scalarIndent = -1; // scalar closed; this line is structural again
+    }
+    if (trimmed.length === 0 || trimmed.startsWith("#")) continue;
+    const indent = raw.length - raw.trimStart().length;
+    if (BLOCK_SCALAR_OPEN_RE.test(raw)) scalarIndent = indent;
+    else {
+      const colon = raw.indexOf(":");
+      const value = colon === -1 ? "" : raw.slice(colon + 1).trimStart();
+      const q = value.startsWith('"') ? '"' : value.startsWith("'") ? "'" : null;
+      if (q !== null && unbalanced(value, q)) openQuote = q;
+    }
+    out.push({ idx: i, indent, text: raw });
+  }
+  return out;
+}
+
+interface ReducerStep {
+  /** EVERY step-level id property recorded, in order. */
+  ids: string[];
+  /** 0-based raw index of the `- ` line opening this step. */
+  startIdx: number;
+  /** 0-based raw line span of the step's run block-scalar body. */
+  runSpans: Array<{ start: number; end: number }>;
+}
+
+const STEP_ID_VALUE_RE = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+
+// Parse jobs.reduce.steps from the structural-line stream. Every
+// deviation from the expected shape returns a failure detail — the
+// occurrence contract fails closed on it, never reclassifies around it.
+function parseReducerStructure(src: string):
+  | { ok: true; steps: ReducerStep[] }
+  | { ok: false; detail: string } {
+  const rawLines = src.split("\n");
+  const sl = structuralLines(src);
+  const jobsAt = sl.findIndex((l) => l.indent === 0 && /^jobs:\s*(#.*)?$/.test(l.text));
+  if (jobsAt === -1) return { ok: false, detail: "no top-level jobs: mapping" };
+  const jobsEnd = sl.findIndex((l, i) => i > jobsAt && l.indent === 0);
+  const jobsSpan = sl.slice(jobsAt + 1, jobsEnd === -1 ? sl.length : jobsEnd);
+  const reduceAt = jobsSpan.findIndex((l) => l.indent === 2 && /^ {2}reduce:\s*(#.*)?$/.test(l.text));
+  if (reduceAt === -1) return { ok: false, detail: "jobs.reduce job not found" };
+  const reduceEnd = jobsSpan.findIndex((l, i) => i > reduceAt && l.indent <= 2);
+  const reduceSpan = jobsSpan.slice(reduceAt + 1, reduceEnd === -1 ? jobsSpan.length : reduceEnd);
+  const stepsAt = reduceSpan.findIndex((l) => l.indent === 4 && /^ {4}steps:\s*(#.*)?$/.test(l.text));
+  if (stepsAt === -1) return { ok: false, detail: "jobs.reduce.steps not found (missing, renamed, inline-valued, or hidden in a scalar)" };
+  const stepsEnd = reduceSpan.findIndex((l, i) => i > stepsAt && l.indent <= 4);
+  const stepsSpan = reduceSpan.slice(stepsAt + 1, stepsEnd === -1 ? reduceSpan.length : stepsEnd);
+  if (stepsSpan.length === 0) return { ok: false, detail: "jobs.reduce.steps is empty" };
+
+  const steps: ReducerStep[] = [];
+  for (const l of stepsSpan) {
+    if (l.indent === 6) {
+      if (!l.text.startsWith("      - ")) {
+        return { ok: false, detail: `jobs.reduce.steps is not a sequence (found non-item at indent 6: ${l.text.trim()})` };
+      }
+      steps.push({ ids: [], startIdx: l.idx, runSpans: [] });
+      continue;
+    }
+    const step = steps[steps.length - 1];
+    if (step === undefined) {
+      return { ok: false, detail: `jobs.reduce.steps content precedes the first sequence item: ${l.text.trim()}` };
+    }
+    if (l.indent === 8) {
+      const idMatch = l.text.match(/^ {8}id:\s*(.*?)\s*(#.*)?$/);
+      if (idMatch !== null) {
+        const value = (idMatch[1] ?? "").trim();
+        if (!STEP_ID_VALUE_RE.test(value)) {
+          return { ok: false, detail: `malformed step id: ${JSON.stringify(value)}` };
+        }
+        step.ids.push(value);
+        continue;
+      }
+      if (/^ {8}run:/.test(l.text)) {
+        if (!BLOCK_SCALAR_OPEN_RE.test(l.text)) {
+          return { ok: false, detail: "step run property is not a block scalar" };
+        }
+        let end = l.idx;
+        for (let j = l.idx + 1; j < rawLines.length; j++) {
+          const body = rawLines[j] ?? "";
+          const ind = body.length - body.trimStart().length;
+          if (body.trim().length === 0 || ind > 8) { end = j; continue; }
+          break;
+        }
+        step.runSpans.push({ start: l.idx + 1, end });
+      }
     }
   }
-  return steps;
+  for (const step of steps) {
+    if (step.ids.length > 1) {
+      return { ok: false, detail: `step has duplicate id properties: ${step.ids.join(", ")}` };
+    }
+    if (step.runSpans.length > 1) {
+      return { ok: false, detail: "step has duplicate run properties (ambiguous source span)" };
+    }
+  }
+  return { ok: true, steps };
 }
 
 // Reducer stages are anchored to the unique structural step ids the
 // checked-in YAML carries (gather_a / gather_b). Single-stage workflows
 // have no anchors: every read classifies into the one named stage.
-const STAGE_ANCHORS: Record<string, ReadonlyArray<{ stage: string; stepId: string }>> = {
-  [WF_REDUCER]: [
-    { stage: "stage-a", stepId: "gather_a" },
-    { stage: "stage-b", stepId: "gather_b" },
-  ],
-};
+const STAGE_ANCHORS: ReadonlyArray<{ stage: string; stepId: string }> = [
+  { stage: "stage-a", stepId: "gather_a" },
+  { stage: "stage-b", stepId: "gather_b" },
+];
 const SINGLE_STAGE: Record<string, string> = {
   [WF_BOOTSTRAP]: "fetch-evidence",
   [WF_MERGE_GUARD]: "gather",
   [WF_WATCHDOG]: "collect",
 };
 
-// Validate the anchor structure: each anchor's id-property line occurs
-// exactly once in the source, exactly one parsed step carries it, and
-// the anchored steps appear in declared order. Returns null when sound,
-// else the failure detail (the contract fails closed on it).
-function validateStageAnchors(workflowFile: string, src: string, steps: WorkflowStep[]): string | null {
-  const anchors = STAGE_ANCHORS[workflowFile];
-  if (anchors === undefined) return null;
+// Resolve the two anchored steps: each anchor id must resolve to exactly
+// one jobs.reduce step, in declared order, and must not appear as a
+// structural step-level id ANYWHERE else in the file (another job's
+// step carrying gather_a would make the anchor ambiguous). Fails closed.
+function resolveStageAnchors(src: string, steps: ReducerStep[]):
+  | { ok: true; anchored: Array<{ stage: string; step: ReducerStep }> }
+  | { ok: false; detail: string } {
+  const anchorIdLinesInFile = (id: string) =>
+    structuralLines(src).filter((l) => new RegExp(`^ {8}id:\\s*${id}\\s*(#.*)?$`).test(l.text)).length;
+  const anchored: Array<{ stage: string; step: ReducerStep }> = [];
   let prevIndex = -1;
-  for (const a of anchors) {
-    const rawIdLines = src.split("\n").filter((l) => {
-      const m = l.match(STEP_ID_RE);
-      return m !== null && m[1] === a.stepId;
-    }).length;
-    const carriers = steps.map((s, i) => ({ s, i })).filter(({ s }) => s.id === a.stepId);
-    if (rawIdLines !== 1 || carriers.length !== 1) {
-      return `stage anchor ${a.stepId} must occur exactly once (id lines: ${rawIdLines}, steps: ${carriers.length})`;
+  for (const a of STAGE_ANCHORS) {
+    const carriers = steps.map((s, i) => ({ s, i })).filter(({ s }) => s.ids[0] === a.stepId);
+    if (carriers.length !== 1) {
+      return { ok: false, detail: `stage anchor ${a.stepId} must resolve to exactly one jobs.reduce step (found ${carriers.length})` };
+    }
+    if (anchorIdLinesInFile(a.stepId) !== 1) {
+      return { ok: false, detail: `stage anchor id ${a.stepId} appears outside jobs.reduce.steps (ambiguous anchor)` };
     }
     const idx = carriers[0]?.i ?? -1;
-    if (idx <= prevIndex) return `stage anchor ${a.stepId} out of declared order`;
+    if (idx <= prevIndex) return { ok: false, detail: `stage anchor ${a.stepId} out of declared order` };
     prevIndex = idx;
+    const step = carriers[0]?.s;
+    if (step === undefined) return { ok: false, detail: `stage anchor ${a.stepId} unresolvable` };
+    anchored.push({ stage: a.stage, step });
   }
-  return null;
+  return { ok: true, anchored };
 }
 
-// A read's stage is decided ONLY by the structural step containing its
-// line: the anchored stage when that step carries an anchor id, the
-// single stage for single-stage workflows, and "unanchored" (which can
-// never match a contract entry) for a read outside every anchored step.
-function stageOfLine(workflowFile: string, steps: WorkflowStep[], line: number): string {
-  const anchors = STAGE_ANCHORS[workflowFile];
-  if (anchors === undefined) return SINGLE_STAGE[workflowFile] ?? "workflow";
-  const step = steps.find((s) => line >= s.startLine && line <= s.endLine);
-  const anchor = anchors.find((a) => a.stepId === (step?.id ?? ""));
-  return anchor?.stage ?? "unanchored";
+// A read's stage: ONLY a line inside the run block-scalar body of an
+// anchored step earns that step's stage; everything else — another
+// step's run, step metadata, outside the steps sequence — is
+// "unanchored" and can never match a contract entry.
+function stageOfLine(
+  anchored: Array<{ stage: string; step: ReducerStep }>,
+  line1: number,
+): string {
+  const idx = line1 - 1;
+  for (const { stage, step } of anchored) {
+    for (const span of step.runSpans) {
+      if (idx >= span.start && idx <= span.end) return stage;
+    }
+  }
+  return "unanchored";
 }
 
 // The exact ordered occurrence contract per workflow: "<stage> <argv>",
@@ -898,21 +1025,29 @@ export interface ReadContractResult {
 // step identity, in source order) against the workflow's contract.
 // Ordered equality asserts both directions at once: an extra permitted
 // tuple, a duplicate, a move across stages, a missing read, or a
-// reorder all mismatch — even when the tuple SET is unchanged. An
-// unsound anchor structure (missing, duplicate, or reordered gather_a/
-// gather_b) fails the contract BEFORE any classification runs.
+// reorder all mismatch — even when the tuple SET is unchanged. For the
+// reducer, an unsound structure — missing jobs.reduce, missing or
+// non-sequence steps, duplicate/malformed step ids, duplicate run
+// properties, missing/duplicate/reordered anchors — fails the contract
+// BEFORE any classification runs.
 export function checkWorkflowReadContract(src: string, workflowFile: string): ReadContractResult {
   const expected = [...(WORKFLOW_READ_CONTRACTS[workflowFile] ?? [])];
   if (!KNOWN_WORKFLOWS.has(workflowFile)) {
     return { ok: false, expected, found: [], detail: `unknown workflow identity: ${String(workflowFile)}` };
   }
-  const steps = parseWorkflowSteps(src);
-  const anchorFailure = validateStageAnchors(workflowFile, src, steps);
-  if (anchorFailure !== null) {
-    return { ok: false, expected, found: [], detail: anchorFailure };
+  let classify: (line1: number) => string;
+  if (workflowFile === WF_REDUCER) {
+    const structure = parseReducerStructure(src);
+    if (!structure.ok) return { ok: false, expected, found: [], detail: structure.detail };
+    const anchors = resolveStageAnchors(src, structure.steps);
+    if (!anchors.ok) return { ok: false, expected, found: [], detail: anchors.detail };
+    classify = (line1) => stageOfLine(anchors.anchored, line1);
+  } else {
+    const stage = SINGLE_STAGE[workflowFile] ?? "workflow";
+    classify = () => stage;
   }
   const found = collectEffectiveGhInvocations(src, workflowFile).map(
-    (inv) => `${stageOfLine(workflowFile, steps, inv.line)} ${inv.words.join(" ")}`,
+    (inv) => `${classify(inv.line)} ${inv.words.join(" ")}`,
   );
   const ok = found.length === expected.length && found.every((x, i) => x === expected[i]);
   return {
@@ -1398,6 +1533,89 @@ describe("fixed entry points own every derived fetch and every write", () => {
     failsBoth(src.slice(0, bls) + extra + src.slice(bls), "extra eighth permitted occurrence");
 
     // Positive control: the clean reducer passes.
+    expect(checkWorkflowReadContract(src, WF_REDUCER).ok).toBe(true);
+  });
+
+  it("structure is PARSED, not indentation-matched: Codex's four round-18 probes each fail the contract closed", () => {
+    const src = readFileSync(WF_REDUCER, "utf8");
+    const failsBoth = (mutated: string, why: string) => {
+      expect(mutated, `${why}: mutation did not apply`).not.toBe(src);
+      expect(checkWorkflowReadContract(mutated, WF_REDUCER).ok, why).toBe(false);
+      expect(checkWorkflowComplete(mutated, WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
+    };
+    // 1. jobs.reduce renamed — the expected job no longer exists.
+    failsBoth(src.replace("  reduce:\n", "  not_reduce:\n"), "wrongJob");
+    // 2. steps renamed — jobs.reduce has no steps sequence.
+    failsBoth(src.replace("    steps:\n", "    not_steps:\n"), "notSteps");
+    // 3. a SECOND step-level id after gather_a — duplicate id property
+    //    on one step is rejected, never silently ignored.
+    failsBoth(
+      src.replace("        id: gather_a\n", "        id: gather_a\n        id: unrelated_step_id\n"),
+      "duplicateId",
+    );
+    // 4. the entire apparent steps tree hidden inside a block scalar —
+    //    scalar text is not structure, so jobs.reduce.steps is absent.
+    failsBoth(src.replace("    steps:\n", "fake_steps: |2\n    steps:\n"), "scalar");
+  });
+
+  it("scalar text, comments, and quoted values carry no structural authority; structural anomalies fail closed (round 18)", () => {
+    const src = readFileSync(WF_REDUCER, "utf8");
+    const failsBoth = (mutated: string, why: string) => {
+      expect(mutated, `${why}: mutation did not apply`).not.toBe(src);
+      expect(checkWorkflowReadContract(mutated, WF_REDUCER).ok, why).toBe(false);
+      expect(checkWorkflowComplete(mutated, WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
+    };
+    const staysClean = (mutated: string, why: string) => {
+      expect(mutated, `${why}: mutation did not apply`).not.toBe(src);
+      expect(checkWorkflowReadContract(mutated, WF_REDUCER).ok, why).toBe(true);
+    };
+
+    // No-authority controls: fake ids in a comment, in a quoted value,
+    // and fake step/YAML text inside a run block scalar neither anchor
+    // nor break the clean contract.
+    staysClean(
+      src.replace("        id: gather_a", "        # id: gather_b\n        id: gather_a"),
+      "fake id in a comment",
+    );
+    staysClean(
+      src.replace(
+        "        id: gather_a",
+        `        id: gather_a\n        if: \${{ 'id: gather_b' != inputs.never }}`,
+      ),
+      "fake id inside a quoted value",
+    );
+    staysClean(
+      src.replace(
+        "          set -euo pipefail\n          gather_once()",
+        "          set -euo pipefail\n          # steps:\n          #   - name: fake\n          #     id: gather_b\n          gather_once()",
+      ),
+      "fake step/YAML text inside run: |",
+    );
+
+    // Duplicate ids at a DIFFERENT indentation level: a nested id line
+    // inside the run scalar is text (clean), but a second structural id
+    // at step-property indent on another step duplicates the anchor.
+    staysClean(
+      src.replace("          set -euo pipefail\n          gather_once()", "          set -euo pipefail\n          echo 'id: gather_a'\n          gather_once()"),
+      "id text inside the run scalar is not a duplicate",
+    );
+    failsBoth(src.replace("        id: probe_a", "        id: gather_a"), "structural duplicate on another step");
+
+    // A gather anchor id in ANOTHER JOB is ambiguous — rejected even
+    // though jobs.reduce itself still carries a unique gather_a.
+    const otherJob = src.replace(
+      /$/,
+      "\n  shadow:\n    runs-on: ubuntu-latest\n    steps:\n      - name: shadow\n        id: gather_a\n        run: |\n          true\n",
+    );
+    failsBoth(otherJob, "gather id in another job");
+
+    // Non-sequence steps: a mapping where the sequence should be.
+    failsBoth(
+      src.replace("    steps:\n      - name: Checkout code", "    steps:\n      note: not-a-sequence\n      - name: Checkout code"),
+      "non-sequence steps content",
+    );
+
+    // Positive control: the checked-in reducer parses and passes.
     expect(checkWorkflowReadContract(src, WF_REDUCER).ok).toBe(true);
   });
 
