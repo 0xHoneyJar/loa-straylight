@@ -305,20 +305,24 @@ describe("J2 — the boundary checker refuses the round-12 equivalent-shell spel
       [`VALUE=$(date; cat evidence.json)`, "command-substitution"],
       [`cat <(gh api "repos/x/y/pulls/1")`, "process-substitution"],
     ];
+    // Payload fragments carry a valid workflow identity (round 16:
+    // identity is mandatory); the reducer stands in for "any workflow".
+    const WF = ".github/workflows/straylight-reducer.yml";
     for (const [payload, rule] of CASES) {
-      const violations = checkWorkflowBoundary(payload);
+      const violations = checkWorkflowBoundary(payload, WF);
       expect(violations.map((v: any) => v.rule), payload).toContain(rule);
     }
   });
 
   it("non-semantic plumbing substitutions stay clean (no false positives on the real workflows' idioms)", async () => {
     const { checkWorkflowBoundary } = await import("./workflow-mutation.test.js");
+    const WF = ".github/workflows/straylight-reducer.yml";
     for (const clean of [
       `DIR_A=$(mktemp -d); DIR_B=$(mktemp -d)`,
       `NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)`,
       `echo "now=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"`,
     ]) {
-      expect(checkWorkflowBoundary(clean), clean).toEqual([]);
+      expect(checkWorkflowBoundary(clean, WF), clean).toEqual([]);
     }
   });
 });

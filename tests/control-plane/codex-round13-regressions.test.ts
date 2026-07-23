@@ -51,6 +51,10 @@ const WORKFLOWS = [
 // file's own describe blocks from re-registering here.
 const checker = () => import("./workflow-mutation.test.js");
 
+// Round 16: identity is mandatory — payload fragments use the reducer's
+// exact repository-relative path as their standing identity.
+const WF = ".github/workflows/straylight-reducer.yml";
+
 // =============================================================================
 // J1 — effective-command decomposition closes the wrapper/quoted-word
 // derived-read class
@@ -63,7 +67,7 @@ describe("J1 — every effective gh invocation is judged over normalized command
       `command g'h' api "repos/x/y/pulls/1" > /tmp/pr.json`,
       `env g'h' api "repos/x/y/pulls/1" > /tmp/pr.json`,
     ]) {
-      const rules = checkWorkflowBoundary(payload).map((v) => v.rule);
+      const rules = checkWorkflowBoundary(payload, WF).map((v) => v.rule);
       expect(rules, payload).toContain("gh-api-derived");
     }
   });
@@ -95,20 +99,23 @@ describe("J1 — every effective gh invocation is judged over normalized command
       `tee >(gh api "repos/x/y/pulls/1") < x`,                 // inside >( … )
       `gh pr view 120 --json headRefOid > /tmp/head.json`,     // ANY gh subcommand, not only api
     ]) {
-      const rules = checkWorkflowBoundary(payload).map((v) => v.rule);
+      const rules = checkWorkflowBoundary(payload, WF).map((v) => v.rule);
       expect(rules, payload).toContain("gh-api-derived");
     }
   });
 
   it("the guarded FIXED reads the workflows actually use stay clean under the categorical rule", async () => {
     const { checkWorkflowBoundary } = await checker();
-    for (const clean of [
-      `if ! gh api --paginate "repos/\${REPO}/issues?state=open&per_page=100" > "\${DIR}/enumeration.pages"; then`,
-      `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/issue.json"; then`,
-      `if ! gh api --paginate "repos/\${REPO}/issues/\${ISSUE_NUMBER}/comments" > "\${DIR}/comments.pages"; then`,
-      `if ! gh api --paginate "repos/\${REPO}/labels?per_page=100" > /tmp/label-pages.json; then`,
-    ]) {
-      expect(checkWorkflowBoundary(clean), clean).toEqual([]);
+    // Round 16: tuples are bound to their exact workflows — each clean
+    // fragment carries the identity of a workflow that declares it.
+    const CLEAN: ReadonlyArray<readonly [string, string]> = [
+      [`if ! gh api --paginate "repos/\${REPO}/issues?state=open&per_page=100" > "\${DIR}/enumeration.pages"; then`, WF],
+      [`if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/issue.json"; then`, WF],
+      [`if ! gh api --paginate "repos/\${REPO}/issues/\${ISSUE_NUMBER}/comments" > "\${DIR}/comments.pages"; then`, WF],
+      [`if ! gh api --paginate "repos/\${REPO}/labels?per_page=100" > /tmp/label-pages.json; then`, ".github/workflows/straylight-bootstrap.yml"],
+    ];
+    for (const [clean, wf] of CLEAN) {
+      expect(checkWorkflowBoundary(clean, wf), clean).toEqual([]);
     }
   });
 
@@ -132,16 +139,16 @@ describe("J1 — every effective gh invocation is judged over normalized command
       // guarded fixed shape but wrapped — the guard must see gh itself
       `if ! env gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/issue.json"; then`,
     ]) {
-      const rules = checkWorkflowBoundary(nearMiss).map((v) => v.rule);
+      const rules = checkWorkflowBoundary(nearMiss, WF).map((v) => v.rule);
       expect(rules, nearMiss).toContain("gh-api-derived");
     }
   });
 
   it("collectEffectiveGhInvocations resolves wrappers and quoting: the invocation list is spelling-independent", async () => {
     const { collectEffectiveGhInvocations } = await checker();
-    const direct = collectEffectiveGhInvocations(`gh api "repos/x/y/pulls/1" > /tmp/pr.json`);
-    const quoted = collectEffectiveGhInvocations(`g'h' api "repos/x/y/pulls/1" > /tmp/pr.json`);
-    const wrapped = collectEffectiveGhInvocations(`env TOKEN=x command g"h" api "repos/x/y/pulls/1" > /tmp/pr.json`);
+    const direct = collectEffectiveGhInvocations(`gh api "repos/x/y/pulls/1" > /tmp/pr.json`, WF);
+    const quoted = collectEffectiveGhInvocations(`g'h' api "repos/x/y/pulls/1" > /tmp/pr.json`, WF);
+    const wrapped = collectEffectiveGhInvocations(`env TOKEN=x command g"h" api "repos/x/y/pulls/1" > /tmp/pr.json`, WF);
     expect(direct).toHaveLength(1);
     expect(quoted).toHaveLength(1);
     expect(wrapped).toHaveLength(1);
@@ -150,7 +157,7 @@ describe("J1 — every effective gh invocation is judged over normalized command
     expect(wrapped[0]?.wrapped).toBe(true);
     expect(direct[0]?.permitted).toBe(false);
     // And a substituted invocation is visible with its context recorded.
-    const sub = collectEffectiveGhInvocations(`HEAD=$(gh api "repos/x/y/pulls/1")`);
+    const sub = collectEffectiveGhInvocations(`HEAD=$(gh api "repos/x/y/pulls/1")`, WF);
     expect(sub).toHaveLength(1);
     expect(sub[0]?.inSubstitution).toBe(true);
     expect(sub[0]?.permitted).toBe(false);
@@ -159,7 +166,7 @@ describe("J1 — every effective gh invocation is judged over normalized command
   it("across all four REAL workflows every effective gh invocation is a permitted guarded fixed read (the clean direction of the class)", async () => {
     const { collectEffectiveGhInvocations } = await checker();
     for (const f of WORKFLOWS) {
-      const invocations = collectEffectiveGhInvocations(readFileSync(f, "utf8"));
+      const invocations = collectEffectiveGhInvocations(readFileSync(f, "utf8"), f);
       expect(invocations.length, f).toBeGreaterThan(0);
       for (const inv of invocations) {
         expect(inv.permitted, `${f}:${inv.line}: ${inv.words.join(" ")}`).toBe(true);

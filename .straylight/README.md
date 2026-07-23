@@ -183,16 +183,25 @@ and `--signal`, `nice` incl. `-n`) — and ANY effective `gh` invocation
 is categorically refused unless its normalized argv is a member of a
 CLOSED allowlist of the exact checked-in read tuples (endpoint
 including query string and pagination flags, exact output path, bound
-to the exact workflows that carry it — arbitrary `/issues` or
-`/labels` descendants, changed queries, missing/extra flags,
+to the exact repository-relative workflow path that carries it —
+identity is MANDATORY, and a missing, basename-only, absolute, or
+same-basename-elsewhere identity permits nothing; arbitrary `/issues`
+or `/labels` descendants, changed queries, missing/extra flags,
 alternate output files, and endpoint/output swaps all mismatch) AND
-the read is the SOLE condition of a fail-closed `if ! <read>; then` —
+the read is the exact SINGLE-NEGATED condition `if ! <read>; then` —
 separator context is retained through decomposition, so a compound
 condition (`; false; then`, `&& true`, `|| true`, a pipeline, any
-command before `then`) that lets another status replace the read's is
-refused. `g'h' api …`, `command gh api …`, `env TOKEN=x gh api …`,
-and `timeout 30 gh api …` are the same violation as `gh api …`. The
-resolution is FAIL CLOSED: a wrapper
+command before `then`), a double negation (`if ! ! …`), or a nested
+conditional (`if ! if …`) that lets another status control the branch
+is refused. Beyond per-line rules, each workflow is pinned to an
+exact ORDERED PER-STAGE OCCURRENCE CONTRACT of its checked-in reads
+(duplicates represented separately — the reducer's seven occurrences
+across stages A and B, with the labels read only in Stage B), so an
+extra, missing, duplicated, moved, or reordered read fails even when
+every individual line is a permitted tuple. `g'h' api …`,
+`command gh api …`, `env TOKEN=x gh api …`, and `timeout 30 gh api …`
+are the same violation as `gh api …`. The resolution is FAIL CLOSED:
+a wrapper
 whose command position cannot be proven (`env --split-string`, an
 unknown option, a non-literal `timeout` duration) is a violation in
 itself, `xargs` is refused categorically (it constructs commands from

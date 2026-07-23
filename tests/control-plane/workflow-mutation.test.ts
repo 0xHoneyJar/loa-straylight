@@ -574,13 +574,19 @@ function resolveEffective(tokens: string[]): { words: string[]; guarded: boolean
   let w = [...tokens];
   let guarded = false;
   let wrapped = false;
-  while (w.length > 0 && CONTROL_WORDS.has(w[0] ?? "")) {
-    if (w[0] === "if" && w[1] === "!") {
-      guarded = true;
-      w = w.slice(2);
-      continue;
-    }
-    w = w.slice(1);
+  // EXACT sole-negation grammar (round 16): guardedness is granted ONLY
+  // to the exact token prefix `if ! <word>` where <word> is not itself a
+  // control word or a second negation. `if ! ! gh …; then` inverts twice
+  // — a SUCCESSFUL read takes the failure branch and a FAILED read
+  // proceeds — and `if ! if gh …; then … fi; then` puts the inner
+  // compound's status, not the read's, in control of the branch. Neither
+  // is a guard. Every other control-word prefix is stripped WITHOUT ever
+  // granting guardedness.
+  if (w[0] === "if" && w[1] === "!" && w.length > 2 && !CONTROL_WORDS.has(w[2] ?? "")) {
+    guarded = true;
+    w = w.slice(2);
+  } else {
+    while (w.length > 0 && CONTROL_WORDS.has(w[0] ?? "")) w = w.slice(1);
   }
   for (;;) {
     const head = w[0] ?? "";
@@ -641,58 +647,66 @@ function decomposeCommands(t: string): EffectiveCommand[] {
 interface FixedReadTuple {
   /** Normalized argv: gh api [--paginate] <url> > <output>. */
   argv: readonly string[];
-  /** Workflow basenames this exact tuple is checked into. */
+  /** EXACT repository-relative workflow paths this tuple is checked into. */
   workflows: readonly string[];
 }
-const GATHER_WORKFLOWS = ["straylight-merge-guard.yml", "straylight-reducer.yml"] as const;
+const WF_BOOTSTRAP = ".github/workflows/straylight-bootstrap.yml";
+const WF_MERGE_GUARD = ".github/workflows/straylight-merge-guard.yml";
+const WF_REDUCER = ".github/workflows/straylight-reducer.yml";
+const WF_WATCHDOG = ".github/workflows/straylight-watchdog.yml";
+// The CLOSED identity set (round 16): every check/collection call must
+// name exactly one of these repository-relative paths. A missing
+// identity, a basename, an absolute path, or a same-basename path in
+// another directory is NOT an identity — identity failure permits
+// nothing (fail closed) and is an error, never a broader match.
+const KNOWN_WORKFLOWS: ReadonlySet<string> = new Set([WF_BOOTSTRAP, WF_MERGE_GUARD, WF_REDUCER, WF_WATCHDOG]);
 const PERMITTED_FIXED_READS: readonly FixedReadTuple[] = [
   // bootstrap: two independent all-issues enumerations + label enumeration
   {
     argv: ["gh", "api", "--paginate", "repos/${REPO}/issues?state=all&per_page=100", ">", "/tmp/issue-pages-1.json"],
-    workflows: ["straylight-bootstrap.yml"],
+    workflows: [WF_BOOTSTRAP],
   },
   {
     argv: ["gh", "api", "--paginate", "repos/${REPO}/issues?state=all&per_page=100", ">", "/tmp/issue-pages-2.json"],
-    workflows: ["straylight-bootstrap.yml"],
+    workflows: [WF_BOOTSTRAP],
   },
   {
     argv: ["gh", "api", "--paginate", "repos/${REPO}/labels?per_page=100", ">", "/tmp/label-pages.json"],
-    workflows: ["straylight-bootstrap.yml"],
+    workflows: [WF_BOOTSTRAP],
   },
   // open-issues enumeration (merge-guard/reducer gathers + watchdog collections)
   {
     argv: ["gh", "api", "--paginate", "repos/${REPO}/issues?state=open&per_page=100", ">", "${DIR}/enumeration.pages"],
-    workflows: [...GATHER_WORKFLOWS, "straylight-watchdog.yml"],
+    workflows: [WF_MERGE_GUARD, WF_REDUCER, WF_WATCHDOG],
   },
   // per-issue gather reads (merge-guard/reducer)
   {
     argv: ["gh", "api", "repos/${REPO}/issues/${ISSUE_NUMBER}", ">", "${DIR}/issue.json"],
-    workflows: [...GATHER_WORKFLOWS],
+    workflows: [WF_MERGE_GUARD, WF_REDUCER],
   },
   {
     argv: ["gh", "api", "--paginate", "repos/${REPO}/issues/${ISSUE_NUMBER}/comments", ">", "${DIR}/comments.pages"],
-    workflows: [...GATHER_WORKFLOWS],
+    workflows: [WF_MERGE_GUARD, WF_REDUCER],
   },
   // label evidence (reducer stage B only)
   {
     argv: ["gh", "api", "--paginate", "repos/${REPO}/issues/${ISSUE_NUMBER}/labels", ">", "${DIR}/labels.pages"],
-    workflows: ["straylight-reducer.yml"],
+    workflows: [WF_REDUCER],
   },
 ];
 
 // Exact-tuple membership: unwrapped, unsubstituted, resolved, the SOLE
-// `if ! …; then` condition, and argv byte-equal to a checked-in tuple.
-// When the caller names the workflow, the tuple must also be checked
-// into THAT workflow (an issue.json read inside bootstrap is a
-// violation even though the tuple exists elsewhere).
-function isPermittedFixedRead(cmd: EffectiveCommand, workflowFile?: string): boolean {
+// `if ! …; then` condition, argv byte-equal to a checked-in tuple, AND
+// the tuple checked into the EXACT named workflow. An unknown or
+// missing identity permits nothing.
+function isPermittedFixedRead(cmd: EffectiveCommand, workflowFile: string): boolean {
+  if (!KNOWN_WORKFLOWS.has(workflowFile)) return false;
   if (cmd.inSubstitution || cmd.wrapped || !cmd.guarded || cmd.unresolved) return false;
-  const base = workflowFile === undefined ? undefined : wordBasename(workflowFile);
   return PERMITTED_FIXED_READS.some(
     (t) =>
       t.argv.length === cmd.words.length &&
       t.argv.every((x, i) => x === cmd.words[i]) &&
-      (base === undefined || t.workflows.includes(base)),
+      t.workflows.includes(workflowFile),
   );
 }
 
@@ -714,7 +728,7 @@ export interface GhInvocation {
 // head still carrying a gh word in its argv — is REPORTED as a
 // non-permitted invocation, never silently dropped: "unresolved" must
 // not read as "no gh invocation here".
-export function collectEffectiveGhInvocations(src: string, workflowFile?: string): GhInvocation[] {
+export function collectEffectiveGhInvocations(src: string, workflowFile: string): GhInvocation[] {
   const out: GhInvocation[] = [];
   for (const { line, text } of logicalLines(src)) {
     // Decomposition runs on the RAW logical line: its tokenizer resolves
@@ -736,12 +750,121 @@ export function collectEffectiveGhInvocations(src: string, workflowFile?: string
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Round 16 — EXACT ORDERED OCCURRENCE CONTRACTS. Tuple membership alone is
+// permutation- and multiplicity-blind: the reducer's Stage-B-only labels
+// read injected into Stage A, a duplicated read, or a reordered read all
+// stayed inside the tuple SET. Each workflow now carries the exact ordered
+// occurrence sequence of its checked-in reads — stage identity + tuple
+// argv + position, duplicates represented separately — and the checker
+// compares the observed sequence against it in both directions.
+// ---------------------------------------------------------------------------
+
+// Stage boundaries, located by an exact marker string in the YAML. The
+// base stage ("" marker) starts at line 0; a named marker starts its
+// stage at the marker's line.
+const STAGE_MARKERS: Record<string, ReadonlyArray<{ stage: string; marker: string }>> = {
+  [WF_BOOTSTRAP]: [{ stage: "fetch-evidence", marker: "" }],
+  [WF_MERGE_GUARD]: [{ stage: "gather", marker: "" }],
+  [WF_WATCHDOG]: [{ stage: "collect", marker: "" }],
+  [WF_REDUCER]: [
+    { stage: "stage-a", marker: "" },
+    { stage: "stage-b", marker: "Stage B — gather fresh evidence twice" },
+  ],
+};
+
+function stageOfLine(workflowFile: string, src: string, line: number): string {
+  const markers = STAGE_MARKERS[workflowFile] ?? [];
+  let stage = markers[0]?.stage ?? "workflow";
+  for (const m of markers) {
+    if (m.marker === "") continue;
+    const at = src.indexOf(m.marker);
+    if (at !== -1 && line >= src.slice(0, at).split("\n").length) stage = m.stage;
+  }
+  return stage;
+}
+
+// The exact ordered occurrence contract per workflow: "<stage> <argv>",
+// in checked-in order, duplicates listed separately. The reducer's
+// gather tuples INTENTIONALLY repeat across stages A and B; the labels
+// read exists ONLY in Stage B.
+const ENUM_OPEN = "gh api --paginate repos/${REPO}/issues?state=open&per_page=100 > ${DIR}/enumeration.pages";
+const READ_ISSUE = "gh api repos/${REPO}/issues/${ISSUE_NUMBER} > ${DIR}/issue.json";
+const READ_COMMENTS = "gh api --paginate repos/${REPO}/issues/${ISSUE_NUMBER}/comments > ${DIR}/comments.pages";
+const READ_LABELS = "gh api --paginate repos/${REPO}/issues/${ISSUE_NUMBER}/labels > ${DIR}/labels.pages";
+const WORKFLOW_READ_CONTRACTS: Record<string, readonly string[]> = {
+  [WF_BOOTSTRAP]: [
+    "fetch-evidence gh api --paginate repos/${REPO}/issues?state=all&per_page=100 > /tmp/issue-pages-1.json",
+    "fetch-evidence gh api --paginate repos/${REPO}/issues?state=all&per_page=100 > /tmp/issue-pages-2.json",
+    "fetch-evidence gh api --paginate repos/${REPO}/labels?per_page=100 > /tmp/label-pages.json",
+  ],
+  [WF_MERGE_GUARD]: [
+    `gather ${ENUM_OPEN}`,
+    `gather ${READ_ISSUE}`,
+    `gather ${READ_COMMENTS}`,
+  ],
+  [WF_WATCHDOG]: [
+    `collect ${ENUM_OPEN}`,
+  ],
+  [WF_REDUCER]: [
+    `stage-a ${ENUM_OPEN}`,
+    `stage-a ${READ_ISSUE}`,
+    `stage-a ${READ_COMMENTS}`,
+    `stage-b ${ENUM_OPEN}`,
+    `stage-b ${READ_ISSUE}`,
+    `stage-b ${READ_COMMENTS}`,
+    `stage-b ${READ_LABELS}`,
+  ],
+};
+
+export interface ReadContractResult {
+  ok: boolean;
+  /** The checked-in ordered occurrence contract. */
+  expected: string[];
+  /** The observed ordered occurrences ("<stage> <argv>"). */
+  found: string[];
+  detail: string;
+}
+
+// Compare the OBSERVED ordered occurrence sequence (every effective gh
+// invocation the collector surfaces, stage-classified, in source order)
+// against the workflow's contract. Ordered equality asserts both
+// directions at once: an extra permitted tuple, a duplicate, a move
+// across stages, a missing read, or a reorder all mismatch — even when
+// the tuple SET is unchanged.
+export function checkWorkflowReadContract(src: string, workflowFile: string): ReadContractResult {
+  const expected = [...(WORKFLOW_READ_CONTRACTS[workflowFile] ?? [])];
+  if (!KNOWN_WORKFLOWS.has(workflowFile)) {
+    return { ok: false, expected, found: [], detail: `unknown workflow identity: ${String(workflowFile)}` };
+  }
+  const found = collectEffectiveGhInvocations(src, workflowFile).map(
+    (inv) => `${stageOfLine(workflowFile, src, inv.line)} ${inv.words.join(" ")}`,
+  );
+  const ok = found.length === expected.length && found.every((x, i) => x === expected[i]);
+  return {
+    ok,
+    expected,
+    found,
+    detail: ok
+      ? "ordered occurrence contract satisfied"
+      : `ordered occurrence mismatch — expected [${expected.join(" | ")}] found [${found.join(" | ")}]`,
+  };
+}
+
 // The boundary checker: examine every LOGICAL shell line (comments and
 // blank lines dropped; continuations joined; escaped command words
-// normalized). When the caller names the workflow file, fixed-read
-// tuples are additionally bound to their exact workflow identity.
-export function checkWorkflowBoundary(src: string, workflowFile?: string): Violation[] {
+// normalized). The caller MUST name the exact repository-relative
+// workflow path from the closed identity set (round 16): a missing,
+// basename-only, absolute, or same-basename-elsewhere identity is a
+// violation in itself and permits no fixed read. (The whole-workflow
+// ordered occurrence contract is checkWorkflowReadContract; the two
+// compose in checkWorkflowComplete — a per-line checker cannot demand a
+// fragment carry a full workflow's reads.)
+export function checkWorkflowBoundary(src: string, workflowFile: string): Violation[] {
   const violations: Violation[] = [];
+  if (!KNOWN_WORKFLOWS.has(workflowFile)) {
+    violations.push({ rule: "workflow-identity", line: 0, text: `unknown workflow identity: ${String(workflowFile)}` });
+  }
   for (const { line, text } of logicalLines(src)) {
     const t = normalizeLogical(text);
     const flag = (rule: string) => violations.push({ rule, line, text: t });
@@ -871,13 +994,27 @@ export function checkWorkflowBoundary(src: string, workflowFile?: string): Viola
   return violations;
 }
 
+// The COMPLETE workflow check (round 16): per-line boundary rules PLUS
+// the whole-workflow ordered occurrence contract. This is what the clean
+// and mutation directions assert — an injected duplicate of a permitted
+// tuple, a Stage-B read moved into Stage A, a missing read, or a reorder
+// violates the contract even though every line passes the per-line rules.
+export function checkWorkflowComplete(src: string, workflowFile: string): Violation[] {
+  const violations = checkWorkflowBoundary(src, workflowFile);
+  if (KNOWN_WORKFLOWS.has(workflowFile)) {
+    const contract = checkWorkflowReadContract(src, workflowFile);
+    if (!contract.ok) violations.push({ rule: "read-contract", line: 0, text: contract.detail });
+  }
+  return violations;
+}
+
 // =============================================================================
 // Direction 1 — the four real workflows are CLEAN under the checker
 // =============================================================================
 describe("boundary checker — the four converted workflows carry zero violations", () => {
   for (const f of WORKFLOWS) {
-    it(`${f} is clean`, () => {
-      const violations = checkWorkflowBoundary(readFileSync(f, "utf8"), f);
+    it(`${f} is clean (boundary rules + ordered occurrence contract)`, () => {
+      const violations = checkWorkflowComplete(readFileSync(f, "utf8"), f);
       expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
     });
   }
@@ -970,6 +1107,7 @@ describe("mutation matrix — each prohibited construct class is demonstrably ca
     ["wrapper-unresolved", `timeout \$DUR gh api "repos/x/y/pulls/1" > /tmp/pr.json`, "timeout with a non-literal duration (unproven command position)"],
     ["wrapper-unresolved", `stdbuf --weird gh api "repos/x/y/pulls/1"`, "unknown stdbuf option (unproven command position)"],
     ["command-indirection", `\${GH} api "repos/x/y/pulls/1" > pr.json`, "brace-expansion command name fetch (round-13)"],
+    ["read-contract", `if ! gh api --paginate "repos/\${REPO}/issues?state=open&per_page=100" > "\${DIR}/enumeration.pages"; then\n  exit 97\nfi`, "an EXTRA occurrence of a permitted-shape read violates the ordered occurrence contract (round-16)"],
     ["gh-api-derived", `if ! gh api --paginate "repos/\${REPO}/issues?state=open&per_page=100" > "\${DIR}/enumeration.pages"; false; then\n  exit 97\nfi`, "compound condition — `; false` replaces the read's exit status before then (round-15 bypass)"],
     ["gh-api-derived", `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/issue.json" && true; then\n  exit 97\nfi`, "compound condition — `&& true` masks the status (round-15)"],
     ["gh-api-derived", `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/issue.json" || true; then\n  exit 97\nfi`, "compound condition — `|| true` masks the status (round-15)"],
@@ -982,6 +1120,8 @@ describe("mutation matrix — each prohibited construct class is demonstrably ca
     ["gh-api-derived", `if ! gh api "repos/\${REPO}/issues?state=open&per_page=100" > "\${DIR}/enumeration.pages"; then\n  exit 97\nfi`, "missing required --paginate flag (round-15)"],
     ["gh-api-derived", `if ! gh api --paginate "repos/\${REPO}/issues?state=closed&per_page=100" > "\${DIR}/enumeration.pages"; then\n  exit 97\nfi`, "changed query string — state=closed is not a checked-in tuple (round-15)"],
     ["gh-api-derived", `if ! gh api --paginate --include "repos/\${REPO}/issues?state=open&per_page=100" > "\${DIR}/enumeration.pages"; then\n  exit 97\nfi`, "extra flag beyond the tuple's argv (round-15)"],
+    ["gh-api-derived", `if ! ! gh api --paginate "repos/\${REPO}/issues?state=open&per_page=100" > "\${DIR}/enumeration.pages"; then\n  exit 97\nfi`, "DOUBLE negation — if ! ! inverts twice, success takes the failure branch (round-16 bypass)"],
+    ["gh-api-derived", `if ! if gh api --paginate "repos/\${REPO}/issues?state=open&per_page=100" > "\${DIR}/enumeration.pages"; then true; fi; then\n  exit 97\nfi`, "NESTED conditional — the inner compound's status, not the read's, controls the branch (round-16 bypass)"],
     ["eval", `eval "$CMD"`, "eval of dynamic content"],
     ["eval", `source /tmp/dynamic.sh`, "dynamic source"],
     ["ledger-append", `echo '{"resource":"pr"}' >> "\${DIR}/ledger.jsonl"`, "bash appending a ledger row"],
@@ -992,7 +1132,7 @@ describe("mutation matrix — each prohibited construct class is demonstrably ca
     for (const [rule, payload, description] of MUTATIONS) {
       it(`${workflow.split("/").pop()}: ${description} → flagged as ${rule}`, () => {
         const mutated = mutate(workflow, payload);
-        const violations = checkWorkflowBoundary(mutated, workflow);
+        const violations = checkWorkflowComplete(mutated, workflow);
         expect(violations.map((v) => v.rule)).toContain(rule);
       });
     }
@@ -1001,16 +1141,19 @@ describe("mutation matrix — each prohibited construct class is demonstrably ca
   it("a COMMENT containing a prohibited construct is NOT flagged (comments may explain the ban)", () => {
     for (const workflow of WORKFLOWS) {
       const mutated = mutate(workflow, `# example of the banned pattern: gh api -X POST | jq -r '.x' || true`);
-      expect(checkWorkflowBoundary(mutated, workflow)).toEqual([]);
+      expect(checkWorkflowComplete(mutated, workflow)).toEqual([]);
     }
   });
 
   it("the matrix is exhaustive over the checker's rule set (a rule with no mutation row is untested)", () => {
+    // workflow-identity is exercised by its dedicated round-16 test (the
+    // matrix always passes a valid identity, so no mutation row can
+    // trigger it).
     const rulesInChecker = [
       "inline-node", "authority-jq", "or-true", "evidence-loop", "gh-write",
       "gh-pipe", "command-substitution", "process-substitution",
       "command-indirection", "gh-api-derived", "wrapper-unresolved",
-      "xargs", "eval", "ledger-append", "redirect-derived",
+      "xargs", "read-contract", "eval", "ledger-append", "redirect-derived",
     ];
     const rulesCovered = new Set(MUTATIONS.map(([rule]) => rule));
     for (const rule of rulesInChecker) {
@@ -1049,22 +1192,80 @@ describe("fixed entry points own every derived fetch and every write", () => {
     }
   });
 
-  it("the closed tuple allowlist matches the four workflows EXACTLY: per-workflow found-argv sets equal the declared tuple sets", () => {
-    // Two directions, set-equal per workflow: (a) no tuple is stale —
-    // each declared tuple appears in every workflow that declares it;
-    // (b) no read is unlisted — a workflow carries no argv outside its
-    // declared set. (The reducer legitimately repeats its gather tuples
-    // across stages A and B, so this compares SETS, not counts.)
+  it("EXACT ORDERED OCCURRENCE CONTRACTS: each workflow's observed read sequence equals its checked-in contract, occurrence by occurrence (round 16)", () => {
+    // NOT a set comparison (round-16 defect: dedup hid an injected
+    // duplicate of a permitted tuple). Every workflow's observed
+    // stage-classified occurrence SEQUENCE must equal its contract in
+    // order and multiplicity: the reducer carries all SEVEN occurrences
+    // (its three gather tuples once per stage + labels), and the labels
+    // read occurs ONLY in stage-b.
     for (const f of WORKFLOWS) {
-      const wf = f.split("/").pop() ?? "";
-      const found = new Set(
-        collectEffectiveGhInvocations(readFileSync(f, "utf8"), f).map((i) => i.words.join(" ")),
-      );
-      const declared = new Set(
-        PERMITTED_FIXED_READS.filter((t) => t.workflows.includes(wf)).map((t) => t.argv.join(" ")),
-      );
-      expect([...found].sort(), wf).toEqual([...declared].sort());
+      const r = checkWorkflowReadContract(readFileSync(f, "utf8"), f);
+      expect(r.ok, `${f}: ${r.detail}`).toBe(true);
+      expect(r.found).toEqual(r.expected);
     }
+    const reducer = checkWorkflowReadContract(readFileSync(WF_REDUCER, "utf8"), WF_REDUCER);
+    expect(reducer.found).toHaveLength(7);
+    const labelsOccurrences = reducer.found.filter((x) => x.includes("/labels "));
+    expect(labelsOccurrences).toEqual([`stage-b ${READ_LABELS}`]);
+  });
+
+  it("the ordered contract rejects duplicates, cross-stage moves, missing reads, and reorders of PERMITTED tuples (round 16)", () => {
+    const src = readFileSync(WF_REDUCER, "utf8");
+    // Codex's exact repro: the Stage-B-only labels read injected into
+    // Stage A — the tuple SET is unchanged; the occurrence contract fails.
+    const stageAAnchor = `if ! gh api --paginate "repos/\${REPO}/issues/\${ISSUE_NUMBER}/comments" > "\${DIR}/comments.pages"; then`;
+    const firstComments = src.indexOf(stageAAnchor);
+    expect(firstComments).toBeGreaterThan(-1);
+    const lineStart = src.lastIndexOf("\n", firstComments) + 1;
+    const indent = src.slice(lineStart, firstComments);
+    const labelsRead = `if ! gh api --paginate "repos/\${REPO}/issues/\${ISSUE_NUMBER}/labels" > "\${DIR}/labels.pages"; then\n${indent}  exit 97\n${indent}fi\n`;
+    const injected = src.slice(0, lineStart) + indent + labelsRead + src.slice(lineStart);
+    const moved = checkWorkflowReadContract(injected, WF_REDUCER);
+    expect(moved.ok, "Stage-B labels read injected into Stage A must fail the contract").toBe(false);
+    expect(checkWorkflowComplete(injected, WF_REDUCER).map((v) => v.rule)).toContain("read-contract");
+
+    // A DUPLICATE of a permitted tuple (same stage) fails on multiplicity.
+    const dupSrc = src.slice(0, lineStart) + indent + stageAAnchor + `\n${indent}  exit 97\n${indent}fi\n` + src.slice(lineStart);
+    expect(checkWorkflowReadContract(dupSrc, WF_REDUCER).ok, "duplicate permitted read must fail").toBe(false);
+
+    // A MISSING read fails: drop the watchdog's only read.
+    const wdSrc = readFileSync(WF_WATCHDOG, "utf8");
+    const wdLines = wdSrc.split("\n").filter((l) => !l.includes("if ! gh api"));
+    expect(checkWorkflowReadContract(wdLines.join("\n"), WF_WATCHDOG).ok, "missing read must fail").toBe(false);
+
+    // A REORDER fails: swap merge-guard's issue.json and comments reads
+    // (same set, same stage, different order).
+    const mgSrc = readFileSync(WF_MERGE_GUARD, "utf8");
+    const issueLine = `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/issue.json"; then`;
+    const commentsLine = `if ! gh api --paginate "repos/\${REPO}/issues/\${ISSUE_NUMBER}/comments" > "\${DIR}/comments.pages"; then`;
+    const SWAP = " SWAP ";
+    const swapped = mgSrc.replace(issueLine, SWAP).replace(commentsLine, issueLine).replace(SWAP, commentsLine);
+    expect(swapped).not.toBe(mgSrc);
+    expect(checkWorkflowReadContract(swapped, WF_MERGE_GUARD).ok, "reordered reads must fail").toBe(false);
+  });
+
+  it("workflow identity is MANDATORY and exact: missing, basename-only, absolute, and same-basename-elsewhere identities permit nothing (round 16)", () => {
+    const src = readFileSync(WF_REDUCER, "utf8");
+    for (const badIdentity of [
+      undefined as unknown as string,            // missing identity
+      "straylight-reducer.yml",                  // basename only
+      "/tmp/not-a-workflow/straylight-reducer.yml", // same basename, wrong tree
+      `${process.cwd()}/${WF_REDUCER}`,          // absolute path to the real file
+      ".github/workflows/other.yml",             // unknown workflow
+    ]) {
+      const invocations = collectEffectiveGhInvocations(src, badIdentity);
+      expect(invocations.length, String(badIdentity)).toBeGreaterThan(0);
+      for (const inv of invocations) {
+        expect(inv.permitted, `${String(badIdentity)}: ${inv.words.join(" ")}`).toBe(false);
+      }
+      expect(
+        checkWorkflowBoundary(src, badIdentity).map((v) => v.rule),
+        String(badIdentity),
+      ).toContain("workflow-identity");
+    }
+    // The exact repository-relative identity remains fully permitted.
+    expect(collectEffectiveGhInvocations(src, WF_REDUCER).every((i) => i.permitted)).toBe(true);
   });
 
   it("FAIL CLOSED: wrapped, unresolved, and xargs-hidden gh invocations surface as NON-permitted — never as an empty invocation set (round 14)", () => {
@@ -1081,7 +1282,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
       `doas gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
       `timeout \$DUR gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
     ]) {
-      const invocations = collectEffectiveGhInvocations(hidden);
+      const invocations = collectEffectiveGhInvocations(hidden, WF_REDUCER);
       expect(invocations.length, `${hidden}: collector returned an empty set — the wrapper hid the invocation`).toBeGreaterThan(0);
       for (const inv of invocations) {
         expect(inv.permitted, `${hidden}: ${inv.words.join(" ")}`).toBe(false);
@@ -1100,7 +1301,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
       [`stdbuf -oL gh api "repos/x/y/pulls/1" > /tmp/pr.json`, true],
       [`setsid gh api "repos/x/y/pulls/1" > /tmp/pr.json`, true],
     ] as const) {
-      const invocations = collectEffectiveGhInvocations(payload);
+      const invocations = collectEffectiveGhInvocations(payload, WF_REDUCER);
       expect(invocations, payload).toHaveLength(1);
       expect(invocations[0]?.words[0], payload).toBe("gh");
       expect(invocations[0]?.words[1], payload).toBe("api");
@@ -1114,7 +1315,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
       `timeout \$DUR gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
       `stdbuf --weird gh api "repos/x/y/pulls/1"`,
     ]) {
-      const invocations = collectEffectiveGhInvocations(payload);
+      const invocations = collectEffectiveGhInvocations(payload, WF_REDUCER);
       expect(invocations.length, payload).toBeGreaterThan(0);
       expect(invocations.some((i) => i.unresolved), payload).toBe(true);
     }
@@ -1131,7 +1332,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
       `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/issue.json"; echo pre-then; then`,
     ];
     for (const payload of compound) {
-      const invocations = collectEffectiveGhInvocations(payload);
+      const invocations = collectEffectiveGhInvocations(payload, WF_REDUCER);
       expect(invocations.length, payload).toBeGreaterThan(0);
       for (const inv of invocations) {
         expect(inv.guarded, `${payload}: sole-condition context lost`).toBe(false);
@@ -1149,7 +1350,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
       `if ! gh api --paginate "repos/\${REPO}/issues?state=closed&per_page=100" > "\${DIR}/enumeration.pages"; then`,
     ];
     for (const payload of offTuple) {
-      const invocations = collectEffectiveGhInvocations(payload);
+      const invocations = collectEffectiveGhInvocations(payload, WF_REDUCER);
       expect(invocations.length, payload).toBeGreaterThan(0);
       for (const inv of invocations) {
         expect(inv.guarded, payload).toBe(true); // the guard is intact — the TUPLE is what fails
@@ -1159,8 +1360,8 @@ describe("fixed entry points own every derived fetch and every write", () => {
     // Workflow-identity binding: a tuple is permitted only in a workflow
     // that declares it — issue.json's read inside bootstrap is refused.
     const issueRead = `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/issue.json"; then`;
-    const inReducer = collectEffectiveGhInvocations(issueRead, ".github/workflows/straylight-reducer.yml");
-    const inBootstrap = collectEffectiveGhInvocations(issueRead, ".github/workflows/straylight-bootstrap.yml");
+    const inReducer = collectEffectiveGhInvocations(issueRead, WF_REDUCER);
+    const inBootstrap = collectEffectiveGhInvocations(issueRead, WF_BOOTSTRAP);
     expect(inReducer[0]?.permitted).toBe(true);
     expect(inBootstrap[0]?.permitted).toBe(false);
   });
