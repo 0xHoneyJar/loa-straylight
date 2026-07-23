@@ -838,45 +838,157 @@ function structuralLines(src: string): StructuralLine[] {
 }
 
 interface ReducerStep {
-  /** EVERY step-level id property recorded, in order. */
+  /** EVERY step-level id property recorded, inline or standalone, in order. */
   ids: string[];
   /** 0-based raw index of the `- ` line opening this step. */
   startIdx: number;
-  /** 0-based raw line span of the step's run block-scalar body. */
+  /** 0-based raw line span of the step's valid block-scalar run body. */
   runSpans: Array<{ start: number; end: number }>;
+  /** Count of run properties seen (inline or standalone, any form). */
+  runCount: number;
+  /** Count of properties seen — an item with none is not a mapping. */
+  propCount: number;
 }
 
 const STEP_ID_VALUE_RE = /^[A-Za-z_][A-Za-z0-9_-]*$/;
+const INLINE_PROP_RE = /^([A-Za-z_][A-Za-z0-9_-]*):(?:\s+(.*))?$/;
 
-// Parse jobs.reduce.steps from the structural-line stream. Every
-// deviation from the expected shape returns a failure detail — the
-// occurrence contract fails closed on it, never reclassifies around it.
+// Strip inline quoted spans and trailing comments from a structural
+// line before token scans: a quoted VALUE mentioning `id: gather_b`
+// (if: ${{ 'id: gather_b' != … }}) is data, not structure.
+function stripInlineQuotesAndComment(text: string): string {
+  let out = "";
+  let q: '"' | "'" | null = null;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i] ?? "";
+    if (q !== null) {
+      if (c === "\\" && q === '"') { i++; continue; }
+      if (c === q) q = null;
+      continue;
+    }
+    if (c === '"' || c === "'") { q = c as '"' | "'"; continue; }
+    if (c === "#" && (i === 0 || /\s/.test(text[i - 1] ?? ""))) break;
+    out += c;
+  }
+  return out;
+}
+
+// Parse jobs.reduce.steps from the structural-line stream. This is a
+// STRICT parser for the checked-in YAML subset: block mappings, one
+// step sequence, dash items whose payload is either empty or ONE plain
+// `key: value` inline property, standalone indent-8 properties, and
+// block-scalar run bodies. Every parseable construct outside that
+// subset — scalar items, sequence-valued items, flow mappings/
+// sequences, aliases/merges, duplicate structural keys, unparseable
+// inline payloads — is REJECTED, never ignored. Every deviation
+// returns a failure detail and the occurrence contract fails closed.
 function parseReducerStructure(src: string):
   | { ok: true; steps: ReducerStep[] }
   | { ok: false; detail: string } {
   const rawLines = src.split("\n");
   const sl = structuralLines(src);
-  const jobsAt = sl.findIndex((l) => l.indent === 0 && /^jobs:\s*(#.*)?$/.test(l.text));
-  if (jobsAt === -1) return { ok: false, detail: "no top-level jobs: mapping" };
+
+  // Unique structural mappings: exactly one top-level jobs, one reduce
+  // under it, one steps under that. First-match navigation would let a
+  // duplicate key shadow the real one.
+  // Uniqueness counts the KEY in any value form (jobs: {} is still a
+  // second jobs key); the navigable occurrence must then be the exact
+  // bare block-mapping form the subset supports.
+  const jobsKeys = sl.filter((l) => l.indent === 0 && /^jobs:(\s|$)/.test(l.text));
+  if (jobsKeys.length !== 1) return { ok: false, detail: `expected exactly one top-level jobs key (found ${jobsKeys.length})` };
+  const jobsLines = jobsKeys.filter((l) => /^jobs:\s*(#.*)?$/.test(l.text));
+  if (jobsLines.length !== 1) return { ok: false, detail: "top-level jobs is not a bare block mapping" };
+  const jobsAt = sl.findIndex((l) => l === jobsLines[0]);
   const jobsEnd = sl.findIndex((l, i) => i > jobsAt && l.indent === 0);
   const jobsSpan = sl.slice(jobsAt + 1, jobsEnd === -1 ? sl.length : jobsEnd);
-  const reduceAt = jobsSpan.findIndex((l) => l.indent === 2 && /^ {2}reduce:\s*(#.*)?$/.test(l.text));
-  if (reduceAt === -1) return { ok: false, detail: "jobs.reduce job not found" };
+
+  // No aliases, anchors, or merge keys anywhere under jobs — the subset
+  // has no aliasing, so any spelling of it is unsupported structure.
+  for (const l of jobsSpan) {
+    const t = stripInlineQuotesAndComment(l.text);
+    if (/(^|\s)<<:/.test(t) || /:\s*[&*][A-Za-z0-9_-]/.test(t)) {
+      return { ok: false, detail: `unsupported YAML alias/anchor/merge under jobs: ${l.text.trim()}` };
+    }
+  }
+
+  const reduceKeys = jobsSpan.filter((l) => l.indent === 2 && /^ {2}reduce:(\s|$)/.test(l.text));
+  if (reduceKeys.length !== 1) return { ok: false, detail: `expected exactly one jobs.reduce key (found ${reduceKeys.length})` };
+  const reduceLines = reduceKeys.filter((l) => /^ {2}reduce:\s*(#.*)?$/.test(l.text));
+  if (reduceLines.length !== 1) return { ok: false, detail: "jobs.reduce is not a bare block mapping" };
+  const reduceAt = jobsSpan.findIndex((l) => l === reduceLines[0]);
   const reduceEnd = jobsSpan.findIndex((l, i) => i > reduceAt && l.indent <= 2);
   const reduceSpan = jobsSpan.slice(reduceAt + 1, reduceEnd === -1 ? jobsSpan.length : reduceEnd);
-  const stepsAt = reduceSpan.findIndex((l) => l.indent === 4 && /^ {4}steps:\s*(#.*)?$/.test(l.text));
-  if (stepsAt === -1) return { ok: false, detail: "jobs.reduce.steps not found (missing, renamed, inline-valued, or hidden in a scalar)" };
+
+  const stepsKeys = reduceSpan.filter((l) => l.indent === 4 && /^ {4}steps:(\s|$)/.test(l.text));
+  if (stepsKeys.length !== 1) return { ok: false, detail: `expected exactly one jobs.reduce.steps key (found ${stepsKeys.length})` };
+  const stepsLines = stepsKeys.filter((l) => /^ {4}steps:\s*(#.*)?$/.test(l.text));
+  if (stepsLines.length !== 1) return { ok: false, detail: "jobs.reduce.steps is not a bare block sequence (inline/flow value)" };
+  const stepsAt = reduceSpan.findIndex((l) => l === stepsLines[0]);
   const stepsEnd = reduceSpan.findIndex((l, i) => i > stepsAt && l.indent <= 4);
   const stepsSpan = reduceSpan.slice(stepsAt + 1, stepsEnd === -1 ? reduceSpan.length : stepsEnd);
   if (stepsSpan.length === 0) return { ok: false, detail: "jobs.reduce.steps is empty" };
 
   const steps: ReducerStep[] = [];
+  // Record an id/run property (inline or standalone) onto a step; the
+  // run span is derived only from a valid standalone block-scalar run.
+  const recordProp = (
+    step: ReducerStep,
+    key: string,
+    value: string,
+    line: StructuralLine,
+    standalone: boolean,
+  ): string | null => {
+    step.propCount++;
+    if (/^[{[]/.test(value)) {
+      return `unsupported flow value on step property ${key}: ${value}`;
+    }
+    if (key === "id") {
+      if (!STEP_ID_VALUE_RE.test(value)) return `malformed step id: ${JSON.stringify(value)}`;
+      step.ids.push(value);
+      return null;
+    }
+    if (key === "run") {
+      step.runCount++;
+      if (!standalone || !BLOCK_SCALAR_OPEN_RE.test(line.text)) {
+        return "unsupported run form: step run must be a standalone block-scalar property";
+      }
+      let end = line.idx;
+      for (let j = line.idx + 1; j < rawLines.length; j++) {
+        const body = rawLines[j] ?? "";
+        const ind = body.length - body.trimStart().length;
+        if (body.trim().length === 0 || ind > 8) { end = j; continue; }
+        break;
+      }
+      step.runSpans.push({ start: line.idx + 1, end });
+      return null;
+    }
+    return null;
+  };
+
   for (const l of stepsSpan) {
     if (l.indent === 6) {
-      if (!l.text.startsWith("      - ")) {
+      // A sequence item. Parse — never discard — its payload.
+      const item = l.text.slice(6);
+      if (item !== "-" && !item.startsWith("- ")) {
         return { ok: false, detail: `jobs.reduce.steps is not a sequence (found non-item at indent 6: ${l.text.trim()})` };
       }
-      steps.push({ ids: [], startIdx: l.idx, runSpans: [] });
+      const step: ReducerStep = { ids: [], startIdx: l.idx, runSpans: [], runCount: 0, propCount: 0 };
+      steps.push(step);
+      const payload = item === "-" ? "" : item.slice(2).trim();
+      if (payload.length > 0) {
+        if (/^[{[]/.test(payload)) {
+          return { ok: false, detail: `unsupported flow step item: ${payload}` };
+        }
+        if (payload.startsWith("- ")) {
+          return { ok: false, detail: `sequence-valued step item is not a mapping: ${payload}` };
+        }
+        const m = stripInlineQuotesAndComment(payload).trim().match(INLINE_PROP_RE);
+        if (m === null) {
+          return { ok: false, detail: `step item is not a mapping (scalar or unparseable payload): ${payload}` };
+        }
+        const err = recordProp(step, m[1] ?? "", (m[2] ?? "").trim(), l, false);
+        if (err !== null) return { ok: false, detail: err };
+      }
       continue;
     }
     const step = steps[steps.length - 1];
@@ -884,35 +996,26 @@ function parseReducerStructure(src: string):
       return { ok: false, detail: `jobs.reduce.steps content precedes the first sequence item: ${l.text.trim()}` };
     }
     if (l.indent === 8) {
-      const idMatch = l.text.match(/^ {8}id:\s*(.*?)\s*(#.*)?$/);
-      if (idMatch !== null) {
-        const value = (idMatch[1] ?? "").trim();
-        if (!STEP_ID_VALUE_RE.test(value)) {
-          return { ok: false, detail: `malformed step id: ${JSON.stringify(value)}` };
-        }
-        step.ids.push(value);
-        continue;
+      const m = l.text.trim().match(INLINE_PROP_RE);
+      if (m !== null) {
+        // Comments/quotes stripped only for id values (plain-word ids);
+        // run detection needs the raw line for the block-scalar header.
+        const value = stripInlineQuotesAndComment((m[2] ?? "")).trim();
+        const err = recordProp(step, m[1] ?? "", m[1] === "run" ? (m[2] ?? "").trim() : value, l, true);
+        if (err !== null) return { ok: false, detail: err };
       }
-      if (/^ {8}run:/.test(l.text)) {
-        if (!BLOCK_SCALAR_OPEN_RE.test(l.text)) {
-          return { ok: false, detail: "step run property is not a block scalar" };
-        }
-        let end = l.idx;
-        for (let j = l.idx + 1; j < rawLines.length; j++) {
-          const body = rawLines[j] ?? "";
-          const ind = body.length - body.trimStart().length;
-          if (body.trim().length === 0 || ind > 8) { end = j; continue; }
-          break;
-        }
-        step.runSpans.push({ start: l.idx + 1, end });
-      }
+    } else if (l.indent === 7) {
+      return { ok: false, detail: `ambiguous step content at indent 7: ${l.text.trim()}` };
     }
   }
   for (const step of steps) {
+    if (step.propCount === 0) {
+      return { ok: false, detail: "empty step item (not a mapping)" };
+    }
     if (step.ids.length > 1) {
       return { ok: false, detail: `step has duplicate id properties: ${step.ids.join(", ")}` };
     }
-    if (step.runSpans.length > 1) {
+    if (step.runCount > 1) {
       return { ok: false, detail: "step has duplicate run properties (ambiguous source span)" };
     }
   }
@@ -934,13 +1037,22 @@ const SINGLE_STAGE: Record<string, string> = {
 
 // Resolve the two anchored steps: each anchor id must resolve to exactly
 // one jobs.reduce step, in declared order, and must not appear as a
-// structural step-level id ANYWHERE else in the file (another job's
-// step carrying gather_a would make the anchor ambiguous). Fails closed.
+// structural step-level id ANYWHERE else in the file — standalone
+// (`        id: X`) OR inline after a dash (`      - id: X`), in any
+// job. Another job's step carrying gather_a, in either spelling, makes
+// the anchor ambiguous. Comments and quoted/scalar text are already
+// masked or stripped and carry no weight. Fails closed.
 function resolveStageAnchors(src: string, steps: ReducerStep[]):
   | { ok: true; anchored: Array<{ stage: string; step: ReducerStep }> }
   | { ok: false; detail: string } {
-  const anchorIdLinesInFile = (id: string) =>
-    structuralLines(src).filter((l) => new RegExp(`^ {8}id:\\s*${id}\\s*(#.*)?$`).test(l.text)).length;
+  // Count every structural spelling that could bind the id to a step:
+  // standalone `id: X`, inline `- id: X`, and flow-ish `{ id: X` /
+  // `, id: X` (unsupported forms are rejected elsewhere, but an anchor
+  // id inside one is ALSO ambiguity here — belt and suspenders).
+  const anchorIdOccurrencesInFile = (id: string) => {
+    const re = new RegExp(`(^|[-{,]\\s*|\\s)id:\\s*${id}(\\s|,|}|$)`);
+    return structuralLines(src).filter((l) => re.test(stripInlineQuotesAndComment(l.text))).length;
+  };
   const anchored: Array<{ stage: string; step: ReducerStep }> = [];
   let prevIndex = -1;
   for (const a of STAGE_ANCHORS) {
@@ -948,7 +1060,7 @@ function resolveStageAnchors(src: string, steps: ReducerStep[]):
     if (carriers.length !== 1) {
       return { ok: false, detail: `stage anchor ${a.stepId} must resolve to exactly one jobs.reduce step (found ${carriers.length})` };
     }
-    if (anchorIdLinesInFile(a.stepId) !== 1) {
+    if (anchorIdOccurrencesInFile(a.stepId) !== 1) {
       return { ok: false, detail: `stage anchor id ${a.stepId} appears outside jobs.reduce.steps (ambiguous anchor)` };
     }
     const idx = carriers[0]?.i ?? -1;
@@ -1616,6 +1728,72 @@ describe("fixed entry points own every derived fetch and every write", () => {
     );
 
     // Positive control: the checked-in reducer parses and passes.
+    expect(checkWorkflowReadContract(src, WF_REDUCER).ok).toBe(true);
+  });
+
+  it("sequence-item payloads are PARSED, never discarded: scalar items, inline duplicate ids, shadow-job inline anchors, and duplicate structural keys all fail closed (round 19)", () => {
+    const src = readFileSync(WF_REDUCER, "utf8");
+    const failsBoth = (mutated: string, why: string) => {
+      expect(mutated, `${why}: mutation did not apply`).not.toBe(src);
+      expect(checkWorkflowReadContract(mutated, WF_REDUCER).ok, why).toBe(false);
+      expect(checkWorkflowComplete(mutated, WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
+    };
+
+    // Codex repro 1: a scalar sequence item — not a mapping, rejected,
+    // never silently skipped.
+    failsBoth(src.replace("    steps:\n", "    steps:\n      - harmless-scalar\n"), "scalar step item");
+
+    // Codex repro 2: a REAL shadow job whose step carries the anchor id
+    // INLINE after the dash — ambiguity even though jobs.reduce is intact.
+    failsBoth(
+      src.trimEnd() +
+        "\n  shadow:\n    runs-on: ubuntu-latest\n    steps:\n      - id: gather_a\n        run: |\n          echo shadow\n",
+      "inline - id: gather_a in a shadow job",
+    );
+
+    // Inline duplicate id: `- id: x` followed by a standalone id.
+    failsBoth(
+      src.replace(
+        "      - name: Stage A — gather evidence twice (raw bytes to files)\n        id: gather_a",
+        "      - id: gather_a\n        id: gather_a2\n        name: Stage A — gather evidence twice (raw bytes to files)",
+      ),
+      "inline duplicate id",
+    );
+
+    // Inline malformed id.
+    failsBoth(
+      src.replace("    steps:\n", "    steps:\n      - id: not a valid id!\n        run: |\n          true\n"),
+      "inline malformed id",
+    );
+
+    // Inline run (unsupported form) and duplicate run.
+    failsBoth(
+      src.replace("    steps:\n", "    steps:\n      - run: echo inline\n"),
+      "inline run form",
+    );
+    failsBoth(
+      src.replace(
+        "        run: |\n          set -euo pipefail\n          gather_once()",
+        "        run: |\n          true\n        run: |\n          set -euo pipefail\n          gather_once()",
+      ),
+      "duplicate run property",
+    );
+
+    // Duplicate structural mappings: jobs, reduce, steps.
+    failsBoth(src.replace("jobs:\n", "jobs:\n  reduce2: {}\njobs:\n"), "duplicate top-level jobs");
+    failsBoth(src.replace("  reduce:\n", "  reduce:\n    if: false\n  reduce:\n"), "duplicate reduce under jobs");
+    failsBoth(src.replace("    steps:\n", "    steps: []\n    steps:\n"), "duplicate steps under reduce");
+
+    // Flow syntax: a flow-mapping step item (with and without the
+    // anchor id) and a flow-sequence item — unsupported, fail closed.
+    failsBoth(src.replace("    steps:\n", "    steps:\n      - { id: gather_b, run: echo x }\n"), "flow mapping containing gather_b");
+    failsBoth(src.replace("    steps:\n", "    steps:\n      - { name: flow-step }\n"), "unsupported flow step item");
+    failsBoth(src.replace("    steps:\n", "    steps:\n      - [a, b]\n"), "flow sequence step item");
+
+    // Sequence-valued item (nested block sequence where a mapping goes).
+    failsBoth(src.replace("    steps:\n", "    steps:\n      - - nested\n"), "sequence-valued step item");
+
+    // Positive control: the checked-in reducer still parses and passes.
     expect(checkWorkflowReadContract(src, WF_REDUCER).ok).toBe(true);
   });
 

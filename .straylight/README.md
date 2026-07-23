@@ -201,18 +201,25 @@ extra, missing, duplicated, moved, or reordered read fails even when
 every individual line is a permitted tuple. Reducer occurrences are
 bound to the UNIQUE STRUCTURAL YAML STEP IDS `gather_a`/`gather_b`,
 resolved by a deterministic structural scan SCOPED to the parsed
-`jobs.reduce.steps` sequence (not indentation matching, and not a
-general YAML parser — it enforces exactly this workflow shape):
-comments, quoted strings, and literal/folded block-scalar bodies are
-masked out of key recognition, every step-level `id` property is
-recorded (duplicate or malformed ids reject the step), each anchor
-must resolve to exactly one step in order with the anchor id
-appearing nowhere else in the file, and a read classifies into a
-stage ONLY when its line lies inside that step's actual `run` block
-scalar — a read anywhere else is unanchored and never matches a
-contract entry. Renaming `jobs.reduce` or `steps:`, hiding apparent
-steps inside a block scalar, appending a second `id` line, or
-spoofing a free-text marker all fail the contract closed. `g'h' api …`,
+`jobs.reduce.steps` sequence. The scanner is a STRICT parser for the
+checked-in YAML subset — block mappings, one step sequence, dash
+items whose payload is empty or one plain inline `key: value`
+property, standalone step properties, block-scalar `run` bodies —
+and REJECTS every parseable construct outside that subset rather
+than ignoring it: scalar or sequence-valued step items, flow
+mappings/sequences, aliases/anchors/merges, inline `run` forms, and
+unparseable payloads all fail closed. `jobs`, `jobs.reduce`, and
+`jobs.reduce.steps` must each occur exactly once (duplicate keys are
+refused, in any value form). Comments, quoted strings, and
+literal/folded block-scalar bodies are masked out of key
+recognition; every step-level `id`/`run` property — inline or
+standalone — is recorded (duplicate or malformed ones reject the
+step); each anchor must resolve to exactly one step in order with
+the anchor id appearing in no other structural position in the file
+(another job's step, inline or standalone, is ambiguity); and a
+read classifies into a stage ONLY when its line lies inside that
+step's actual `run` block scalar — a read anywhere else is
+unanchored and never matches a contract entry. `g'h' api …`,
 `command gh api …`, `env TOKEN=x gh api …`, and `timeout 30 gh api …`
 are the same violation as `gh api …`. The resolution is FAIL CLOSED:
 a wrapper
