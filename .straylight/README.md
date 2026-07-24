@@ -163,20 +163,35 @@ authorization layer is EXACT-BYTE WORKFLOW FINGERPRINTS: each of the
 four checked-in workflow files is pinned by a literal committed
 SHA-256 constant computed over the ORIGINAL FILE BYTES BEFORE ANY
 DECODING, and every enforcement surface (boundary check, read
-contract, complete check, invocation collector) takes raw bytes,
+contract, complete check, invocation collector) takes raw bytes and
 verifies exact repository-relative identity + exact raw-byte
-fingerprint through ONE shared verifier, and decodes text (strict
-UTF-8) only after verification succeeds — a decoded string is
-refused as an authorization input, so distinct invalid byte streams
-can never collapse through replacement-character decoding. ANY byte
-difference — a flipped quote, an appended comment, a changed line
-ending, whitespace, a BOM, a re-encoding — fails all four surfaces
-closed, and a fingerprint mismatch is never reported as an
-empty/clean result.
+fingerprint through ONE shared verifier FIRST. A fingerprint or
+identity mismatch STOPS AUTHORIZATION IMMEDIATELY, before any
+decoding or diagnostics: the surface returns exactly the fingerprint
+refusal (the collector returns exactly one explicit non-permitted
+sentinel) and no decoder, scanner, parser, or diagnostic helper ever
+touches the refused bytes — mutated content is never semantically
+inspected by an enforcement surface, whatever it contains. Only
+after verification succeeds is text decoded (strict UTF-8) — a
+decoded string is refused as an authorization input, so distinct
+invalid byte streams can never collapse through
+replacement-character decoding. ANY byte difference — a flipped
+quote, an appended comment, a changed line ending, whitespace, a
+BOM, a re-encoding — fails all four surfaces closed, and a
+fingerprint mismatch is never reported as an empty/clean result.
 Editing a workflow therefore REQUIRES updating its pinned fingerprint
 alongside explicit test review — that reviewed step is the contract's
 purpose. Beneath the fingerprint gate, a diagnostic layer names the
-specific construct a mutation introduced: an executable mutation
+specific construct a mutation introduced — it runs ONLY over exact
+fingerprint-valid canonical bytes when reached through enforcement;
+mutated text reaches it solely through the exported diagnose* APIs,
+which authorize nothing. Its quoted-key duplicate fixtures are
+parseable YAML documents carrying a GENUINE duplicate of one
+canonical key (quoted + unquoted spellings in the same mapping, both
+spellings inserted where the key does not already exist),
+independently audited by PyYAML's node graph across all five key
+classes and all four workflows. The diagnostics comprise an
+executable mutation
 matrix over the workflows' LOGICAL shell lines (continuations joined,
 escaped/quoted command words normalized, substitutions scanned
 nesting-aware, process substitution refused), effective-command

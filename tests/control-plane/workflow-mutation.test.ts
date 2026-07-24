@@ -131,6 +131,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 
 const WORKFLOWS = [
   ".github/workflows/straylight-bootstrap.yml",
@@ -793,10 +794,11 @@ export interface GhInvocation {
 // head still carrying a gh word in its argv — is REPORTED as a
 // non-permitted invocation, never silently dropped: "unresolved" must
 // not read as "no gh invocation here".
-// Fingerprint sentinel: when the bytes do not match the pinned
-// workflow, the collector must NEVER return an empty (clean-looking)
-// list nor mark anything permitted. When no real invocation exists to
-// carry the failure, a single explicit non-permitted sentinel does.
+// Fingerprint sentinel (round 22): when the bytes do not match the
+// pinned workflow, the collector's ENTIRE result is a single explicit
+// non-permitted sentinel — never an empty (clean-looking) list, never
+// anything permitted, and never a parsed invocation: enforcement never
+// decodes or scans fingerprint-invalid bytes at all.
 const FINGERPRINT_SENTINEL_WORDS = ["<workflow-fingerprint-mismatch>"] as const;
 
 // DIAGNOSTIC collector (round 20): the shell/effective-command analysis
@@ -826,34 +828,16 @@ export function diagnoseEffectiveGhInvocations(src: string, workflowFile: string
   return out;
 }
 
-// Strict decode for DIAGNOSTIC text over failed bytes: enforcement
-// never decodes mutated bytes, but the collector still surfaces the
-// non-permitted invocations a mutation introduced when the bytes are
-// valid UTF-8. Malformed bytes yield no text at all (sentinel only).
-function tryStrictDecode(bytes: WorkflowBytes): string | null {
-  try {
-    return STRICT_UTF8.decode(bytes);
-  } catch {
-    return null;
-  }
-}
-
 // EXPORTED enforcement surface: exact identity + exact RAW-BYTE
-// fingerprint gate the diagnostics. On mismatch nothing is permitted
-// and the result is never empty (a mismatch must not read as "no
-// invocations, clean"). Text is decoded (strict UTF-8) only for
-// diagnostics — the authorization decision is made on bytes alone.
+// fingerprint FIRST (round 22) — on any mismatch the surface returns
+// the single sentinel IMMEDIATELY: fingerprint-invalid bytes are never
+// decoded, scanned, or parsed by an enforcement surface, so the result
+// carries no parsed invocations a caller could mistake for analysis of
+// unauthorized bytes. Only verified canonical bytes are decoded
+// (strict UTF-8) and handed to the diagnostics.
 export function collectEffectiveGhInvocations(bytes: WorkflowBytes, workflowFile: string): GhInvocation[] {
-  const fingerprintFailed = verifyWorkflowFingerprint(bytes, workflowFile) !== null;
-  const text = bytes instanceof Uint8Array ? tryStrictDecode(bytes) : null;
-  const out = text === null
-    ? []
-    : diagnoseEffectiveGhInvocations(text, workflowFile).map((inv) => ({
-        ...inv,
-        permitted: !fingerprintFailed && inv.permitted,
-      }));
-  if (fingerprintFailed && out.length === 0) {
-    out.push({
+  if (verifyWorkflowFingerprint(bytes, workflowFile) !== null) {
+    return [{
       line: 0,
       words: [...FINGERPRINT_SENTINEL_WORDS],
       guarded: false,
@@ -861,9 +845,9 @@ export function collectEffectiveGhInvocations(bytes: WorkflowBytes, workflowFile
       inSubstitution: false,
       unresolved: true,
       permitted: false,
-    });
+    }];
   }
-  return out;
+  return diagnoseEffectiveGhInvocations(STRICT_UTF8.decode(bytes), workflowFile);
 }
 
 // ---------------------------------------------------------------------------
@@ -1292,9 +1276,11 @@ export function diagnoseWorkflowReadContract(src: string, workflowFile: string):
   };
 }
 
-// EXPORTED enforcement surface: exact RAW BYTES first (rounds 20-21) —
-// a mutated workflow can never be ok, whatever the diagnostics
-// conclude, and text exists only AFTER the fingerprint verifies.
+// EXPORTED enforcement surface: exact RAW BYTES first (rounds 20-22) —
+// an identity or fingerprint mismatch returns IMMEDIATELY with only the
+// fingerprint reason (found stays empty; no decode, no structural or
+// occurrence analysis touches refused bytes). Text exists only AFTER
+// the fingerprint verifies.
 export function checkWorkflowReadContract(bytes: WorkflowBytes, workflowFile: string): ReadContractResult {
   const expected = [...(WORKFLOW_READ_CONTRACTS[workflowFile] ?? [])];
   const fp = verifyWorkflowFingerprint(bytes, workflowFile);
@@ -1446,35 +1432,53 @@ export function diagnoseWorkflowBoundary(src: string, workflowFile: string): Vio
   return violations;
 }
 
-// EXPORTED enforcement surface: identity + exact byte fingerprint gate
-// the per-line diagnostics (round 20). A mutated workflow ALWAYS carries
-// at least the workflow-fingerprint violation, whatever the diagnostics
-// conclude; the diagnostics still run to name the specific construct.
+// EXPORTED enforcement surface: identity + exact byte fingerprint FIRST
+// (round 22). On any identity or fingerprint mismatch the check returns
+// IMMEDIATELY with exactly that violation — fingerprint-invalid bytes
+// are never decoded or scanned, so no shell/YAML diagnostic ever runs
+// over unauthorized bytes (a diagnostic result on refused input would
+// itself be semantic analysis of what the fingerprint just refused).
+// Diagnostics run only over verified canonical bytes.
 export function checkWorkflowBoundary(bytes: WorkflowBytes, workflowFile: string): Violation[] {
-  const violations: Violation[] = [];
   if (!KNOWN_WORKFLOWS.has(workflowFile)) {
-    violations.push({ rule: "workflow-identity", line: 0, text: `unknown workflow identity: ${String(workflowFile)}` });
-  } else {
-    const fp = verifyWorkflowFingerprint(bytes, workflowFile);
-    if (fp !== null) violations.push({ rule: "workflow-fingerprint", line: 0, text: fp });
+    return [{ rule: "workflow-identity", line: 0, text: `unknown workflow identity: ${String(workflowFile)}` }];
   }
-  // Diagnostics name the construct when the bytes are decodable text;
-  // malformed bytes stay undecoded (the fingerprint violation stands).
-  const text = bytes instanceof Uint8Array ? tryStrictDecode(bytes) : null;
-  if (text !== null) violations.push(...diagnoseWorkflowBoundary(text, workflowFile));
-  return violations;
+  const fp = verifyWorkflowFingerprint(bytes, workflowFile);
+  if (fp !== null) {
+    return [{ rule: "workflow-fingerprint", line: 0, text: fp }];
+  }
+  return diagnoseWorkflowBoundary(STRICT_UTF8.decode(bytes), workflowFile);
 }
 
 // The COMPLETE workflow check (round 16): per-line boundary rules PLUS
-// the whole-workflow ordered occurrence contract — both behind the
-// round-20 fingerprint gate (checkWorkflowBoundary and
-// checkWorkflowReadContract each verify it via the ONE shared verifier).
+// the whole-workflow ordered occurrence contract. Round 22: identity +
+// fingerprint verify FIRST and any mismatch returns exactly that
+// violation — no boundary rule, no contract analysis, no decode runs
+// over fingerprint-invalid bytes. Only exact canonical bytes reach the
+// composed diagnostics (each inner surface re-verifies and succeeds).
 export function checkWorkflowComplete(bytes: WorkflowBytes, workflowFile: string): Violation[] {
-  const violations = checkWorkflowBoundary(bytes, workflowFile);
-  if (KNOWN_WORKFLOWS.has(workflowFile)) {
-    const contract = checkWorkflowReadContract(bytes, workflowFile);
-    if (!contract.ok) violations.push({ rule: "read-contract", line: 0, text: contract.detail });
+  if (!KNOWN_WORKFLOWS.has(workflowFile)) {
+    return [{ rule: "workflow-identity", line: 0, text: `unknown workflow identity: ${String(workflowFile)}` }];
   }
+  const fp = verifyWorkflowFingerprint(bytes, workflowFile);
+  if (fp !== null) {
+    return [{ rule: "workflow-fingerprint", line: 0, text: fp }];
+  }
+  const violations = checkWorkflowBoundary(bytes, workflowFile);
+  const contract = checkWorkflowReadContract(bytes, workflowFile);
+  if (!contract.ok) violations.push({ rule: "read-contract", line: 0, text: contract.detail });
+  return violations;
+}
+
+// DIAGNOSTIC composition (round 22): per-line boundary rules plus the
+// occurrence contract over arbitrary TEXT — names the specific
+// construct a mutation introduced. Scanner-facing tests call this
+// directly; it AUTHORIZES nothing, and the exported enforcement
+// surfaces stop at the fingerprint before any of this may run.
+export function diagnoseWorkflowComplete(src: string, workflowFile: string): Violation[] {
+  const violations = diagnoseWorkflowBoundary(src, workflowFile);
+  const contract = diagnoseWorkflowReadContract(src, workflowFile);
+  if (!contract.ok) violations.push({ rule: "read-contract", line: 0, text: contract.detail });
   return violations;
 }
 
@@ -1602,8 +1606,14 @@ describe("mutation matrix — each prohibited construct class is demonstrably ca
     for (const [rule, payload, description] of MUTATIONS) {
       it(`${workflow.split("/").pop()}: ${description} → flagged as ${rule}`, () => {
         const mutated = mutate(workflow, payload);
-        const violations = checkWorkflowComplete(wfBytes(mutated), workflow);
+        // The DIAGNOSTIC layer names the construct (round 22: mutated
+        // text reaches diagnostics only via the diagnostic API — the
+        // exported enforcement surfaces never decode refused bytes).
+        const violations = diagnoseWorkflowComplete(mutated, workflow);
         expect(violations.map((v) => v.rule)).toContain(rule);
+        // The EXPORTED surface stops at the fingerprint: exactly the
+        // refusal, no diagnostic additions.
+        expect(checkWorkflowComplete(wfBytes(mutated), workflow).map((v) => v.rule)).toEqual(["workflow-fingerprint"]);
       });
     }
   }
@@ -1697,7 +1707,9 @@ describe("fixed entry points own every derived fetch and every write", () => {
     const injected = src.slice(0, lineStart) + indent + labelsRead + src.slice(lineStart);
     const moved = diagnoseWorkflowReadContract(injected, WF_REDUCER);
     expect(moved.ok, "Stage-B labels read injected into Stage A must fail the contract").toBe(false);
-    expect(checkWorkflowComplete(wfBytes(injected), WF_REDUCER).map((v) => v.rule)).toContain("read-contract");
+    expect(diagnoseWorkflowComplete(injected, WF_REDUCER).map((v) => v.rule)).toContain("read-contract");
+    // The exported surface stops at the fingerprint (round 22).
+    expect(checkWorkflowComplete(wfBytes(injected), WF_REDUCER).map((v) => v.rule)).toEqual(["workflow-fingerprint"]);
 
     // A DUPLICATE of a permitted tuple (same stage) fails on multiplicity.
     const dupSrc = src.slice(0, lineStart) + indent + stageAAnchor + `\n${indent}  exit 97\n${indent}fi\n` + src.slice(lineStart);
@@ -1735,16 +1747,24 @@ describe("fixed entry points own every derived fetch and every write", () => {
     lines.splice(close, 0, "            # Stage B — gather fresh evidence twice", ...moved);
     const spoofed = lines.join("\n");
     expect(diagnoseWorkflowReadContract(spoofed, WF_REDUCER).ok).toBe(false);
-    expect(checkWorkflowReadContract(wfBytes(spoofed), WF_REDUCER).ok).toBe(false);
-    expect(checkWorkflowComplete(wfBytes(spoofed), WF_REDUCER)).not.toEqual([]);
+    // Round 22: the exported surfaces refuse at the fingerprint — only
+    // that reason, no structural analysis over the mutated bytes.
+    const contract = checkWorkflowReadContract(wfBytes(spoofed), WF_REDUCER);
+    expect(contract.ok).toBe(false);
+    expect(contract.detail).toContain("fingerprint");
+    expect(checkWorkflowComplete(wfBytes(spoofed), WF_REDUCER).map((v) => v.rule)).toEqual(["workflow-fingerprint"]);
   });
 
   it("stage anchors are validated structurally: duplicate/missing/reordered gather_a|gather_b and spoofed anchor text all fail closed (round 17)", () => {
     const src = readFileSync(WF_REDUCER, "utf8");
     const failsBoth = (mutated: string, why: string) => {
       expect(diagnoseWorkflowReadContract(mutated, WF_REDUCER).ok, why).toBe(false);
-      expect(checkWorkflowReadContract(wfBytes(mutated), WF_REDUCER).ok, why).toBe(false);
-      expect(checkWorkflowComplete(wfBytes(mutated), WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
+      expect(diagnoseWorkflowComplete(mutated, WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
+      // Exported surfaces stop at the fingerprint (round 22).
+      const contract = checkWorkflowReadContract(wfBytes(mutated), WF_REDUCER);
+      expect(contract.ok, why).toBe(false);
+      expect(contract.detail, why).toContain("fingerprint");
+      expect(checkWorkflowComplete(wfBytes(mutated), WF_REDUCER).map((v) => v.rule), why).toEqual(["workflow-fingerprint"]);
     };
 
     // Duplicate anchors: a second id line for either anchor — even
@@ -1810,8 +1830,12 @@ describe("fixed entry points own every derived fetch and every write", () => {
     const failsBoth = (mutated: string, why: string) => {
       expect(mutated, `${why}: mutation did not apply`).not.toBe(src);
       expect(diagnoseWorkflowReadContract(mutated, WF_REDUCER).ok, why).toBe(false);
-      expect(checkWorkflowReadContract(wfBytes(mutated), WF_REDUCER).ok, why).toBe(false);
-      expect(checkWorkflowComplete(wfBytes(mutated), WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
+      expect(diagnoseWorkflowComplete(mutated, WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
+      // Exported surfaces stop at the fingerprint (round 22).
+      const contract = checkWorkflowReadContract(wfBytes(mutated), WF_REDUCER);
+      expect(contract.ok, why).toBe(false);
+      expect(contract.detail, why).toContain("fingerprint");
+      expect(checkWorkflowComplete(wfBytes(mutated), WF_REDUCER).map((v) => v.rule), why).toEqual(["workflow-fingerprint"]);
     };
     // 1. jobs.reduce renamed — the expected job no longer exists.
     failsBoth(src.replace("  reduce:\n", "  not_reduce:\n"), "wrongJob");
@@ -1833,8 +1857,12 @@ describe("fixed entry points own every derived fetch and every write", () => {
     const failsBoth = (mutated: string, why: string) => {
       expect(mutated, `${why}: mutation did not apply`).not.toBe(src);
       expect(diagnoseWorkflowReadContract(mutated, WF_REDUCER).ok, why).toBe(false);
-      expect(checkWorkflowReadContract(wfBytes(mutated), WF_REDUCER).ok, why).toBe(false);
-      expect(checkWorkflowComplete(wfBytes(mutated), WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
+      expect(diagnoseWorkflowComplete(mutated, WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
+      // Exported surfaces stop at the fingerprint (round 22).
+      const contract = checkWorkflowReadContract(wfBytes(mutated), WF_REDUCER);
+      expect(contract.ok, why).toBe(false);
+      expect(contract.detail, why).toContain("fingerprint");
+      expect(checkWorkflowComplete(wfBytes(mutated), WF_REDUCER).map((v) => v.rule), why).toEqual(["workflow-fingerprint"]);
     };
     const staysClean = (mutated: string, why: string) => {
       expect(mutated, `${why}: mutation did not apply`).not.toBe(src);
@@ -1898,8 +1926,12 @@ describe("fixed entry points own every derived fetch and every write", () => {
     const failsBoth = (mutated: string, why: string) => {
       expect(mutated, `${why}: mutation did not apply`).not.toBe(src);
       expect(diagnoseWorkflowReadContract(mutated, WF_REDUCER).ok, why).toBe(false);
-      expect(checkWorkflowReadContract(wfBytes(mutated), WF_REDUCER).ok, why).toBe(false);
-      expect(checkWorkflowComplete(wfBytes(mutated), WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
+      expect(diagnoseWorkflowComplete(mutated, WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
+      // Exported surfaces stop at the fingerprint (round 22).
+      const contract = checkWorkflowReadContract(wfBytes(mutated), WF_REDUCER);
+      expect(contract.ok, why).toBe(false);
+      expect(contract.detail, why).toContain("fingerprint");
+      expect(checkWorkflowComplete(wfBytes(mutated), WF_REDUCER).map((v) => v.rule), why).toEqual(["workflow-fingerprint"]);
     };
 
     // Codex repro 1: a scalar sequence item — not a mapping, rejected,
@@ -1960,23 +1992,42 @@ describe("fixed entry points own every derived fetch and every write", () => {
     expect(checkWorkflowReadContract(readFileSync(WF_REDUCER), WF_REDUCER).ok).toBe(true);
   });
 
+  // QUOTED-KEY DUPLICATE fixtures (rounds 20-22): for each of the five
+  // structural key classes — jobs, reduce, steps, id, run — and EVERY
+  // workflow, a PARSEABLE YAML document in which a quoted spelling of
+  // the key sits in the SAME mapping as an unquoted spelling: a genuine
+  // duplicate of one canonical key, never just a new key. Workflows
+  // without an existing reduce job get BOTH spellings inserted at
+  // jobs-mapping indentation (round-22 fix: appending a single quoted
+  // key to bootstrap/merge-guard/watchdog created one new key and no
+  // duplicate). The PyYAML audit test below independently proves all
+  // 20 fixtures parse AND carry the duplicate canonical key.
+  function quotedKeyDuplicateFixtures(src: string): ReadonlyArray<readonly [string, string, string]> {
+    return [
+      // [mutated document, description, duplicated canonical key]
+      [src.trimEnd() + '\n"jobs":\n  replacement:\n    runs-on: ubuntu-latest\n    steps:\n      - name: replacement\n        run: echo replacement\n', "quoted duplicate jobs (Codex round-20 repro)", "jobs"],
+      [src.includes("  reduce:\n")
+        ? src.replace("  reduce:\n", '  "reduce": {}\n  reduce:\n')
+        : src.replace("jobs:\n", 'jobs:\n  reduce: {}\n  "reduce": {}\n'),
+        "quoted duplicate reduce (both spellings inserted where no reduce job exists)", "reduce"],
+      [src.replace("    steps:\n", '    "steps": []\n    steps:\n'), "quoted duplicate steps", "steps"],
+      [src.replace(/^( {8}id: [A-Za-z_][A-Za-z0-9_]*)$/m, '$1\n        "id": duplicate_of_same_step'), "quoted duplicate id on the same step", "id"],
+      [src.replace("        run: |\n", '        "run": |\n          true\n        run: |\n'), "quoted duplicate run", "run"],
+    ];
+  }
+
   it("EXACT-BYTE FINGERPRINTS are the authorization boundary: every byte change fails all four exported surfaces (round 20)", () => {
     for (const f of WORKFLOWS) {
       const src = readFileSync(f, "utf8");
       const mutations: ReadonlyArray<readonly [string, string]> = [
-        [src.trimEnd() + '\n"jobs":\n  replacement:\n    runs-on: ubuntu-latest\n    steps:\n      - name: replacement\n        run: echo replacement\n', "quoted duplicate jobs (Codex round-20 repro)"],
-        // "reduce" duplicated INSIDE jobs at job indent — parseable YAML
-        // in which the quoted key genuinely shadows/duplicates reduce
-        // (round-21 fix: the prior spelling sat at invalid indentation).
-        [src.includes("  reduce:\n") ? src.replace("  reduce:\n", '  "reduce": {}\n  reduce:\n') : src.replace(/$/, '\n  "reduce": {}\n'), "quoted duplicate reduce"],
-        [src.includes("    steps:\n") ? src.replace("    steps:\n", '    "steps": []\n    steps:\n') : src.replace(/$/, '\n    "steps": []\n'), "quoted duplicate steps"],
-        // a TRUE duplicate quoted "id" on the same real step (round-21
-        // fix: the prior spelling added a new id, not a duplicate).
-        [src.includes("        id: ") ? src.replace(/^( {8}id: [A-Za-z_][A-Za-z0-9_]*)$/m, '$1\n        "id": duplicate_of_same_step') : src + '\n        "id": x\n', "quoted duplicate id on the same step"],
-        [src.replace("        run: |\n", '        "run": |\n          true\n        run: |\n'), "quoted duplicate run"],
+        ...quotedKeyDuplicateFixtures(src).map(([mutated, why]) => [mutated, why] as const),
+        // The fixtures below are BYTE-CHANGE probes, honestly labeled:
+        // they exercise the fingerprint, and several are deliberately
+        // NOT parseable YAML (malformed-YAML class, kept separate from
+        // the genuine-duplicate fixtures above).
         [src + "? explicit-key\n: value\n", "explicit mapping key"],
-        [src + "      - name:\n", "null inline value"],
-        [src + "      - { id: flow }\n", "flow mapping"],
+        [src + "      - name:\n", "null inline value (malformed YAML at top level)"],
+        [src + "      - { id: flow }\n", "flow mapping (malformed YAML at top level)"],
         [src + "fake: |\n  scalar-spoof\n", "block-scalar spoofing"],
         [src.replace("\n", " \n"), "one-byte whitespace change (first line)"],
         [src + "# harmless appended comment\n", "appended harmless comment"],
@@ -1984,21 +2035,137 @@ describe("fixed entry points own every derived fetch and every write", () => {
       ];
       for (const [mutated, why] of mutations) {
         expect(mutated, `${f}: ${why}: mutation did not apply`).not.toBe(src);
-        // 3. boundary → workflow-fingerprint violation
+        // 3. boundary → EXACTLY the fingerprint refusal, no diagnostics
         expect(
           checkWorkflowBoundary(wfBytes(mutated), f).map((v) => v.rule),
           `${f}: ${why} (boundary)`,
-        ).toContain("workflow-fingerprint");
-        // 4. read contract → ok:false with a fingerprint reason
+        ).toEqual(["workflow-fingerprint"]);
+        // 4. read contract → ok:false with ONLY the fingerprint reason
         const contract = checkWorkflowReadContract(wfBytes(mutated), f);
         expect(contract.ok, `${f}: ${why} (contract)`).toBe(false);
         expect(contract.detail, `${f}: ${why} (contract detail)`).toContain("fingerprint");
-        // 5. complete → nonempty violations
-        expect(checkWorkflowComplete(wfBytes(mutated), f).length, `${f}: ${why} (complete)`).toBeGreaterThan(0);
-        // 6. collector → nothing permitted, never an empty clean result
+        expect(contract.found, `${f}: ${why} (contract found empty)`).toEqual([]);
+        // 5. complete → exactly the fingerprint violation
+        expect(
+          checkWorkflowComplete(wfBytes(mutated), f).map((v) => v.rule),
+          `${f}: ${why} (complete)`,
+        ).toEqual(["workflow-fingerprint"]);
+        // 6. collector → exactly ONE non-permitted fingerprint sentinel,
+        // never an empty clean result, never a parsed invocation
         const invocations = collectEffectiveGhInvocations(wfBytes(mutated), f);
-        expect(invocations.length, `${f}: ${why} (collector nonempty)`).toBeGreaterThan(0);
-        expect(invocations.every((i) => !i.permitted), `${f}: ${why} (collector non-permitted)`).toBe(true);
+        expect(invocations, `${f}: ${why} (collector)`).toHaveLength(1);
+        expect(invocations[0]?.words, `${f}: ${why} (collector sentinel)`).toEqual([...FINGERPRINT_SENTINEL_WORDS]);
+        expect(invocations[0]?.permitted, `${f}: ${why} (collector non-permitted)`).toBe(false);
+      }
+    }
+  });
+
+  it("FINGERPRINT FAILURE TERMINATES AUTHORIZATION: valid-UTF-8 mutations carrying prohibited gh syntax are refused at the fingerprint with NO diagnostic additions and NO parsed invocations (round 22 — Codex repro)", () => {
+    // Codex's exact round-21 finding: the collector decoded and scanned
+    // fingerprint-invalid (but valid-UTF-8) bytes, returning PARSED
+    // invocations instead of the sentinel, and the boundary added
+    // gh-write / gh-api-derived diagnostics after the refusal — semantic
+    // analysis of bytes the verifier had just refused. Required order:
+    // identity → raw-byte hash → pin comparison → RETURN on mismatch;
+    // decode and diagnostics only after success.
+    const inject = (src: string, payload: string): string => {
+      const at = src.indexOf("set -euo pipefail");
+      expect(at).toBeGreaterThan(-1);
+      const lineStart = src.lastIndexOf("\n", at) + 1;
+      const indent = src.slice(lineStart, at);
+      return src.slice(0, lineStart) + indent + payload + "\n" + src.slice(lineStart);
+    };
+    for (const f of WORKFLOWS) {
+      const src = readFileSync(f, "utf8");
+      const textualMutations: ReadonlyArray<readonly [string, string]> = [
+        // prohibited gh syntax in valid UTF-8 (the exact repro class)
+        [inject(src, `gh api -X POST "repos/x/y/issues/1/comments" --input body.json`), "gh write injected"],
+        [inject(src, `HEAD=$(gh api "repos/x/y/pulls/1" | jq -r '.head.sha')`), "gh pipe + jq + substitution injected"],
+        // wrapper mutation
+        [inject(src, `timeout 30 gh api "repos/x/y/pulls/1" > /tmp/pr.json`), "wrapped derived read injected"],
+        // quoted-key mutations (genuine duplicates)
+        ...quotedKeyDuplicateFixtures(src).map(([mutated, why]) => [mutated, why] as const),
+        // YAML spoofing
+        [src + "fake: |\n  steps:\n    - id: gather_a\n", "YAML structure spoofed inside a block scalar"],
+      ];
+      const byteMutations: ReadonlyArray<readonly [Buffer, string]> = [
+        ...textualMutations.map(([m, why]) => [wfBytes(m), why] as const),
+        // malformed UTF-8 (never decodable at all)
+        [Buffer.concat([readFileSync(f), Buffer.from([0xff])]), "malformed UTF-8 tail"],
+      ];
+      for (const [bytes, why] of byteMutations) {
+        // fingerprint fails FIRST…
+        expect(verifyWorkflowFingerprint(bytes, f), `${f}: ${why}`).not.toBeNull();
+        // …boundary: ONLY the fingerprint refusal, no gh-write /
+        // gh-api-derived / YAML / shell diagnostic additions
+        expect(checkWorkflowBoundary(bytes, f), `${f}: ${why} (boundary)`).toEqual([
+          { rule: "workflow-fingerprint", line: 0, text: expect.stringContaining("fingerprint") },
+        ]);
+        // …read contract: ok:false with only the fingerprint reason
+        const contract = checkWorkflowReadContract(bytes, f);
+        expect(contract.ok, `${f}: ${why} (contract)`).toBe(false);
+        expect(contract.detail, `${f}: ${why} (contract detail)`).toContain("fingerprint");
+        expect(contract.found, `${f}: ${why} (no scanned occurrences)`).toEqual([]);
+        // …complete: the fingerprint violation only
+        expect(
+          checkWorkflowComplete(bytes, f).map((v) => v.rule),
+          `${f}: ${why} (complete)`,
+        ).toEqual(["workflow-fingerprint"]);
+        // …collector: exactly one explicit non-permitted sentinel,
+        // never a parsed invocation
+        const invocations = collectEffectiveGhInvocations(bytes, f);
+        expect(invocations, `${f}: ${why} (collector)`).toEqual([
+          {
+            line: 0,
+            words: [...FINGERPRINT_SENTINEL_WORDS],
+            guarded: false,
+            wrapped: false,
+            inSubstitution: false,
+            unresolved: true,
+            permitted: false,
+          },
+        ]);
+      }
+    }
+  });
+
+  it("all 20 quoted-key fixtures are PARSEABLE GENUINE DUPLICATES — independently proven by PyYAML's node graph, per workflow and key class (round 22)", () => {
+    // Codex's second round-21 finding: the "reduce" fixture was a
+    // genuine duplicate only in the reducer (the only workflow with an
+    // existing reduce job); bootstrap/merge-guard/watchdog got ONE new
+    // key and no duplicate. The audit below is INDEPENDENT of every
+    // scanner in this file: PyYAML's compose() builds the node graph
+    // (which, unlike load(), preserves duplicate keys), and the fixture
+    // passes only if the document parses AND some single mapping node
+    // carries the canonical key at least twice.
+    const AUDIT_PY = [
+      "import sys, yaml",
+      "target = sys.argv[1]",
+      "doc = yaml.compose(sys.stdin.read())",
+      "best = 0",
+      "stack = [doc]",
+      "while stack:",
+      "    node = stack.pop()",
+      "    if isinstance(node, yaml.MappingNode):",
+      "        n = sum(1 for k, _ in node.value if isinstance(k, yaml.ScalarNode) and k.value == target)",
+      "        best = max(best, n)",
+      "        for k, v in node.value: stack.append(k); stack.append(v)",
+      "    elif isinstance(node, yaml.SequenceNode):",
+      "        stack.extend(node.value)",
+      "print(best)",
+    ].join("\n");
+    for (const f of WORKFLOWS) {
+      const src = readFileSync(f, "utf8");
+      const fixtures = quotedKeyDuplicateFixtures(src);
+      expect(fixtures.map(([, , key]) => key)).toEqual(["jobs", "reduce", "steps", "id", "run"]);
+      for (const [mutated, why, key] of fixtures) {
+        expect(mutated, `${f}: ${why}: fixture did not apply`).not.toBe(src);
+        const audit = spawnSync("python3", ["-c", AUDIT_PY, key], { input: mutated, encoding: "utf8" });
+        expect(audit.status, `${f}: ${why}: PyYAML audit failed to parse the fixture — ${audit.stderr}`).toBe(0);
+        expect(
+          Number(audit.stdout.trim()),
+          `${f}: ${why}: no single mapping carries "${key}" twice — the fixture is a new key, not a genuine duplicate`,
+        ).toBeGreaterThanOrEqual(2);
       }
     }
   });
@@ -2026,22 +2193,28 @@ describe("fixed entry points own every derived fetch and every write", () => {
     ];
     for (const [bytes, why] of byteMutations) {
       expect(verifyWorkflowFingerprint(bytes, WF_REDUCER), why).not.toBeNull();
-      expect(checkWorkflowBoundary(bytes, WF_REDUCER).map((v) => v.rule), why).toContain("workflow-fingerprint");
+      // Round 22: each surface stops AT the fingerprint — exactly the
+      // refusal, no decode, no diagnostics over the refused bytes
+      // (valid-UTF-8 and malformed mutations behave identically).
+      expect(checkWorkflowBoundary(bytes, WF_REDUCER).map((v) => v.rule), why).toEqual(["workflow-fingerprint"]);
       const contract = checkWorkflowReadContract(bytes, WF_REDUCER);
       expect(contract.ok, why).toBe(false);
       expect(contract.detail, why).toMatch(/fingerprint|raw bytes/);
-      expect(checkWorkflowComplete(bytes, WF_REDUCER).length, why).toBeGreaterThan(0);
+      expect(contract.found, why).toEqual([]);
+      expect(checkWorkflowComplete(bytes, WF_REDUCER).map((v) => v.rule), why).toEqual(["workflow-fingerprint"]);
       const invocations = collectEffectiveGhInvocations(bytes, WF_REDUCER);
-      expect(invocations.length, `${why} (collector nonempty)`).toBeGreaterThan(0);
-      expect(invocations.every((i) => !i.permitted), `${why} (non-permitted)`).toBe(true);
+      expect(invocations, `${why} (collector: exactly one sentinel)`).toHaveLength(1);
+      expect(invocations[0]?.words, why).toEqual([...FINGERPRINT_SENTINEL_WORDS]);
+      expect(invocations[0]?.permitted, why).toBe(false);
     }
     // A decoded STRING is not an authorization input: the shared
     // verifier refuses it outright rather than re-encoding and hashing.
     const asString = raw.toString("utf8") as unknown as Buffer;
     expect(verifyWorkflowFingerprint(asString, WF_REDUCER)).toContain("raw bytes");
     const viaString = collectEffectiveGhInvocations(asString, WF_REDUCER);
-    expect(viaString.length).toBeGreaterThan(0);
-    expect(viaString.every((i) => !i.permitted)).toBe(true);
+    expect(viaString).toHaveLength(1);
+    expect(viaString[0]?.words).toEqual([...FINGERPRINT_SENTINEL_WORDS]);
+    expect(viaString[0]?.permitted).toBe(false);
     // And no enforcement path re-encodes for fingerprinting: only the
     // clean raw bytes pass.
     expect(verifyWorkflowFingerprint(raw, WF_REDUCER)).toBeNull();
@@ -2089,21 +2262,26 @@ describe("fixed entry points own every derived fetch and every write", () => {
       `${process.cwd()}/${WF_REDUCER}`,          // absolute path to the real file
       ".github/workflows/other.yml",             // unknown workflow
     ]) {
+      // Round 22: an unknown identity is a verifier failure — the
+      // collector returns exactly the sentinel, never parsed content.
       const invocations = collectEffectiveGhInvocations(src, badIdentity);
-      expect(invocations.length, String(badIdentity)).toBeGreaterThan(0);
-      for (const inv of invocations) {
-        expect(inv.permitted, `${String(badIdentity)}: ${inv.words.join(" ")}`).toBe(false);
-      }
+      expect(invocations, String(badIdentity)).toHaveLength(1);
+      expect(invocations[0]?.words, String(badIdentity)).toEqual([...FINGERPRINT_SENTINEL_WORDS]);
+      expect(invocations[0]?.permitted, String(badIdentity)).toBe(false);
       expect(
         checkWorkflowBoundary(src, badIdentity).map((v) => v.rule),
         String(badIdentity),
-      ).toContain("workflow-identity");
+      ).toEqual(["workflow-identity"]);
     }
     // The exact repository-relative identity remains fully permitted.
     expect(collectEffectiveGhInvocations(src, WF_REDUCER).every((i) => i.permitted)).toBe(true);
   });
 
   it("FAIL CLOSED: wrapped, unresolved, and xargs-hidden gh invocations surface as NON-permitted — never as an empty invocation set (round 14)", () => {
+    // Fragment payloads exercise the SCANNER, so they call the
+    // diagnostic API directly (round 22): the exported collector never
+    // decodes fingerprint-invalid bytes and would return only the
+    // sentinel for a fragment.
     for (const hidden of [
       `timeout 30 gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
       `timeout --signal=TERM 30 gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
@@ -2117,8 +2295,8 @@ describe("fixed entry points own every derived fetch and every write", () => {
       `doas gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
       `timeout \$DUR gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
     ]) {
-      const invocations = collectEffectiveGhInvocations(wfBytes(hidden), WF_REDUCER);
-      expect(invocations.length, `${hidden}: collector returned an empty set — the wrapper hid the invocation`).toBeGreaterThan(0);
+      const invocations = diagnoseEffectiveGhInvocations(hidden, WF_REDUCER);
+      expect(invocations.length, `${hidden}: scanner returned an empty set — the wrapper hid the invocation`).toBeGreaterThan(0);
       for (const inv of invocations) {
         expect(inv.permitted, `${hidden}: ${inv.words.join(" ")}`).toBe(false);
       }
@@ -2126,6 +2304,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
   });
 
   it("wrapper resolution is exact where provable: the resolved argv behind timeout/nice/env/stdbuf is the gh command itself", () => {
+    // Scanner-behavior test over fragments — diagnostic API (round 22).
     for (const [payload, viaWrapper] of [
       [`timeout 30 gh api "repos/x/y/pulls/1" > /tmp/pr.json`, true],
       [`timeout --signal=TERM 30 gh api "repos/x/y/pulls/1" > /tmp/pr.json`, true],
@@ -2136,7 +2315,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
       [`stdbuf -oL gh api "repos/x/y/pulls/1" > /tmp/pr.json`, true],
       [`setsid gh api "repos/x/y/pulls/1" > /tmp/pr.json`, true],
     ] as const) {
-      const invocations = collectEffectiveGhInvocations(wfBytes(payload), WF_REDUCER);
+      const invocations = diagnoseEffectiveGhInvocations(payload, WF_REDUCER);
       expect(invocations, payload).toHaveLength(1);
       expect(invocations[0]?.words[0], payload).toBe("gh");
       expect(invocations[0]?.words[1], payload).toBe("api");
@@ -2150,13 +2329,14 @@ describe("fixed entry points own every derived fetch and every write", () => {
       `timeout \$DUR gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
       `stdbuf --weird gh api "repos/x/y/pulls/1"`,
     ]) {
-      const invocations = collectEffectiveGhInvocations(wfBytes(payload), WF_REDUCER);
+      const invocations = diagnoseEffectiveGhInvocations(payload, WF_REDUCER);
       expect(invocations.length, payload).toBeGreaterThan(0);
       expect(invocations.some((i) => i.unresolved), payload).toBe(true);
     }
   });
 
-  it("FAIL CLOSED: compound conditions and tuple mismatches surface from the collector as NON-permitted (round 15)", () => {
+  it("FAIL CLOSED: compound conditions and tuple mismatches surface from the scanner as NON-permitted (round 15)", () => {
+    // Fragment payloads exercise the SCANNER — diagnostic API (round 22).
     // Codex round-15 repro 1: `; false` replaces the read's exit status
     // before `then` — the segment is no longer the sole condition.
     const compound = [
@@ -2167,7 +2347,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
       `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/issue.json"; echo pre-then; then`,
     ];
     for (const payload of compound) {
-      const invocations = collectEffectiveGhInvocations(wfBytes(payload), WF_REDUCER);
+      const invocations = diagnoseEffectiveGhInvocations(payload, WF_REDUCER);
       expect(invocations.length, payload).toBeGreaterThan(0);
       for (const inv of invocations) {
         expect(inv.guarded, `${payload}: sole-condition context lost`).toBe(false);
@@ -2185,7 +2365,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
       `if ! gh api --paginate "repos/\${REPO}/issues?state=closed&per_page=100" > "\${DIR}/enumeration.pages"; then`,
     ];
     for (const payload of offTuple) {
-      const invocations = collectEffectiveGhInvocations(wfBytes(payload), WF_REDUCER);
+      const invocations = diagnoseEffectiveGhInvocations(payload, WF_REDUCER);
       expect(invocations.length, payload).toBeGreaterThan(0);
       for (const inv of invocations) {
         expect(inv.guarded, payload).toBe(true); // the guard is intact — the TUPLE is what fails
