@@ -161,13 +161,18 @@ is guarded by an executable contract
 (`tests/control-plane/workflow-mutation.test.ts`) whose fail-closed
 authorization layer is EXACT-BYTE WORKFLOW FINGERPRINTS: each of the
 four checked-in workflow files is pinned by a literal committed
-SHA-256 constant, and every enforcement surface (boundary check, read
-contract, complete check, invocation collector) verifies exact
-repository-relative identity + exact byte fingerprint through ONE
-shared verifier before any result may read as permitted or clean. ANY
-byte difference — a flipped quote, an appended comment, a changed
-line ending, whitespace — fails all four surfaces closed, and a
-fingerprint mismatch is never reported as an empty/clean result.
+SHA-256 constant computed over the ORIGINAL FILE BYTES BEFORE ANY
+DECODING, and every enforcement surface (boundary check, read
+contract, complete check, invocation collector) takes raw bytes,
+verifies exact repository-relative identity + exact raw-byte
+fingerprint through ONE shared verifier, and decodes text (strict
+UTF-8) only after verification succeeds — a decoded string is
+refused as an authorization input, so distinct invalid byte streams
+can never collapse through replacement-character decoding. ANY byte
+difference — a flipped quote, an appended comment, a changed line
+ending, whitespace, a BOM, a re-encoding — fails all four surfaces
+closed, and a fingerprint mismatch is never reported as an
+empty/clean result.
 Editing a workflow therefore REQUIRES updating its pinned fingerprint
 alongside explicit test review — that reviewed step is the contract's
 purpose. Beneath the fingerprint gate, a diagnostic layer names the

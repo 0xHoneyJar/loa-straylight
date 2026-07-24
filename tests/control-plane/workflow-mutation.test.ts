@@ -687,20 +687,43 @@ const WORKFLOW_FINGERPRINTS: Readonly<Record<string, string>> = {
   [WF_WATCHDOG]: "1e171b40863149d207bb102162fcdab8233e90e913d115e5dd5fcd90ed966c10",
 };
 
+// Enforcement surfaces take RAW BYTES (round 21): hashing a decoded
+// string collapses distinct invalid byte streams onto one replacement-
+// character string — update(src, "utf8") re-encodes and loses the
+// distinction. The verifier hashes the ORIGINAL bytes directly, and
+// diagnostic text is decoded (strict UTF-8, fatal on malformed input)
+// ONLY after the fingerprint verifies — mutated bytes are never decoded
+// by an enforcement surface.
+export type WorkflowBytes = Buffer | Uint8Array;
+
+const STRICT_UTF8 = new TextDecoder("utf-8", { fatal: true });
+
 // The ONE shared verifier every enforcement surface calls. Returns null
-// when the named identity is known AND the src bytes hash to the pinned
+// when the named identity is known AND the RAW BYTES hash to the pinned
 // constant; otherwise the failure detail. No other predicate may grant
-// authorization.
-export function verifyWorkflowFingerprint(src: string, workflowFile: string): string | null {
+// authorization. A non-bytes value (a decoded string smuggled in by a
+// JS caller) is itself a failure — never re-encoded and hashed.
+export function verifyWorkflowFingerprint(bytes: WorkflowBytes, workflowFile: string): string | null {
+  if (!(bytes instanceof Uint8Array)) {
+    return "enforcement requires the workflow's raw bytes (a decoded string is not an authorization input)";
+  }
   const pinned = KNOWN_WORKFLOWS.has(workflowFile) ? WORKFLOW_FINGERPRINTS[workflowFile] : undefined;
   if (pinned === undefined) {
     return `unknown workflow identity: ${String(workflowFile)}`;
   }
-  const actual = createHash("sha256").update(src, "utf8").digest("hex");
+  const actual = createHash("sha256").update(bytes).digest("hex");
   if (actual !== pinned) {
     return `workflow bytes do not match the pinned fingerprint for ${workflowFile} (expected ${pinned}, got ${actual})`;
   }
   return null;
+}
+
+// NON-AUTHORITATIVE test conversion: mutated fixture STRINGS become
+// bytes here, before entering the enforcement API. This helper is test
+// plumbing, not an authorization surface — the byte digest of whatever
+// it produces still has to match the pin.
+export function wfBytes(text: string): Buffer {
+  return Buffer.from(text, "utf8");
 }
 const PERMITTED_FIXED_READS: readonly FixedReadTuple[] = [
   // bootstrap: two independent all-issues enumerations + label enumeration
@@ -803,15 +826,32 @@ export function diagnoseEffectiveGhInvocations(src: string, workflowFile: string
   return out;
 }
 
-// EXPORTED enforcement surface: exact identity + exact byte fingerprint
-// gate the diagnostics. On mismatch nothing is permitted and the result
-// is never empty (a mismatch must not read as "no invocations, clean").
-export function collectEffectiveGhInvocations(src: string, workflowFile: string): GhInvocation[] {
-  const fingerprintFailed = verifyWorkflowFingerprint(src, workflowFile) !== null;
-  const out = diagnoseEffectiveGhInvocations(src, workflowFile).map((inv) => ({
-    ...inv,
-    permitted: !fingerprintFailed && inv.permitted,
-  }));
+// Strict decode for DIAGNOSTIC text over failed bytes: enforcement
+// never decodes mutated bytes, but the collector still surfaces the
+// non-permitted invocations a mutation introduced when the bytes are
+// valid UTF-8. Malformed bytes yield no text at all (sentinel only).
+function tryStrictDecode(bytes: WorkflowBytes): string | null {
+  try {
+    return STRICT_UTF8.decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+// EXPORTED enforcement surface: exact identity + exact RAW-BYTE
+// fingerprint gate the diagnostics. On mismatch nothing is permitted
+// and the result is never empty (a mismatch must not read as "no
+// invocations, clean"). Text is decoded (strict UTF-8) only for
+// diagnostics — the authorization decision is made on bytes alone.
+export function collectEffectiveGhInvocations(bytes: WorkflowBytes, workflowFile: string): GhInvocation[] {
+  const fingerprintFailed = verifyWorkflowFingerprint(bytes, workflowFile) !== null;
+  const text = bytes instanceof Uint8Array ? tryStrictDecode(bytes) : null;
+  const out = text === null
+    ? []
+    : diagnoseEffectiveGhInvocations(text, workflowFile).map((inv) => ({
+        ...inv,
+        permitted: !fingerprintFailed && inv.permitted,
+      }));
   if (fingerprintFailed && out.length === 0) {
     out.push({
       line: 0,
@@ -1252,13 +1292,14 @@ export function diagnoseWorkflowReadContract(src: string, workflowFile: string):
   };
 }
 
-// EXPORTED enforcement surface: exact bytes first (round 20) — a
-// mutated workflow can never be ok, whatever the diagnostics conclude.
-export function checkWorkflowReadContract(src: string, workflowFile: string): ReadContractResult {
+// EXPORTED enforcement surface: exact RAW BYTES first (rounds 20-21) —
+// a mutated workflow can never be ok, whatever the diagnostics
+// conclude, and text exists only AFTER the fingerprint verifies.
+export function checkWorkflowReadContract(bytes: WorkflowBytes, workflowFile: string): ReadContractResult {
   const expected = [...(WORKFLOW_READ_CONTRACTS[workflowFile] ?? [])];
-  const fp = verifyWorkflowFingerprint(src, workflowFile);
+  const fp = verifyWorkflowFingerprint(bytes, workflowFile);
   if (fp !== null) return { ok: false, expected, found: [], detail: fp };
-  return diagnoseWorkflowReadContract(src, workflowFile);
+  return diagnoseWorkflowReadContract(STRICT_UTF8.decode(bytes), workflowFile);
 }
 
 // The boundary checker: examine every LOGICAL shell line (comments and
@@ -1409,15 +1450,18 @@ export function diagnoseWorkflowBoundary(src: string, workflowFile: string): Vio
 // the per-line diagnostics (round 20). A mutated workflow ALWAYS carries
 // at least the workflow-fingerprint violation, whatever the diagnostics
 // conclude; the diagnostics still run to name the specific construct.
-export function checkWorkflowBoundary(src: string, workflowFile: string): Violation[] {
+export function checkWorkflowBoundary(bytes: WorkflowBytes, workflowFile: string): Violation[] {
   const violations: Violation[] = [];
   if (!KNOWN_WORKFLOWS.has(workflowFile)) {
     violations.push({ rule: "workflow-identity", line: 0, text: `unknown workflow identity: ${String(workflowFile)}` });
   } else {
-    const fp = verifyWorkflowFingerprint(src, workflowFile);
+    const fp = verifyWorkflowFingerprint(bytes, workflowFile);
     if (fp !== null) violations.push({ rule: "workflow-fingerprint", line: 0, text: fp });
   }
-  violations.push(...diagnoseWorkflowBoundary(src, workflowFile));
+  // Diagnostics name the construct when the bytes are decodable text;
+  // malformed bytes stay undecoded (the fingerprint violation stands).
+  const text = bytes instanceof Uint8Array ? tryStrictDecode(bytes) : null;
+  if (text !== null) violations.push(...diagnoseWorkflowBoundary(text, workflowFile));
   return violations;
 }
 
@@ -1425,10 +1469,10 @@ export function checkWorkflowBoundary(src: string, workflowFile: string): Violat
 // the whole-workflow ordered occurrence contract — both behind the
 // round-20 fingerprint gate (checkWorkflowBoundary and
 // checkWorkflowReadContract each verify it via the ONE shared verifier).
-export function checkWorkflowComplete(src: string, workflowFile: string): Violation[] {
-  const violations = checkWorkflowBoundary(src, workflowFile);
+export function checkWorkflowComplete(bytes: WorkflowBytes, workflowFile: string): Violation[] {
+  const violations = checkWorkflowBoundary(bytes, workflowFile);
   if (KNOWN_WORKFLOWS.has(workflowFile)) {
-    const contract = checkWorkflowReadContract(src, workflowFile);
+    const contract = checkWorkflowReadContract(bytes, workflowFile);
     if (!contract.ok) violations.push({ rule: "read-contract", line: 0, text: contract.detail });
   }
   return violations;
@@ -1440,7 +1484,7 @@ export function checkWorkflowComplete(src: string, workflowFile: string): Violat
 describe("boundary checker — the four converted workflows carry zero violations", () => {
   for (const f of WORKFLOWS) {
     it(`${f} is clean (boundary rules + ordered occurrence contract)`, () => {
-      const violations = checkWorkflowComplete(readFileSync(f, "utf8"), f);
+      const violations = checkWorkflowComplete(readFileSync(f), f);
       expect(violations, JSON.stringify(violations, null, 2)).toEqual([]);
     });
   }
@@ -1558,7 +1602,7 @@ describe("mutation matrix — each prohibited construct class is demonstrably ca
     for (const [rule, payload, description] of MUTATIONS) {
       it(`${workflow.split("/").pop()}: ${description} → flagged as ${rule}`, () => {
         const mutated = mutate(workflow, payload);
-        const violations = checkWorkflowComplete(mutated, workflow);
+        const violations = checkWorkflowComplete(wfBytes(mutated), workflow);
         expect(violations.map((v) => v.rule)).toContain(rule);
       });
     }
@@ -1571,7 +1615,7 @@ describe("mutation matrix — each prohibited construct class is demonstrably ca
       expect(diagnoseWorkflowReadContract(mutated, workflow).ok).toBe(true);
       // Round 20: the exported surfaces refuse EVERY byte change — an
       // appended comment included — with the fingerprint violation.
-      expect(checkWorkflowComplete(mutated, workflow).map((v) => v.rule)).toContain("workflow-fingerprint");
+      expect(checkWorkflowComplete(wfBytes(mutated), workflow).map((v) => v.rule)).toContain("workflow-fingerprint");
     }
   });
 
@@ -1605,7 +1649,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
       // resolve to their effective executable — a raw-text scan that a
       // g'h' spelling or an `env gh` prefix slips past cannot happen
       // here by construction.
-      const invocations = collectEffectiveGhInvocations(src, f);
+      const invocations = collectEffectiveGhInvocations(readFileSync(f), f);
       // The real workflows DO fetch — an empty list would mean the
       // decomposition went blind, which must fail this test too.
       expect(invocations.length, `${f}: no effective gh invocations found`).toBeGreaterThan(0);
@@ -1630,11 +1674,11 @@ describe("fixed entry points own every derived fetch and every write", () => {
     // (its three gather tuples once per stage + labels), and the labels
     // read occurs ONLY in stage-b.
     for (const f of WORKFLOWS) {
-      const r = checkWorkflowReadContract(readFileSync(f, "utf8"), f);
+      const r = checkWorkflowReadContract(readFileSync(f), f);
       expect(r.ok, `${f}: ${r.detail}`).toBe(true);
       expect(r.found).toEqual(r.expected);
     }
-    const reducer = checkWorkflowReadContract(readFileSync(WF_REDUCER, "utf8"), WF_REDUCER);
+    const reducer = checkWorkflowReadContract(readFileSync(WF_REDUCER), WF_REDUCER);
     expect(reducer.found).toHaveLength(7);
     const labelsOccurrences = reducer.found.filter((x) => x.includes("/labels "));
     expect(labelsOccurrences).toEqual([`stage-b ${READ_LABELS}`]);
@@ -1653,7 +1697,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
     const injected = src.slice(0, lineStart) + indent + labelsRead + src.slice(lineStart);
     const moved = diagnoseWorkflowReadContract(injected, WF_REDUCER);
     expect(moved.ok, "Stage-B labels read injected into Stage A must fail the contract").toBe(false);
-    expect(checkWorkflowComplete(injected, WF_REDUCER).map((v) => v.rule)).toContain("read-contract");
+    expect(checkWorkflowComplete(wfBytes(injected), WF_REDUCER).map((v) => v.rule)).toContain("read-contract");
 
     // A DUPLICATE of a permitted tuple (same stage) fails on multiplicity.
     const dupSrc = src.slice(0, lineStart) + indent + stageAAnchor + `\n${indent}  exit 97\n${indent}fi\n` + src.slice(lineStart);
@@ -1691,16 +1735,16 @@ describe("fixed entry points own every derived fetch and every write", () => {
     lines.splice(close, 0, "            # Stage B — gather fresh evidence twice", ...moved);
     const spoofed = lines.join("\n");
     expect(diagnoseWorkflowReadContract(spoofed, WF_REDUCER).ok).toBe(false);
-    expect(checkWorkflowReadContract(spoofed, WF_REDUCER).ok).toBe(false);
-    expect(checkWorkflowComplete(spoofed, WF_REDUCER)).not.toEqual([]);
+    expect(checkWorkflowReadContract(wfBytes(spoofed), WF_REDUCER).ok).toBe(false);
+    expect(checkWorkflowComplete(wfBytes(spoofed), WF_REDUCER)).not.toEqual([]);
   });
 
   it("stage anchors are validated structurally: duplicate/missing/reordered gather_a|gather_b and spoofed anchor text all fail closed (round 17)", () => {
     const src = readFileSync(WF_REDUCER, "utf8");
     const failsBoth = (mutated: string, why: string) => {
       expect(diagnoseWorkflowReadContract(mutated, WF_REDUCER).ok, why).toBe(false);
-      expect(checkWorkflowReadContract(mutated, WF_REDUCER).ok, why).toBe(false);
-      expect(checkWorkflowComplete(mutated, WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
+      expect(checkWorkflowReadContract(wfBytes(mutated), WF_REDUCER).ok, why).toBe(false);
+      expect(checkWorkflowComplete(wfBytes(mutated), WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
     };
 
     // Duplicate anchors: a second id line for either anchor — even
@@ -1729,7 +1773,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
     );
     expect(diagnoseWorkflowReadContract(withFakes, WF_REDUCER).ok, "fake comment/step-name must not affect classification").toBe(true);
     // Round 20: the exported surface still refuses the byte change.
-    expect(checkWorkflowReadContract(withFakes, WF_REDUCER).ok).toBe(false);
+    expect(checkWorkflowReadContract(wfBytes(withFakes), WF_REDUCER).ok).toBe(false);
 
     // The labels read (Stage-B-only) placed in gather_a fails (structural
     // restatement of the round-16 injection, no marker involved).
@@ -1758,7 +1802,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
     failsBoth(src.slice(0, bls) + extra + src.slice(bls), "extra eighth permitted occurrence");
 
     // Positive control: the clean reducer passes.
-    expect(checkWorkflowReadContract(src, WF_REDUCER).ok).toBe(true);
+    expect(checkWorkflowReadContract(readFileSync(WF_REDUCER), WF_REDUCER).ok).toBe(true);
   });
 
   it("structure is PARSED, not indentation-matched: Codex's four round-18 probes each fail the contract closed", () => {
@@ -1766,8 +1810,8 @@ describe("fixed entry points own every derived fetch and every write", () => {
     const failsBoth = (mutated: string, why: string) => {
       expect(mutated, `${why}: mutation did not apply`).not.toBe(src);
       expect(diagnoseWorkflowReadContract(mutated, WF_REDUCER).ok, why).toBe(false);
-      expect(checkWorkflowReadContract(mutated, WF_REDUCER).ok, why).toBe(false);
-      expect(checkWorkflowComplete(mutated, WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
+      expect(checkWorkflowReadContract(wfBytes(mutated), WF_REDUCER).ok, why).toBe(false);
+      expect(checkWorkflowComplete(wfBytes(mutated), WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
     };
     // 1. jobs.reduce renamed — the expected job no longer exists.
     failsBoth(src.replace("  reduce:\n", "  not_reduce:\n"), "wrongJob");
@@ -1789,15 +1833,15 @@ describe("fixed entry points own every derived fetch and every write", () => {
     const failsBoth = (mutated: string, why: string) => {
       expect(mutated, `${why}: mutation did not apply`).not.toBe(src);
       expect(diagnoseWorkflowReadContract(mutated, WF_REDUCER).ok, why).toBe(false);
-      expect(checkWorkflowReadContract(mutated, WF_REDUCER).ok, why).toBe(false);
-      expect(checkWorkflowComplete(mutated, WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
+      expect(checkWorkflowReadContract(wfBytes(mutated), WF_REDUCER).ok, why).toBe(false);
+      expect(checkWorkflowComplete(wfBytes(mutated), WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
     };
     const staysClean = (mutated: string, why: string) => {
       expect(mutated, `${why}: mutation did not apply`).not.toBe(src);
       // Diagnostics: the spoof carries no structural authority.
       expect(diagnoseWorkflowReadContract(mutated, WF_REDUCER).ok, why).toBe(true);
       // Exported enforcement: ANY byte change still fails the fingerprint.
-      expect(checkWorkflowReadContract(mutated, WF_REDUCER).ok, why).toBe(false);
+      expect(checkWorkflowReadContract(wfBytes(mutated), WF_REDUCER).ok, why).toBe(false);
     };
 
     // No-authority controls: fake ids in a comment, in a quoted value,
@@ -1846,7 +1890,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
     );
 
     // Positive control: the checked-in reducer parses and passes.
-    expect(checkWorkflowReadContract(src, WF_REDUCER).ok).toBe(true);
+    expect(checkWorkflowReadContract(readFileSync(WF_REDUCER), WF_REDUCER).ok).toBe(true);
   });
 
   it("sequence-item payloads are PARSED, never discarded: scalar items, inline duplicate ids, shadow-job inline anchors, and duplicate structural keys all fail closed (round 19)", () => {
@@ -1854,8 +1898,8 @@ describe("fixed entry points own every derived fetch and every write", () => {
     const failsBoth = (mutated: string, why: string) => {
       expect(mutated, `${why}: mutation did not apply`).not.toBe(src);
       expect(diagnoseWorkflowReadContract(mutated, WF_REDUCER).ok, why).toBe(false);
-      expect(checkWorkflowReadContract(mutated, WF_REDUCER).ok, why).toBe(false);
-      expect(checkWorkflowComplete(mutated, WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
+      expect(checkWorkflowReadContract(wfBytes(mutated), WF_REDUCER).ok, why).toBe(false);
+      expect(checkWorkflowComplete(wfBytes(mutated), WF_REDUCER).map((v) => v.rule), why).toContain("read-contract");
     };
 
     // Codex repro 1: a scalar sequence item — not a mapping, rejected,
@@ -1913,7 +1957,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
     failsBoth(src.replace("    steps:\n", "    steps:\n      - - nested\n"), "sequence-valued step item");
 
     // Positive control: the checked-in reducer still parses and passes.
-    expect(checkWorkflowReadContract(src, WF_REDUCER).ok).toBe(true);
+    expect(checkWorkflowReadContract(readFileSync(WF_REDUCER), WF_REDUCER).ok).toBe(true);
   });
 
   it("EXACT-BYTE FINGERPRINTS are the authorization boundary: every byte change fails all four exported surfaces (round 20)", () => {
@@ -1921,9 +1965,14 @@ describe("fixed entry points own every derived fetch and every write", () => {
       const src = readFileSync(f, "utf8");
       const mutations: ReadonlyArray<readonly [string, string]> = [
         [src.trimEnd() + '\n"jobs":\n  replacement:\n    runs-on: ubuntu-latest\n    steps:\n      - name: replacement\n        run: echo replacement\n', "quoted duplicate jobs (Codex round-20 repro)"],
-        [src.replace("jobs:\n", 'jobs:\n"reduce": {}\n'), "quoted duplicate reduce"],
-        [src.replace("    steps:\n", '    "steps": []\n    steps:\n'), "quoted duplicate steps"],
-        [src + '      - "id": gather_x\n', "quoted id spelling"],
+        // "reduce" duplicated INSIDE jobs at job indent — parseable YAML
+        // in which the quoted key genuinely shadows/duplicates reduce
+        // (round-21 fix: the prior spelling sat at invalid indentation).
+        [src.includes("  reduce:\n") ? src.replace("  reduce:\n", '  "reduce": {}\n  reduce:\n') : src.replace(/$/, '\n  "reduce": {}\n'), "quoted duplicate reduce"],
+        [src.includes("    steps:\n") ? src.replace("    steps:\n", '    "steps": []\n    steps:\n') : src.replace(/$/, '\n    "steps": []\n'), "quoted duplicate steps"],
+        // a TRUE duplicate quoted "id" on the same real step (round-21
+        // fix: the prior spelling added a new id, not a duplicate).
+        [src.includes("        id: ") ? src.replace(/^( {8}id: [A-Za-z_][A-Za-z0-9_]*)$/m, '$1\n        "id": duplicate_of_same_step') : src + '\n        "id": x\n', "quoted duplicate id on the same step"],
         [src.replace("        run: |\n", '        "run": |\n          true\n        run: |\n'), "quoted duplicate run"],
         [src + "? explicit-key\n: value\n", "explicit mapping key"],
         [src + "      - name:\n", "null inline value"],
@@ -1937,37 +1986,81 @@ describe("fixed entry points own every derived fetch and every write", () => {
         expect(mutated, `${f}: ${why}: mutation did not apply`).not.toBe(src);
         // 3. boundary → workflow-fingerprint violation
         expect(
-          checkWorkflowBoundary(mutated, f).map((v) => v.rule),
+          checkWorkflowBoundary(wfBytes(mutated), f).map((v) => v.rule),
           `${f}: ${why} (boundary)`,
         ).toContain("workflow-fingerprint");
         // 4. read contract → ok:false with a fingerprint reason
-        const contract = checkWorkflowReadContract(mutated, f);
+        const contract = checkWorkflowReadContract(wfBytes(mutated), f);
         expect(contract.ok, `${f}: ${why} (contract)`).toBe(false);
         expect(contract.detail, `${f}: ${why} (contract detail)`).toContain("fingerprint");
         // 5. complete → nonempty violations
-        expect(checkWorkflowComplete(mutated, f).length, `${f}: ${why} (complete)`).toBeGreaterThan(0);
+        expect(checkWorkflowComplete(wfBytes(mutated), f).length, `${f}: ${why} (complete)`).toBeGreaterThan(0);
         // 6. collector → nothing permitted, never an empty clean result
-        const invocations = collectEffectiveGhInvocations(mutated, f);
+        const invocations = collectEffectiveGhInvocations(wfBytes(mutated), f);
         expect(invocations.length, `${f}: ${why} (collector nonempty)`).toBeGreaterThan(0);
         expect(invocations.every((i) => !i.permitted), `${f}: ${why} (collector non-permitted)`).toBe(true);
       }
     }
   });
 
+  it("RAW BYTES are hashed, not decoded text: distinct byte streams that decode alike still fail independently, and no surface authorizes a string (round 21)", () => {
+    const raw = readFileSync(WF_REDUCER);
+    // Two DIFFERENT invalid UTF-8 byte streams that decode to the same
+    // replacement-character string: hashing after decoding would
+    // collapse them; hashing raw bytes keeps them distinct (and both
+    // distinct from the pin).
+    const invalidA = Buffer.concat([raw, Buffer.from([0xff])]);
+    const invalidB = Buffer.concat([raw, Buffer.from([0xfe])]);
+    expect(new TextDecoder("utf-8").decode(invalidA)).toBe(new TextDecoder("utf-8").decode(invalidB));
+    const digest = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+    expect(digest(invalidA)).not.toBe(digest(invalidB));
+    const byteMutations: ReadonlyArray<readonly [Buffer, string]> = [
+      [invalidA, "invalid UTF-8 stream A (0xFF tail)"],
+      [invalidB, "invalid UTF-8 stream B (0xFE tail)"],
+      [Buffer.from(raw.toString("utf8"), "utf16le"), "UTF-16LE re-encoding of the same text"],
+      [Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), raw]), "BOM prepended"],
+      [Buffer.from(raw.toString("utf8").replace(/\n/g, "\r\n"), "utf8"), "LF → CRLF"],
+      [Buffer.concat([raw, Buffer.from("\n")]), "trailing newline appended"],
+      [raw.subarray(0, raw.length - 1), "one byte deleted"],
+      [Buffer.concat([raw.subarray(0, 100), Buffer.from([raw[100]! ^ 0x01]), raw.subarray(101)]), "one byte changed"],
+    ];
+    for (const [bytes, why] of byteMutations) {
+      expect(verifyWorkflowFingerprint(bytes, WF_REDUCER), why).not.toBeNull();
+      expect(checkWorkflowBoundary(bytes, WF_REDUCER).map((v) => v.rule), why).toContain("workflow-fingerprint");
+      const contract = checkWorkflowReadContract(bytes, WF_REDUCER);
+      expect(contract.ok, why).toBe(false);
+      expect(contract.detail, why).toMatch(/fingerprint|raw bytes/);
+      expect(checkWorkflowComplete(bytes, WF_REDUCER).length, why).toBeGreaterThan(0);
+      const invocations = collectEffectiveGhInvocations(bytes, WF_REDUCER);
+      expect(invocations.length, `${why} (collector nonempty)`).toBeGreaterThan(0);
+      expect(invocations.every((i) => !i.permitted), `${why} (non-permitted)`).toBe(true);
+    }
+    // A decoded STRING is not an authorization input: the shared
+    // verifier refuses it outright rather than re-encoding and hashing.
+    const asString = raw.toString("utf8") as unknown as Buffer;
+    expect(verifyWorkflowFingerprint(asString, WF_REDUCER)).toContain("raw bytes");
+    const viaString = collectEffectiveGhInvocations(asString, WF_REDUCER);
+    expect(viaString.length).toBeGreaterThan(0);
+    expect(viaString.every((i) => !i.permitted)).toBe(true);
+    // And no enforcement path re-encodes for fingerprinting: only the
+    // clean raw bytes pass.
+    expect(verifyWorkflowFingerprint(raw, WF_REDUCER)).toBeNull();
+  });
+
   it("fingerprint positive/negative controls: exact bytes pass under exact identity; correct bytes under a WRONG valid identity fail (round 20)", () => {
     for (const f of WORKFLOWS) {
-      const src = readFileSync(f, "utf8");
-      expect(verifyWorkflowFingerprint(src, f), f).toBeNull();
-      expect(checkWorkflowComplete(src, f), f).toEqual([]);
-      expect(checkWorkflowReadContract(src, f).ok, f).toBe(true);
-      expect(collectEffectiveGhInvocations(src, f).every((i) => i.permitted), f).toBe(true);
+      const raw = readFileSync(f);
+      expect(verifyWorkflowFingerprint(raw, f), f).toBeNull();
+      expect(checkWorkflowComplete(raw, f), f).toEqual([]);
+      expect(checkWorkflowReadContract(raw, f).ok, f).toBe(true);
+      expect(collectEffectiveGhInvocations(raw, f).every((i) => i.permitted), f).toBe(true);
       // Correct bytes, wrong (but valid) workflow identity: fingerprint
       // mismatch — identity and bytes bind together.
       const other = WORKFLOWS.find((w) => w !== f) ?? f;
-      expect(verifyWorkflowFingerprint(src, other), `${f} as ${other}`).not.toBeNull();
-      expect(checkWorkflowReadContract(src, other).ok, `${f} as ${other}`).toBe(false);
+      expect(verifyWorkflowFingerprint(raw, other), `${f} as ${other}`).not.toBeNull();
+      expect(checkWorkflowReadContract(raw, other).ok, `${f} as ${other}`).toBe(false);
       expect(
-        collectEffectiveGhInvocations(src, other).some((i) => i.permitted),
+        collectEffectiveGhInvocations(raw, other).some((i) => i.permitted),
         `${f} as ${other}`,
       ).toBe(false);
     }
@@ -1981,14 +2074,14 @@ describe("fixed entry points own every derived fetch and every write", () => {
     }
     // A recomputed digest of MUTATED bytes never matches the pinned
     // constant — the constant is committed, not derived at runtime.
-    const mutated = readFileSync(WF_REDUCER, "utf8") + "# tail\n";
-    const recomputed = createHash("sha256").update(mutated, "utf8").digest("hex");
+    const mutated = wfBytes(readFileSync(WF_REDUCER, "utf8") + "# tail\n");
+    const recomputed = createHash("sha256").update(mutated).digest("hex");
     expect(recomputed).not.toBe(WORKFLOW_FINGERPRINTS[WF_REDUCER]);
     expect(verifyWorkflowFingerprint(mutated, WF_REDUCER)).not.toBeNull();
   });
 
   it("workflow identity is MANDATORY and exact: missing, basename-only, absolute, and same-basename-elsewhere identities permit nothing (round 16)", () => {
-    const src = readFileSync(WF_REDUCER, "utf8");
+    const src = readFileSync(WF_REDUCER);
     for (const badIdentity of [
       undefined as unknown as string,            // missing identity
       "straylight-reducer.yml",                  // basename only
@@ -2024,7 +2117,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
       `doas gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
       `timeout \$DUR gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
     ]) {
-      const invocations = collectEffectiveGhInvocations(hidden, WF_REDUCER);
+      const invocations = collectEffectiveGhInvocations(wfBytes(hidden), WF_REDUCER);
       expect(invocations.length, `${hidden}: collector returned an empty set — the wrapper hid the invocation`).toBeGreaterThan(0);
       for (const inv of invocations) {
         expect(inv.permitted, `${hidden}: ${inv.words.join(" ")}`).toBe(false);
@@ -2043,7 +2136,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
       [`stdbuf -oL gh api "repos/x/y/pulls/1" > /tmp/pr.json`, true],
       [`setsid gh api "repos/x/y/pulls/1" > /tmp/pr.json`, true],
     ] as const) {
-      const invocations = collectEffectiveGhInvocations(payload, WF_REDUCER);
+      const invocations = collectEffectiveGhInvocations(wfBytes(payload), WF_REDUCER);
       expect(invocations, payload).toHaveLength(1);
       expect(invocations[0]?.words[0], payload).toBe("gh");
       expect(invocations[0]?.words[1], payload).toBe("api");
@@ -2057,7 +2150,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
       `timeout \$DUR gh api "repos/x/y/pulls/1" > /tmp/pr.json`,
       `stdbuf --weird gh api "repos/x/y/pulls/1"`,
     ]) {
-      const invocations = collectEffectiveGhInvocations(payload, WF_REDUCER);
+      const invocations = collectEffectiveGhInvocations(wfBytes(payload), WF_REDUCER);
       expect(invocations.length, payload).toBeGreaterThan(0);
       expect(invocations.some((i) => i.unresolved), payload).toBe(true);
     }
@@ -2074,7 +2167,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
       `if ! gh api "repos/\${REPO}/issues/\${ISSUE_NUMBER}" > "\${DIR}/issue.json"; echo pre-then; then`,
     ];
     for (const payload of compound) {
-      const invocations = collectEffectiveGhInvocations(payload, WF_REDUCER);
+      const invocations = collectEffectiveGhInvocations(wfBytes(payload), WF_REDUCER);
       expect(invocations.length, payload).toBeGreaterThan(0);
       for (const inv of invocations) {
         expect(inv.guarded, `${payload}: sole-condition context lost`).toBe(false);
@@ -2092,7 +2185,7 @@ describe("fixed entry points own every derived fetch and every write", () => {
       `if ! gh api --paginate "repos/\${REPO}/issues?state=closed&per_page=100" > "\${DIR}/enumeration.pages"; then`,
     ];
     for (const payload of offTuple) {
-      const invocations = collectEffectiveGhInvocations(payload, WF_REDUCER);
+      const invocations = collectEffectiveGhInvocations(wfBytes(payload), WF_REDUCER);
       expect(invocations.length, payload).toBeGreaterThan(0);
       for (const inv of invocations) {
         expect(inv.guarded, payload).toBe(true); // the guard is intact — the TUPLE is what fails
