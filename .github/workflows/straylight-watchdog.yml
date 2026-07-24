@@ -1,0 +1,260 @@
+# Straylight Control Plane v1 — watchdog (shadow mode).
+#
+# Authority: docs/decisions/ADR-050-autonomous-execution-control-plane.md
+#
+# Recovery sweep: finds expired leases, stuck lanes, ready-for-codex lanes
+# without an audit, and audited lanes whose PR head moved; posts deduped
+# recovery events. Runs on an OFF-MINUTE cron (:17) to avoid the top-of-
+# the-hour thundering herd, plus manual dispatch. Never merges, never
+# calls a model API, never holds contents:write.
+#
+# WORKFLOW-BOUNDARY CONTRACT (rev. 3 §1-§3, §11; round 10 J3): the sweep
+# gathers TWO complete, independently collected evidence sets
+# (Collection A, Collection B). Each collection advances S0→S6. Bash owns
+# ONLY the S0→S1 fetch (a FIXED enumeration url to a file) and exit-code
+# switching; the collector binary owns every DERIVATION transition, and
+# the shared READ executor owns every DERIVED fetch:
+#
+#   S0→S1 bash:  enumerate all open issues (label-independent) → raw pages
+#   S1→S2 node:  collector --stage issue-slots (enumeration ONLY; the
+#                output schema has no PR field — enumeration-only evidence
+#                structurally cannot emit PR slots). Appends the
+#                enumeration ledger row and writes the closed READ PLAN
+#                naming one issue-comments read per derived slot.
+#   S2→S3 node:  execute-read-plan.mjs fetches issue.json +
+#                comments.pages for EVERY slot; any issue/comment fetch
+#                failure fails the job (never "zero comments"); one
+#                strict ledger row per fetch.
+#   S3→S4 node:  collector --stage pr-slots (reparses raw evidence,
+#                reconstructs every lane SOLELY to derive required PR
+#                numbers, writes the closed READ PLAN for the PR fetches)
+#   S4→S5 node:  execute-read-plan.mjs attempts each PR fetch; SUCCESS →
+#                ledger row with path + digest; FAILURE → ledger row
+#                {fetched:false} — a durable fact, never filename absence
+#   S5→S6 node:  collector --stage seal (re-derives both slot sets from
+#                raw bytes, verifies every ledger claim; a manifest can
+#                never claim a slot its raw evidence does not
+#                independently produce)
+#
+# The ledger is written ONLY by the collector (enumeration row) and the
+# read executor (every derived-fetch row) — bash never composes a ledger
+# row and never reads a stage document.
+#
+# Collection B shares NOTHING derived from Collection A. The final
+# planner (plan-watchdog-writes.mjs) independently reparses BOTH complete
+# collections and refuses on any planning-relevant difference (specific
+# ab-* codes); only a provably stable world plans writes — issue-keyed,
+# exact-deduped, at most one state-advancing event per issue per plan —
+# executed by one execute-write-plan.mjs invocation. An A/B difference
+# aborts the whole sweep (accepted v1 tradeoff); the next cron firing
+# retries against a stable world.
+
+name: Straylight CP Watchdog
+
+on:
+  schedule:
+    - cron: "17 */4 * * *"
+  workflow_dispatch: {}
+
+# contents:read — checkout of protocol code. issues:write — recovery events
+# (used ONLY through the shared executor). pull-requests:read — read live
+# PR heads for moved-head detection (read-only).
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+# One watchdog at a time, ever: two sweeps must not race the same lane.
+concurrency:
+  group: straylight-watchdog
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # Pin to main, NOT the dispatched ref: the canonical policy gate,
+          # the committed automation policy, and all protocol/reconstruction
+          # code must come from CURRENT MAIN (same posture as bootstrap's
+          # B10 hardening).
+          ref: main
+          # Repo convention (issue #669): keep recursive submodule checkout
+          # so .claude symlinks into .loa never dangle on runners.
+          submodules: recursive
+
+      - name: Setup Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      # POLICY AUTHORITY: the canonical executable gate (policy-gate.mjs →
+      # validatePolicy) validates the COMPLETE committed policy and decides
+      # on LITERAL BOOLEANS. Exit 0 = valid + enabled → sweep. Exit 3 =
+      # valid kill switch → no action. Anything else = malformed policy →
+      # FAIL CLOSED loudly.
+      - name: Kill switch check (canonical policy gate)
+        id: killswitch
+        run: |
+          set -euo pipefail
+          set +e
+          node .straylight/bin/policy-gate.mjs
+          GATE=$?
+          set -e
+          if [[ "$GATE" -eq 0 ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$GATE" -eq 3 ]]; then
+            echo "Automation disabled (valid kill switch). Watchdog exiting."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::automation policy failed validation (policy-gate exit ${GATE}); failing closed — a malformed policy is neither enabled nor a valid kill switch"
+            exit 1
+          fi
+
+      # COLLECT A then COLLECT B: two complete, fully independent staged
+      # collections. Bash fetches ONE fixed url per collection and
+      # switches on exit codes; the collector derives; the shared read
+      # executor performs every derived fetch and writes every ledger
+      # row. Nothing derived from A is consumed by B.
+      - name: Collect evidence (Collection A, then Collection B)
+        id: collect
+        if: steps.killswitch.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "now=${NOW}" >> "$GITHUB_OUTPUT"
+
+          collect_one() {
+            local CID="$1" DIR="$2" LEDGER="$3"
+            # S0→S1: enumeration (label-independent, all pages, FIXED
+            # url). A failed listing aborts the sweep loudly — never
+            # "zero lanes".
+            if ! gh api --paginate "repos/${REPO}/issues?state=open&per_page=100" > "${DIR}/enumeration.pages"; then
+              echo "::error::[${CID}] enumeration failed (gh api non-zero); aborting sweep — NOT treating as zero lanes"
+              exit 1
+            fi
+            # S1→S2: derive issue slots (enumeration only; no PR field).
+            # The collector appends the enumeration ledger row and writes
+            # the closed read plan for the S2→S3 fetches.
+            if ! node .straylight/bin/collect-watchdog-evidence.mjs --stage issue-slots \
+                --collection-dir "${DIR}" --ledger "${LEDGER}" \
+                --collection-id "${CID}" --nonce "${NONCE}" \
+                --repository "${REPO}"; then
+              echo "::error::[${CID}] issue-slot derivation refused; aborting sweep"
+              exit 1
+            fi
+            # S2→S3: the shared read executor fetches issue + comments
+            # for EVERY derived slot. Any issue/comment fetch failure
+            # fails the job — it has no ledger representation.
+            if ! node .straylight/bin/execute-read-plan.mjs \
+                --plan "${DIR}/read-plan-issues.json" --plan-root "${DIR}" \
+                --root "${DIR}" --ledger "${LEDGER}" \
+                --repository "${REPO}" --nonce "${NONCE}"; then
+              echo "::error::[${CID}] issue/comment evidence read failed; aborting sweep — NOT treating as zero comments"
+              exit 1
+            fi
+            # S3→S4: derive PR slots (raw reparse + reconstruction, this
+            # collection's evidence only) + the PR read plan.
+            if ! node .straylight/bin/collect-watchdog-evidence.mjs --stage pr-slots \
+                --collection-dir "${DIR}" --ledger "${LEDGER}" \
+                --collection-id "${CID}" --nonce "${NONCE}" \
+                --repository "${REPO}" --now "${NOW}"; then
+              echo "::error::[${CID}] PR-slot derivation refused; aborting sweep"
+              exit 1
+            fi
+            # S4→S5: the read executor attempts each PR fetch. SUCCESS →
+            # ledger row with path + digest; FAILURE → explicit
+            # {fetched:false} row — a durable ledger fact, never filename
+            # absence.
+            if ! node .straylight/bin/execute-read-plan.mjs \
+                --plan "${DIR}/read-plan-prs.json" --plan-root "${DIR}" \
+                --root "${DIR}" --ledger "${LEDGER}" \
+                --repository "${REPO}" --nonce "${NONCE}"; then
+              echo "::error::[${CID}] PR evidence read failed; aborting sweep"
+              exit 1
+            fi
+            # S5→S6: seal — re-derive everything from raw bytes; verify
+            # every ledger claim; exit 2 on any unprovable claim.
+            if ! node .straylight/bin/collect-watchdog-evidence.mjs --stage seal \
+                --collection-dir "${DIR}" --ledger "${LEDGER}" \
+                --collection-id "${CID}" --nonce "${NONCE}" \
+                --repository "${REPO}" --now "${NOW}"; then
+              echo "::error::[${CID}] seal refused; aborting sweep"
+              exit 1
+            fi
+          }
+
+          DIR_A=$(mktemp -d); DIR_B=$(mktemp -d)
+          LEDGER_A="${DIR_A}/ledger.jsonl"; LEDGER_B="${DIR_B}/ledger.jsonl"
+          echo "dir_a=${DIR_A}" >> "$GITHUB_OUTPUT"
+          echo "dir_b=${DIR_B}" >> "$GITHUB_OUTPUT"
+          echo "ledger_a=${LEDGER_A}" >> "$GITHUB_OUTPUT"
+          echo "ledger_b=${LEDGER_B}" >> "$GITHUB_OUTPUT"
+          collect_one "A" "${DIR_A}" "${LEDGER_A}"
+          # Collection B: a COMPLETELY INDEPENDENT repeat — re-enumerate,
+          # re-derive, re-fetch, independently reconstruct, second
+          # manifest + ledger. Nothing derived from A is consumed.
+          collect_one "B" "${DIR_B}" "${LEDGER_B}"
+
+      # PLAN: the final planner independently reparses BOTH complete
+      # collections (trusting no stage output, manifest, or filename),
+      # compares the canonical projections, and only on equality plans
+      # issue-keyed deduped writes. Exit 3 = valid empty sweep; exit 2 =
+      # refusal (including every ab-* difference), zero writes.
+      - name: Plan watchdog writes (dual-collection planner authority)
+        id: plan
+        if: steps.killswitch.outputs.enabled == 'true'
+        env:
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          REQUEST_ROOT=$(mktemp -d)
+          echo "request_root=${REQUEST_ROOT}" >> "$GITHUB_OUTPUT"
+          set +e
+          node .straylight/bin/plan-watchdog-writes.mjs \
+            --collection-a "${{ steps.collect.outputs.dir_a }}" \
+            --collection-b "${{ steps.collect.outputs.dir_b }}" \
+            --ledger-a "${{ steps.collect.outputs.ledger_a }}" \
+            --ledger-b "${{ steps.collect.outputs.ledger_b }}" \
+            --request-root "${REQUEST_ROOT}" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}" \
+            --now "${{ steps.collect.outputs.now }}"
+          PLAN=$?
+          set -e
+          if [[ "$PLAN" -eq 3 ]]; then
+            echo "valid empty sweep: nothing to post"
+            echo "outcome=noop" >> "$GITHUB_OUTPUT"
+          elif [[ "$PLAN" -eq 0 ]]; then
+            echo "outcome=plan" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::watchdog planner refused (exit ${PLAN}); failing closed — zero writes (an A/B difference means the world moved mid-sweep; the next cron firing retries)"
+            exit 1
+          fi
+
+      # EXECUTE: one invocation of the shared secure executor per plan.
+      # At most one state-advancing event per issue per plan (structural);
+      # exact dedupe and fresh reconstruction recover a partial execution
+      # on the next sweep.
+      - name: Execute write plan (single shared executor)
+        if: steps.killswitch.outputs.enabled == 'true' && steps.plan.outputs.outcome == 'plan'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+          REQUEST_ROOT: ${{ steps.plan.outputs.request_root }}
+        run: |
+          set -euo pipefail
+          node .straylight/bin/execute-write-plan.mjs \
+            --plan "${REQUEST_ROOT}/plan.json" \
+            --request-root "${REQUEST_ROOT}" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}"

@@ -1,0 +1,390 @@
+# Straylight Control Plane v1 — reducer (shadow mode).
+#
+# Authority: docs/decisions/ADR-050-autonomous-execution-control-plane.md
+# Protocol:  .straylight/README.md
+#
+# Mechanical only: fetches the lane issue + comments via the GitHub API,
+# runs the pure reducer, syncs derived cp-* labels, and posts a
+# machine-readable reducer result. Makes NO semantic decisions, calls NO
+# model API, and holds NO contents:write.
+#
+# WORKFLOW-BOUNDARY CONTRACT (rev. 3 §8, §11; round 10 J2/J3): the job is
+# TWO strictly ordered stages, each with its own fresh evidence, proof,
+# plan, and single executor invocation:
+#
+#   STAGE A — eligibility confirmation (state-advancing, TERMINAL):
+#     two-read stable gather (fixed URLs only) → planner --probe
+#     (validates both reads, proves the lane target in both, writes the
+#     closed fetch-slot CLAIM + the closed READ PLAN) → the shared READ
+#     executor (execute-read-plan.mjs — the only code path performing
+#     DERIVED fetches; explicit read-ledger rows; GET-only by
+#     construction) → planner --stage a (rederives the slot from both raw
+#     reads, requires derived = claim, verifies the read ledger and every
+#     digest, exact dedupe, carried dry-run, at most ONE confirmation
+#     operation) → one WRITE executor invocation. After the confirmation
+#     posts, nothing derived from the pre-write reconstruction may
+#     execute — Stage A's plan contains nothing else, and the executor's
+#     structural terminal barrier independently forbids same-issue
+#     operations after it.
+#
+#   STAGE B — projections and publication (non-state-advancing):
+#     a COMPLETELY FRESH two-read stable gather (never Stage A's
+#     evidence, even when Stage A posted nothing) → planner --stage b
+#     (derived labels vs parsed label evidence, the §9 warning-gated
+#     cp-paused pair, the exact-deduped reducer result; never a
+#     state-advancing operation) → one WRITE executor invocation.
+#
+# Bash is confined to fetching FIXED urls to files, switching on
+# validated exit codes, and invoking the checked-in Node entry points.
+# Bash never constructs a write request, never interprets evidence
+# content, never extracts a field from any evidence or derived document,
+# and never calls `gh api -X POST/PATCH/DELETE` directly. Every DERIVED
+# fetch flows through the shared read executor.
+#
+# Security posture:
+#   - permissions: contents:read + issues:write + pull-requests:read only;
+#   - issue/comment bodies are UNTRUSTED: they travel API -> file ->
+#     strict Node parsers; they are never interpolated into shell;
+#   - first-party actions pinned to immutable commit SHAs;
+#   - triggers avoid the privileged PR-target event class entirely;
+#   - concurrency per issue so two reducer runs cannot race one lane.
+
+name: Straylight CP Reducer
+
+on:
+  issues:
+    types: [opened, labeled]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Lane issue number to reduce"
+        required: true
+
+# contents:read       — checkout of .straylight/ protocol code (and .loa
+#                       submodule for repo consistency; no Loa script runs).
+# issues:write        — sync derived cp-* labels + post the reducer result
+#                       (used ONLY through the shared executor).
+# pull-requests:read  — read the lane PR's live head SHA for exact-SHA audit
+#                       binding (read-only; the reducer fails closed without
+#                       it, but head verification then cannot function).
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: straylight-reducer-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: false
+
+jobs:
+  reduce:
+    # Only lanes: cp-lane label (or explicit manual dispatch). Bots' own
+    # result comments carry no straylight:event marker, so reducing on them
+    # is a no-op, but skip github-actions comments outright to avoid loops.
+    if: >
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event_name == 'issues' && contains(github.event.issue.labels.*.name, 'cp-lane')) ||
+      (github.event_name == 'issue_comment' &&
+       contains(github.event.issue.labels.*.name, 'cp-lane') &&
+       github.event.comment.user.login != 'github-actions[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # Pin to main, NOT the dispatched ref: the canonical policy gate,
+          # the committed automation policy, and all protocol/reconstruction
+          # code must come from CURRENT MAIN. A manual dispatch selecting an
+          # older or non-main ref must never make this workflow evaluate an
+          # older enabled policy or older control-plane code (same posture
+          # as bootstrap's B10 hardening).
+          ref: main
+          # Repo convention (issue #669): keep recursive submodule checkout
+          # so .claude symlinks into .loa never dangle on runners.
+          submodules: recursive
+
+      - name: Setup Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      # Kill switch (ADR-050 §4): while automation is disabled the reducer
+      # takes NO action — it posts no result and syncs no labels, so the
+      # published projection is FROZEN exactly as it was.
+      #
+      # POLICY AUTHORITY: the canonical executable gate (policy-gate.mjs →
+      # validatePolicy) validates the COMPLETE committed policy and decides
+      # on LITERAL BOOLEANS.
+      # Exit 0 = valid policy, enabled boolean true → proceed.
+      # Exit 3 = valid policy, enabled boolean false → valid kill switch,
+      #          take no action.
+      # Any other exit = malformed policy → FAIL CLOSED loudly; a malformed
+      # policy is neither enabled nor a valid kill switch.
+      - name: Kill switch check (canonical policy gate)
+        id: killswitch
+        run: |
+          set -euo pipefail
+          set +e
+          node .straylight/bin/policy-gate.mjs
+          GATE=$?
+          set -e
+          if [[ "$GATE" -eq 0 ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$GATE" -eq 3 ]]; then
+            echo "Automation disabled (valid kill switch). Reducer taking no action; projection frozen."
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::automation policy failed validation (policy-gate exit ${GATE}); failing closed — a malformed policy is neither enabled nor a valid kill switch"
+            exit 1
+          fi
+
+      # ============================ STAGE A ============================
+      # FETCH ONLY, TWICE, FIXED URLS: two complete independent reads (the
+      # stability fence). Bash extracts NOTHING from any response.
+      - name: Stage A — gather evidence twice (raw bytes to files)
+        id: gather_a
+        if: steps.killswitch.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gather_once() {
+            local DIR="$1"
+            if ! gh api --paginate "repos/${REPO}/issues?state=open&per_page=100" > "${DIR}/enumeration.pages"; then
+              echo "::error::enumeration failed (gh api non-zero); aborting — NOT treating as zero lanes"
+              exit 1
+            fi
+            if ! gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" > "${DIR}/issue.json"; then
+              echo "::error::issue fetch failed; aborting"
+              exit 1
+            fi
+            if ! gh api --paginate "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" > "${DIR}/comments.pages"; then
+              echo "::error::comment fetch failed; aborting — NOT treating as zero comments"
+              exit 1
+            fi
+          }
+          G1=$(mktemp -d); G2=$(mktemp -d)
+          echo "g1=${G1}" >> "$GITHUB_OUTPUT"
+          echo "g2=${G2}" >> "$GITHUB_OUTPUT"
+          echo "now=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          gather_once "${G1}"
+          gather_once "${G2}"
+
+      # PROBE (derivation authority): validates both reads, proves the
+      # lane target in both, and writes the closed fetch-slot CLAIM plus
+      # the closed READ PLAN. Its stdout is never parsed here — the claim
+      # and read plan are the ONLY probe outputs anything consumes, and
+      # the final planner rederives and rebinds them (J2). A probe refusal
+      # (two-read instability, duplicate lane, …) fails the job closed
+      # before any write-relevant work.
+      - name: Stage A — derive fetch slots (probe writes claim + read plan)
+        id: probe_a
+        if: steps.killswitch.outputs.enabled == 'true'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          CLAIM_ROOT=$(mktemp -d)
+          echo "claim_root=${CLAIM_ROOT}" >> "$GITHUB_OUTPUT"
+          set +e
+          node .straylight/bin/plan-reducer-writes.mjs --stage a --probe \
+            --claim-root "${CLAIM_ROOT}" \
+            --gather-1 "${{ steps.gather_a.outputs.g1 }}" \
+            --gather-2 "${{ steps.gather_a.outputs.g2 }}" \
+            --issue-number "${ISSUE_NUMBER}" \
+            --repository "${REPO}" --nonce "${NONCE}" \
+            --now "${{ steps.gather_a.outputs.now }}"
+          PROBE=$?
+          set -e
+          if [[ "$PROBE" -ne 0 ]]; then
+            echo "::error::Stage A evidence probe refused (exit ${PROBE}); failing closed"
+            exit 1
+          fi
+
+      # EXECUTE DERIVED READS: one invocation of the shared READ executor
+      # per read plan. GET-only by construction; every fetch attempt is an
+      # explicit read-ledger row ({fetched:false} is a durable fact, never
+      # filename absence).
+      - name: Stage A — execute read plan (single shared read executor)
+        if: steps.killswitch.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+          CLAIM_ROOT: ${{ steps.probe_a.outputs.claim_root }}
+        run: |
+          set -euo pipefail
+          node .straylight/bin/execute-read-plan.mjs \
+            --plan "${CLAIM_ROOT}/read-plan.json" \
+            --plan-root "${CLAIM_ROOT}" \
+            --ledger "${CLAIM_ROOT}/read-ledger.jsonl" \
+            --gather-1 "${{ steps.gather_a.outputs.g1 }}" \
+            --gather-2 "${{ steps.gather_a.outputs.g2 }}" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}"
+
+      # PLAN Stage A: the final planner receives the claim + read ledger,
+      # independently rederives the fetch slot from BOTH raw reads,
+      # requires derived = claim, verifies every ledger row and digest,
+      # and plans at most the single eligibility-confirmation operation.
+      # Exit 3 = valid no-op (not pending / already confirmed / explicit
+      # fetch failure / dry-run refusal — retry next run); exit 2 =
+      # refusal, zero writes.
+      - name: Stage A — plan eligibility confirmation (planner authority)
+        id: plan_a
+        if: steps.killswitch.outputs.enabled == 'true'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+          CLAIM_ROOT: ${{ steps.probe_a.outputs.claim_root }}
+        run: |
+          set -euo pipefail
+          REQUEST_ROOT=$(mktemp -d)
+          echo "request_root=${REQUEST_ROOT}" >> "$GITHUB_OUTPUT"
+          set +e
+          node .straylight/bin/plan-reducer-writes.mjs --stage a \
+            --gather-1 "${{ steps.gather_a.outputs.g1 }}" \
+            --gather-2 "${{ steps.gather_a.outputs.g2 }}" \
+            --issue-number "${ISSUE_NUMBER}" \
+            --request-root "${REQUEST_ROOT}" \
+            --claim "${CLAIM_ROOT}/claim.json" \
+            --read-ledger "${CLAIM_ROOT}/read-ledger.jsonl" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}" \
+            --now "${{ steps.gather_a.outputs.now }}"
+          PLAN=$?
+          set -e
+          if [[ "$PLAN" -eq 3 ]]; then
+            echo "Stage A: nothing to confirm (valid no-op)."
+            echo "outcome=noop" >> "$GITHUB_OUTPUT"
+          elif [[ "$PLAN" -eq 0 ]]; then
+            echo "outcome=plan" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Stage A planner refused (exit ${PLAN}); failing closed — zero writes"
+            exit 1
+          fi
+
+      # EXECUTE Stage A: one executor invocation; the plan is TERMINAL
+      # for its issue (single confirmation operation; the executor's
+      # structural rule independently rejects anything after it).
+      - name: Stage A — execute write plan (single shared executor)
+        if: steps.killswitch.outputs.enabled == 'true' && steps.plan_a.outputs.outcome == 'plan'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+          REQUEST_ROOT: ${{ steps.plan_a.outputs.request_root }}
+        run: |
+          set -euo pipefail
+          node .straylight/bin/execute-write-plan.mjs \
+            --plan "${REQUEST_ROOT}/plan.json" \
+            --request-root "${REQUEST_ROOT}" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}"
+
+      # ============================ STAGE B ============================
+      # NEWLY FETCHED STATE, UNCONDITIONALLY: a completely fresh two-read
+      # stable gather — never Stage A's evidence, even when Stage A posted
+      # nothing. The fresh reconstruction now includes Stage A's
+      # confirmation if one was posted. Fixed URLs only.
+      - name: Stage B — gather fresh evidence twice (raw bytes to files)
+        id: gather_b
+        if: steps.killswitch.outputs.enabled == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gather_once() {
+            local DIR="$1"
+            if ! gh api --paginate "repos/${REPO}/issues?state=open&per_page=100" > "${DIR}/enumeration.pages"; then
+              echo "::error::enumeration failed (gh api non-zero); aborting — NOT treating as zero lanes"
+              exit 1
+            fi
+            if ! gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" > "${DIR}/issue.json"; then
+              echo "::error::issue fetch failed; aborting"
+              exit 1
+            fi
+            if ! gh api --paginate "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" > "${DIR}/comments.pages"; then
+              echo "::error::comment fetch failed; aborting — NOT treating as zero comments"
+              exit 1
+            fi
+            # Label evidence GUARDS the label writes: a failed read aborts
+            # loudly — never "no labels" (which would re-add every label
+            # and skip every removal).
+            if ! gh api --paginate "repos/${REPO}/issues/${ISSUE_NUMBER}/labels" > "${DIR}/labels.pages"; then
+              echo "::error::label read failed (gh api non-zero); aborting — NOT treating as 'no labels'"
+              exit 1
+            fi
+          }
+          G1=$(mktemp -d); G2=$(mktemp -d)
+          echo "g1=${G1}" >> "$GITHUB_OUTPUT"
+          echo "g2=${G2}" >> "$GITHUB_OUTPUT"
+          echo "now=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          gather_once "${G1}"
+          gather_once "${G2}"
+
+      # PLAN Stage B: derived-label convergence, the §9 warning-gated
+      # cp-paused pair, and the exact-deduped result comment — never a
+      # state-advancing operation. Stage B performs no derived fetch, so
+      # no claim or read plan exists.
+      - name: Stage B — plan projections and publication (planner authority)
+        id: plan_b
+        if: steps.killswitch.outputs.enabled == 'true'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number || inputs.issue_number }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          REQUEST_ROOT=$(mktemp -d)
+          echo "request_root=${REQUEST_ROOT}" >> "$GITHUB_OUTPUT"
+          set +e
+          node .straylight/bin/plan-reducer-writes.mjs --stage b \
+            --gather-1 "${{ steps.gather_b.outputs.g1 }}" \
+            --gather-2 "${{ steps.gather_b.outputs.g2 }}" \
+            --issue-number "${ISSUE_NUMBER}" \
+            --request-root "${REQUEST_ROOT}" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}" \
+            --now "${{ steps.gather_b.outputs.now }}"
+          PLAN=$?
+          set -e
+          if [[ "$PLAN" -eq 3 ]]; then
+            echo "Stage B: labels converged and result already posted (valid no-op)."
+            echo "outcome=noop" >> "$GITHUB_OUTPUT"
+          elif [[ "$PLAN" -eq 0 ]]; then
+            echo "outcome=plan" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Stage B planner refused (exit ${PLAN}); failing closed — zero writes"
+            exit 1
+          fi
+
+      # EXECUTE Stage B: one executor invocation. Label operations are
+      # warning-only BY KIND (they reconverge next run); the cp-paused
+      # warning and the result comment are fatal by kind; the cp-paused
+      # removal is structurally blocked until its warning succeeds or is
+      # proven already present (§9).
+      - name: Stage B — execute write plan (single shared executor)
+        if: steps.killswitch.outputs.enabled == 'true' && steps.plan_b.outputs.outcome == 'plan'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+          REQUEST_ROOT: ${{ steps.plan_b.outputs.request_root }}
+        run: |
+          set -euo pipefail
+          node .straylight/bin/execute-write-plan.mjs \
+            --plan "${REQUEST_ROOT}/plan.json" \
+            --request-root "${REQUEST_ROOT}" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}"

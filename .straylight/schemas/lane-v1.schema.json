@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/0xHoneyJar/loa-straylight/.straylight/schemas/lane-v1.schema.json",
+  "title": "Straylight Control Plane lane record (v1)",
+  "description": "Reduced lane state. Published contract; the executable validator is .straylight/lib/validate.mjs#validateLane. GitHub issues identify lanes; this record is derived by reducing the lane's append-only event record.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema",
+    "lane_id",
+    "phase",
+    "authorized_corridor",
+    "repository",
+    "base_branch",
+    "base_sha",
+    "tier",
+    "authority_bearing",
+    "state",
+    "next_actor",
+    "attempt",
+    "patch_cycle",
+    "mode",
+    "auto_merge_allowed",
+    "operator_pause",
+    "event_sequence"
+  ],
+  "properties": {
+    "schema": { "const": "straylight.lane.v1" },
+    "lane_id": { "type": "string", "pattern": "^lane-[a-z0-9][a-z0-9-]{1,62}$" },
+    "phase": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,62}$" },
+    "authorized_corridor": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]{1,62}$" }
+    },
+    "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+    "base_branch": { "type": "string", "pattern": "^[A-Za-z0-9._/-]{1,200}$" },
+    "base_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "tier": { "enum": ["tier-0", "tier-1", "tier-2", "tier-3"] },
+    "authority_bearing": { "type": "boolean" },
+    "state": {
+      "enum": [
+        "planning",
+        "ready-for-coordinator",
+        "ready-for-claude",
+        "claude-working",
+        "ready-for-codex",
+        "codex-working",
+        "eligibility-pending",
+        "ready-for-merge",
+        "merged",
+        "patch-required",
+        "blocked",
+        "operator-required",
+        "lease-expired",
+        "superseded"
+      ],
+      "description": "eligibility-pending: an ACCEPT audit is recorded but not yet confirmed against live PR metadata. Only a system.eligibility_confirmed event whose payload durably embeds the successfully-checked metadata advances the lane to ready-for-merge."
+    },
+    "next_actor": {
+      "enum": ["coordinator", "implementer", "auditor", "operator", "system", "none"],
+      "description": "Projection of state, never independent authority: the executable validator rejects any record whose next_actor differs from the value derived from its state."
+    },
+    "working_branch": {
+      "type": ["string", "null"],
+      "pattern": "^[A-Za-z0-9._/-]{1,200}$",
+      "description": "Established by the INITIAL coordinator task packet (its target_branch). Every later packet, implementer completion (head_branch), audit (head_branch), and confirmed live PR head branch must match it exactly."
+    },
+    "pr_number": { "type": ["integer", "null"], "minimum": 1 },
+    "pr_head_sha": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
+    "audited_sha": { "type": ["string", "null"], "pattern": "^[0-9a-f]{40}$" },
+    "verdict": { "enum": ["ACCEPT", "PATCH", "REJECT", "CANNOT_AUDIT", null] },
+    "attempt": { "type": "integer", "minimum": 0 },
+    "patch_cycle": { "type": "integer", "minimum": 0 },
+    "audit_retry": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Consecutive retryable CANNOT_AUDIT requeues; capped at 3, reset by implementer.completed."
+    },
+    "mode": {
+      "const": "shadow",
+      "description": "Control Plane v1 permits shadow mode only. The validator rejects 'active'."
+    },
+    "auto_merge_allowed": {
+      "const": false,
+      "description": "Control Plane v1 forbids automatic merge. The validator rejects true."
+    },
+    "operator_pause": { "type": "boolean" },
+    "operator_required_reason": { "type": ["string", "null"], "maxLength": 4000 },
+    "last_lease_role": {
+      "enum": ["implementer", "auditor", null],
+      "description": "Role whose lease was last reaped by system.lease_expired; routes system.requeued to the correct retry state (implementer→ready-for-claude, auditor→ready-for-codex). Cleared on requeue."
+    },
+    "lease": {
+      "type": ["object", "null"],
+      "description": "Embedded-lease invariants enforced by the executable validator: lease.lane_id must equal the parent lane's lane_id (no cross-lane lease); lease.expected_state must equal the parent lane's current state (no cross-state lease); and expected_state must be the holder role's working state (implementer→claude-working, auditor→codex-working).",
+      "required": ["lane_id", "actor_role", "lease_id", "holder_login", "grant_sequence", "acquired_at", "expires_at", "expected_state"],
+      "properties": {
+        "lane_id": { "type": "string", "pattern": "^lane-[a-z0-9][a-z0-9-]{1,62}$" },
+        "actor_role": { "enum": ["implementer", "auditor"] },
+        "lease_id": { "type": "string", "pattern": "^lease-[a-z0-9][a-z0-9-]{1,62}$" },
+        "holder_login": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(\\[bot\\])?$",
+          "description": "Authenticated GitHub login that acquired the lease. Completion/release/block/escalation must come from this same login."
+        },
+        "grant_sequence": { "type": "integer", "minimum": 1 },
+        "acquired_at": { "type": "string", "format": "date-time", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$", "description": "Trusted GitHub comment created_at at grant time, not the actor-supplied occurred_at. Millisecond precision at most." },
+        "expires_at": { "type": "string", "format": "date-time", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$", "description": "Strict UTC calendar instant; at most millisecond (3-digit) fractional precision." },
+        "expected_state": { "enum": ["claude-working", "codex-working"] }
+      }
+    },
+    "event_sequence": { "type": "integer", "minimum": 0 },
+    "last_transition": { "type": ["string", "null"] }
+  }
+}

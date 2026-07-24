@@ -1,0 +1,30 @@
+{
+  "schema": "straylight.automation-policy.v1",
+  "_kill_switch": "Set `enabled` to false to suspend ALL autonomous processing. One field, one file. Suspension never rewrites lane history.",
+  "mode": "shadow",
+  "enabled": true,
+  "auto_merge": false,
+  "authorized_corridor": [
+    "phase-49p",
+    "phase-49q",
+    "phase-50a",
+    "phase-50b"
+  ],
+  "automatic_estate_semantic_decisions": false,
+  "automatic_cross_repo_contract_changes": false,
+  "automatic_sibling_repo_edits": false,
+  "automatic_external_infrastructure": false,
+  "automatic_secret_use": false,
+  "automatic_progression_beyond_mvp2": false,
+  "maximum_patch_cycles": 3,
+  "lease_duration_minutes": 240,
+  "stuck_lane_threshold_hours": 72,
+  "actor_allowlist": {
+    "_note": "GitHub commenter identity is the only authenticated identity available in v1; actor_role is a claimed field, not a cryptographic identity (ADR-050 §6). All model roles currently map to the operator's account. Distinct bot identities are a hard precondition for ever enabling auto_merge. github-actions[bot] is allowlisted for SYSTEM events only — it must never appear under operator, or workflow-posted comments could claim operator authority.",
+    "coordinator": ["eileen1337"],
+    "implementer": ["eileen1337"],
+    "auditor": ["eileen1337"],
+    "operator": ["eileen1337"],
+    "system": ["eileen1337", "github-actions[bot]"]
+  }
+}

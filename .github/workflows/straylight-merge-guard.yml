@@ -1,0 +1,235 @@
+# Straylight Control Plane v1 — shadow merge guard.
+#
+# Authority: docs/decisions/ADR-050-autonomous-execution-control-plane.md
+#
+# Validates merge ELIGIBILITY (state ready-for-merge, verdict ACCEPT,
+# audited SHA == current head SHA, required checks green, no operator
+# pause, policy sane) and posts a shadow-mode result.
+#
+# THIS WORKFLOW CANNOT MERGE. It contains no merge API invocation of any
+# shape (REST, CLI, or GraphQL), no branch mutation of any kind, and its
+# token is read-only for repository contents — GitHub would reject a merge
+# attempt even if the code were compromised. Enabling automatic merge
+# requires a future ADR,
+# a separately audited authorization, and distinct actor identities
+# (ADR-050 §6) — not a change to this file's conditions.
+#
+# WORKFLOW-BOUNDARY CONTRACT (rev. 3 §11; round 10 J1/J2/J3): bash here
+# is confined to fetching FIXED urls to files (TWICE — the two-read
+# stability fence), switching on validated exit codes, and invoking the
+# checked-in Node entry points. Every DERIVED fetch (the lane's recorded
+# PR, its head's check evidence) flows through the shared READ executor
+# (execute-read-plan.mjs) driven by the probe's closed read plan; the
+# probe's fetch-slot claim is rebound by the final planner, which
+# rederives the slots from both raw reads and requires derived = claim.
+# Bash never constructs a write request, never interprets evidence
+# content, and never extracts a field from any evidence.
+
+name: Straylight CP Merge Guard
+
+on:
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: "Lane issue number to evaluate"
+        required: true
+
+# contents:read       — checkout of protocol code.
+# issues:write        — post the shadow result on the lane issue (used
+#                       ONLY through the shared executor).
+# pull-requests:read  — read PR head SHA + check states (never write).
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: straylight-merge-guard-${{ inputs.issue_number }}
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          # Pin to main, NOT the dispatched ref: the canonical policy gate,
+          # the committed automation policy, and all protocol/reconstruction
+          # code must come from CURRENT MAIN. A manual dispatch selecting an
+          # older or non-main ref must never make this workflow evaluate an
+          # older enabled policy or older control-plane code (same posture
+          # as bootstrap's B10 hardening).
+          ref: main
+          # Repo convention (issue #669): keep recursive submodule checkout
+          # so .claude symlinks into .loa never dangle on runners.
+          submodules: recursive
+
+      - name: Setup Node 22
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      # POLICY AUTHORITY: the canonical executable gate (policy-gate.mjs →
+      # validatePolicy) validates the COMPLETE committed policy on LITERAL
+      # BOOLEANS before this workflow performs any network or mutation
+      # action. Exit 0 = valid + enabled → proceed. Exit 3 = valid kill
+      # switch → take no action. Anything else = malformed policy → FAIL
+      # CLOSED loudly.
+      - name: Kill switch check (canonical policy gate)
+        run: |
+          set -euo pipefail
+          set +e
+          node .straylight/bin/policy-gate.mjs
+          GATE=$?
+          set -e
+          if [[ "$GATE" -eq 3 ]]; then
+            echo "Automation disabled (valid kill switch). Merge guard taking no action."
+            exit 1
+          elif [[ "$GATE" -ne 0 ]]; then
+            echo "::error::automation policy failed validation (policy-gate exit ${GATE}); failing closed — a malformed policy is neither enabled nor a valid kill switch"
+            exit 1
+          fi
+
+      # FETCH ONLY, TWICE, FIXED URLS: two complete independent BASE
+      # reads for the stability fence. Raw bytes go straight to files;
+      # the PLANNERS own all parsing, binding, reconstruction, and
+      # eligibility logic. Bash extracts NOTHING from any response.
+      - name: Gather evidence twice (raw bytes to files)
+        id: gather
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gather_once() {
+            local DIR="$1"
+            if ! gh api --paginate "repos/${REPO}/issues?state=open&per_page=100" > "${DIR}/enumeration.pages"; then
+              echo "::error::enumeration failed (gh api non-zero); aborting — NOT treating as zero lanes"
+              exit 1
+            fi
+            if ! gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" > "${DIR}/issue.json"; then
+              echo "::error::issue fetch failed; aborting"
+              exit 1
+            fi
+            if ! gh api --paginate "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" > "${DIR}/comments.pages"; then
+              echo "::error::comment fetch failed; aborting — NOT treating as zero comments"
+              exit 1
+            fi
+          }
+          G1=$(mktemp -d); G2=$(mktemp -d)
+          echo "g1=${G1}" >> "$GITHUB_OUTPUT"
+          echo "g2=${G2}" >> "$GITHUB_OUTPUT"
+          echo "now=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          gather_once "${G1}"
+          gather_once "${G2}"
+
+      # PROBE (derivation authority): the reducer planner's probe in
+      # any-pr slot mode with check evidence. It validates both reads,
+      # proves the lane target in both, and writes the closed fetch-slot
+      # CLAIM + closed READ PLAN. Probe stdout is never parsed here; the
+      # final planner rederives and rebinds the claim (J2).
+      - name: Derive fetch slots (probe writes claim + read plan)
+        id: probe
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          CLAIM_ROOT=$(mktemp -d)
+          echo "claim_root=${CLAIM_ROOT}" >> "$GITHUB_OUTPUT"
+          set +e
+          node .straylight/bin/plan-reducer-writes.mjs --stage a --probe \
+            --slot-mode any-pr --with-checks \
+            --claim-root "${CLAIM_ROOT}" \
+            --gather-1 "${{ steps.gather.outputs.g1 }}" \
+            --gather-2 "${{ steps.gather.outputs.g2 }}" \
+            --issue-number "${ISSUE_NUMBER}" \
+            --repository "${REPO}" --nonce "${NONCE}" \
+            --now "${{ steps.gather.outputs.now }}"
+          PROBE=$?
+          set -e
+          if [[ "$PROBE" -ne 0 ]]; then
+            echo "::error::evidence probe refused (exit ${PROBE}); failing closed"
+            exit 1
+          fi
+
+      # EXECUTE DERIVED READS: one invocation of the shared READ executor.
+      # It fetches the claimed PR into BOTH gathers, derives the bound
+      # head SHA INSIDE the executor via evidence.mjs (never shell), and
+      # fetches check-runs + combined status for that bound head. Every
+      # attempt is an explicit read-ledger row.
+      - name: Execute read plan (single shared read executor)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+          CLAIM_ROOT: ${{ steps.probe.outputs.claim_root }}
+        run: |
+          set -euo pipefail
+          node .straylight/bin/execute-read-plan.mjs \
+            --plan "${CLAIM_ROOT}/read-plan.json" \
+            --plan-root "${CLAIM_ROOT}" \
+            --ledger "${CLAIM_ROOT}/read-ledger.jsonl" \
+            --gather-1 "${{ steps.gather.outputs.g1 }}" \
+            --gather-2 "${{ steps.gather.outputs.g2 }}" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}"
+
+      # PLAN: two-read fence (including canonical lane identity), the
+      # lane-target proof in both reads, claim rebinding, read-ledger
+      # accounting, pure evaluation, exact dedupe — all planner authority.
+      # Exit 3 = already posted (valid no-op); exit 2 = refusal, zero
+      # writes.
+      - name: Plan shadow result (planner authority)
+        id: plan
+        env:
+          ISSUE_NUMBER: ${{ inputs.issue_number }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+          CLAIM_ROOT: ${{ steps.probe.outputs.claim_root }}
+        run: |
+          set -euo pipefail
+          REQUEST_ROOT=$(mktemp -d)
+          echo "request_root=${REQUEST_ROOT}" >> "$GITHUB_OUTPUT"
+          set +e
+          node .straylight/bin/plan-merge-guard-write.mjs \
+            --gather-1 "${{ steps.gather.outputs.g1 }}" \
+            --gather-2 "${{ steps.gather.outputs.g2 }}" \
+            --issue-number "${ISSUE_NUMBER}" \
+            --request-root "${REQUEST_ROOT}" \
+            --claim "${CLAIM_ROOT}/claim.json" \
+            --read-ledger "${CLAIM_ROOT}/read-ledger.jsonl" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}" \
+            --now "${{ steps.gather.outputs.now }}"
+          PLAN=$?
+          set -e
+          if [[ "$PLAN" -eq 3 ]]; then
+            echo "shadow result already posted; nothing to do"
+            echo "outcome=noop" >> "$GITHUB_OUTPUT"
+          elif [[ "$PLAN" -eq 0 ]]; then
+            echo "outcome=plan" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::merge-guard planner refused (exit ${PLAN}); failing closed — zero writes"
+            exit 1
+          fi
+
+      # EXECUTE: one invocation of the shared secure executor per plan.
+      - name: Execute write plan (single shared executor)
+        if: steps.plan.outputs.outcome == 'plan'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          NONCE: ${{ github.run_id }}-${{ github.run_attempt }}
+          REQUEST_ROOT: ${{ steps.plan.outputs.request_root }}
+        run: |
+          set -euo pipefail
+          node .straylight/bin/execute-write-plan.mjs \
+            --plan "${REQUEST_ROOT}/plan.json" \
+            --request-root "${REQUEST_ROOT}" \
+            --repository "${REPO}" \
+            --nonce "${NONCE}"

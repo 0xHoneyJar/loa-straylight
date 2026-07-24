@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/0xHoneyJar/loa-straylight/.straylight/schemas/event-v1.schema.json",
+  "title": "Straylight Control Plane event record (v1)",
+  "description": "One append-oriented lane event, embedded in a GitHub comment after the marker `<!-- straylight:event:v1 -->`. Protocol convention: events are appended, not edited or deleted; corrections are new events. GitHub comments are technically editable/deletable, so reconstruction routes any comment whose updated_at is after created_at to operator-required (a documented v1 shadow-mode limitation, not a cryptographic guarantee). Executable validator: .straylight/lib/validate.mjs#validateEvent.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema",
+    "event_id",
+    "lane_id",
+    "sequence",
+    "actor_role",
+    "github_actor",
+    "event_type",
+    "prior_state",
+    "occurred_at"
+  ],
+  "properties": {
+    "schema": {
+      "const": "straylight.event.v1"
+    },
+    "event_id": {
+      "type": "string",
+      "pattern": "^evt-[a-z0-9][a-z0-9-]{1,62}$"
+    },
+    "lane_id": {
+      "type": "string",
+      "pattern": "^lane-[a-z0-9][a-z0-9-]{1,62}$"
+    },
+    "sequence": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Must equal the lane's event_sequence + 1 or the reducer refuses it (stale-sequence)."
+    },
+    "actor_role": {
+      "enum": [
+        "coordinator",
+        "implementer",
+        "auditor",
+        "operator",
+        "system"
+      ],
+      "description": "CLAIMED role. Not a cryptographic identity \u2014 the reducer cross-checks the authenticated GitHub commenter against the per-role allowlist in automation-policy.json (ADR-050 \u00a76)."
+    },
+    "github_actor": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(\\[bot\\])?$"
+    },
+    "event_type": {
+      "type": "string",
+      "pattern": "^[a-z_]+\\.[a-z_]+$"
+    },
+    "prior_state": {
+      "type": "string"
+    },
+    "requested_state": {
+      "type": "string"
+    },
+    "base_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "head_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "head_branch": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._/-]{1,200}$",
+      "description": "The branch the implementer pushed. Required on implementer.completed; must equal the lane's established working_branch or the reducer refuses (wrong-working-branch)."
+    },
+    "audited_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "verdict": {
+      "enum": [
+        "ACCEPT",
+        "PATCH",
+        "REJECT",
+        "CANNOT_AUDIT"
+      ]
+    },
+    "lease_id": {
+      "type": "string",
+      "pattern": "^lease-[a-z0-9][a-z0-9-]{1,62}$"
+    },
+    "lease_expires_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$",
+      "description": "Strict UTC calendar instant; at most millisecond (3-digit) fractional precision. Finer fractions are rejected, never rounded."
+    },
+    "attempt": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "patch_cycle": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "reason": {
+      "type": "string",
+      "maxLength": 4000
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d{1,3})?Z$",
+      "description": "Strict UTC calendar instant; at most millisecond (3-digit) fractional precision. Finer fractions are rejected, never rounded."
+    },
+    "refs": {
+      "type": "object",
+      "properties": {
+        "task_packet_comment_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "pr_number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "audit_comment_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "task_packet_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Canonical content digest of the referenced task-packet payload, DECLARED in the durable event. Required on coordinator packet events; the reducer recomputes the bound packet's digest on every replay and refuses on mismatch \u2014 post-hoc mutation of the packet comment is mechanically detected."
+        },
+        "audit_digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "description": "Canonical content digest of the referenced audit payload, DECLARED in the durable completion event. Required on auditor.audit_completed; the reducer recomputes the bound audit's digest on every replay and refuses on mismatch \u2014 post-hoc mutation of the audit comment is mechanically detected."
+        }
+      }
+    },
+    "pr_metadata": {
+      "type": "object",
+      "description": "Complete authoritative live PR metadata, checked by the posting workflow and embedded DURABLY in the event. Required on system.eligibility_confirmed (with fetch_ok true); the reducer re-validates every field against the lane on every replay, so a confirmation is valid only if the live check succeeded and corresponded when it was made.",
+      "required": [
+        "fetch_ok"
+      ],
+      "properties": {
+        "fetch_ok": {
+          "type": "boolean",
+          "description": "True only when the live PR fetch fully succeeded. False fails closed."
+        },
+        "repository": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+        },
+        "pr_number": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "state": {
+          "enum": [
+            "open",
+            "closed"
+          ]
+        },
+        "draft": {
+          "type": "boolean"
+        },
+        "merged": {
+          "type": "boolean"
+        },
+        "base_branch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._/-]{1,200}$"
+        },
+        "base_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "head_branch": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._/-]{1,200}$"
+        },
+        "head_sha": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
+      }
+    }
+  }
+}

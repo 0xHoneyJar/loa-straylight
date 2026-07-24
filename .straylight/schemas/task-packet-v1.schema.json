@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/0xHoneyJar/loa-straylight/.straylight/schemas/task-packet-v1.schema.json",
+  "title": "Straylight Control Plane task packet (v1)",
+  "description": "A bounded implementation (or patch) assignment written by the coordinator. Claude must not begin implementation without a valid packet bound to the lane's CURRENT base SHA; a packet bound to an old base fails closed. Executable validator: .straylight/lib/validate.mjs#validateTaskPacket.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schema",
+    "lane_id",
+    "authority_basis",
+    "base_sha",
+    "repository",
+    "target_branch",
+    "allowed_paths",
+    "forbidden_paths",
+    "capability_success_condition",
+    "non_goals",
+    "required_tests",
+    "required_negative_tests",
+    "required_no_leak_checks",
+    "required_completion_report",
+    "stop_conditions",
+    "may_open_pr",
+    "merge_forbidden",
+    "expected_next_actor",
+    "packet_kind",
+    "patch_cycle"
+  ],
+  "properties": {
+    "schema": {
+      "const": "straylight.task-packet.v1"
+    },
+    "lane_id": {
+      "type": "string",
+      "pattern": "^lane-[a-z0-9][a-z0-9-]{1,62}$"
+    },
+    "authority_basis": {
+      "type": "string",
+      "description": "Citable authority for this packet (e.g. 'ADR-050 corridor phase-49p; ADR-049 \u00a710 step 3'). A packet whose authority basis cannot be verified against merged repository artifacts must be escalated, not implemented."
+    },
+    "base_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "repository": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
+    },
+    "target_branch": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._/-]{1,200}$",
+      "description": "The lane working branch. The INITIAL packet ESTABLISHES it (the reducer records it as lane.working_branch); every later packet must name the same branch, and it may never be the lane's base branch."
+    },
+    "allowed_paths": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      },
+      "description": "Complete allowed file scope (repo-relative prefixes). Anything outside is out of scope."
+    },
+    "forbidden_paths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Explicitly forbidden paths (e.g. .loa, .claude, src/straylight, .github/workflows/post-merge.yml). Forbidden wins over allowed."
+    },
+    "capability_success_condition": {
+      "type": "string"
+    },
+    "non_goals": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "required_tests": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "required_negative_tests": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "required_no_leak_checks": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "required_completion_report": {
+      "type": "string"
+    },
+    "stop_conditions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string"
+      }
+    },
+    "may_open_pr": {
+      "type": "boolean"
+    },
+    "merge_forbidden": {
+      "const": true,
+      "description": "Control Plane v1: every packet forbids merging. The validator rejects false."
+    },
+    "expected_next_actor": {
+      "enum": [
+        "coordinator",
+        "implementer",
+        "auditor",
+        "operator",
+        "system"
+      ]
+    },
+    "packet_kind": {
+      "enum": [
+        "initial",
+        "patch"
+      ]
+    },
+    "patch_cycle": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}
