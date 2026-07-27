@@ -86,11 +86,14 @@ that their internal line anchors are anchors rather than immutable coordinates
 numbers — carry the citation.
 
 **Both responses answer the eight-topic request shape** that Straylight prepared
-in Phase 49J for each counterparty
-(`docs/ADR-022E-GATE-8-FINN-GATE-9-RAILWAY-POSTGRESQL-EVIDENCE-REQUEST-PACKET.md:61`;
-`docs/ADR-022E-GATE-8-DIXIE-GATE-10-RAILWAY-POSTGRESQL-EVIDENCE-REQUEST-PACKET.md:61`),
+in Phase 49J for each counterparty — the eight numbered request topics themselves,
+not merely the section that heads them
+(`docs/ADR-022E-GATE-8-FINN-GATE-9-RAILWAY-POSTGRESQL-EVIDENCE-REQUEST-PACKET.md:63`–`:84`;
+`docs/ADR-022E-GATE-8-DIXIE-GATE-10-RAILWAY-POSTGRESQL-EVIDENCE-REQUEST-PACKET.md:63`–`:84`),
 topic-for-topic, and both were opened under the Phase 49L dispatch authorization
-(`docs/ADR-022E-GATE-8-FINN-DIXIE-EVIDENCE-DISPATCH-DECISION-ROLLUP-GATE.md:114`).
+recorded in the rollup's Finn and Dixie authorization summaries
+(`docs/ADR-022E-GATE-8-FINN-DIXIE-EVIDENCE-DISPATCH-DECISION-ROLLUP-GATE.md:46`–`:67`,
+with the underlying authorization results tabulated at `:29`–`:33`).
 Responsiveness is recorded; sufficiency for *acceptance* is not — that judgment
 belongs to Phase 49Q.
 
@@ -128,8 +131,13 @@ only grain a sibling repository can prove in.
   claim — the flag-gated PostgreSQL block runs before WAL initialization, so an
   enabled flag with invalid configuration stops boot before the WAL initializes.
 - **Zero Straylight/ADR-022E coupling in Finn's `src/` tree** (negative
-  evidence, §3.5). There is no existing Finn surface that discharges — or could
-  silently drift into — the gate #9 responsibility.
+  evidence, §3.5). This is a **literal-coupling** finding: no Finn `src/` file
+  mentions Straylight or ADR-022E, so no existing Finn surface discharges the
+  gate #9 responsibility by wiring. Straylight's intake does **not** extend it
+  into a general non-drift conclusion: absence of literal coupling is evidence
+  about identifiers, not about semantic behavior, and the two open
+  locally-defined-classification findings in §3.4 sit on surfaces this search
+  would not reach.
 - **No Railway-specific configuration, dependency, or runtime binding in the
   `src/` runtime tree** (§3.6). Finn narrows this claim itself: two comment-only
   Railway mentions exist in one `src/` cost module, and Railway-aware
@@ -176,18 +184,25 @@ only grain a sibling repository can prove in.
 
 Finn's own packet §3.2 records that the predecessor gate #9 evidence result
 documents **two unresolved semantic-ownership-creep findings** on surfaces other
-than the PostgreSQL storage surface: two Finn modules **locally define**
-classifications rather than enforcing externally-supplied ones. Finn states that
-these are part of why that result is `PARTIAL` and gate #9 remains held, does not
-claim them resolved, and records "enforce/emit/persist under externally-defined
-semantics — never canonical semantic ownership" as its **committed target
-posture** rather than a proven present state.
+than the PostgreSQL storage surface: `TIER_TRUST_MAP`
+(`src/hounfour/economic-boundary.ts`) and `CRITICAL_ACTIONS`
+(`src/hounfour/audit/buffered-audit-chain.ts`) **locally define** classifications
+rather than enforcing externally-supplied ones. Finn states that these are part
+of why that result is `PARTIAL` and gate #9 remains held, does not claim them
+resolved, and records "enforce/emit/persist under externally-defined semantics —
+never canonical semantic ownership" as its **committed target posture** rather
+than a proven present state.
 
-Straylight's intake position: the no-creep claim is accepted **as scoped by Finn
-itself** — supportable for the PostgreSQL storage surface, with the two findings
-open on other surfaces. Those findings bear on gate #9's own disposition, not on
-the persistence requirements in §6, and nothing here resolves them. They are a
-recorded input to Phase 49Q, not a blocker this document clears.
+Straylight's intake position: both findings are carried forward **UNRESOLVED**,
+exactly as Finn records them. They are locally-defined-classification findings on
+non-storage surfaces, and this document neither resolves them, nor treats them as
+resolved, nor treats the storage-surface and literal-coupling evidence in §3.1 as
+answering them. Finn's own scoping is the boundary Straylight adopts: the
+no-creep statement is supportable **for the PostgreSQL storage surface**, and
+Finn's own packet §3.2 records that these two findings still require separate
+treatment "before Finn could host the gate #9 responsibility cleanly." They bear
+on gate #9's own disposition, not on the persistence requirements in §6. They are
+a recorded input to Phase 49Q, not a blocker this document clears.
 
 ---
 
@@ -261,16 +276,26 @@ that contract exists — a deferral, not a present gap.
 
 ## 5. Intake findings
 
-### 5.1 Neither sibling becomes, or drifts toward, the Straylight semantic owner
+### 5.1 Neither sibling becomes the Straylight semantic owner
 
 Confirmed from both responses, on independent evidence of the same shape:
-Finn holds zero Straylight/ADR-022E coupling in its runtime tree (§3.1) and
-Dixie declares zero canonical primitives locally, importing them type-only
-(§4.1). Straylight remains the semantic owner of the canonical-store boundary,
-as ADR-048B already records the host to be **UNSELECTED** with owner "none"
-(`docs/decisions/ADR-048B-canonical-store-physical-host-ownership-routing.md:156`).
-The one qualification is Finn's own: two enforce-not-define creep findings remain
-open on non-storage surfaces (§3.4).
+Finn holds zero literal Straylight/ADR-022E coupling in its `src/` tree (§3.1)
+and Dixie declares zero canonical primitives locally, importing them type-only
+(§4.1). Straylight remains the semantic owner of the canonical-store boundary —
+ADR-048B records `loa-straylight` as the **permanent** owner of canonical
+Straylight semantic ownership (row S1,
+`docs/decisions/ADR-048B-canonical-store-physical-host-ownership-routing.md:155`),
+and separately records the canonical-store **physical host** as **UNSELECTED**
+with gate #8 held (row S2, `:156`). Those are two different surfaces: the
+semantic owner is settled and permanent; only the physical host is unselected.
+
+**Scope of this finding.** It is a *becoming* finding, not a *non-drift* finding.
+Both siblings state their non-ownership and Straylight records it; neither the
+literal-coupling search nor the storage-surface evidence establishes that no
+semantic drift could occur on unexamined surfaces, and Finn's two open
+locally-defined-classification findings (§3.4) remain unresolved on exactly such
+surfaces. Nothing here concludes that Finn cannot drift toward the gate #9
+responsibility; that disposition belongs to gate #9 itself.
 
 ### 5.2 Both siblings converge on the same substrate posture — and on the same limit
 
@@ -323,19 +348,19 @@ would be a deployment detail.
 
 | # | Requirement | Derived from |
 |---|---|---|
-| **P-1** | **Semantic ownership is non-transferable.** Straylight defines estate semantics; a persistence substrate is a storage surface and never a semantic authority. No agent, controller, tenant, runtime, model provider, cloud, or storage host acquires definitional power over an estate by holding, enforcing at, or routing to its records. | ADR-048B `:156` (host UNSELECTED, owner "none"); ADR-022D `:106`–`:107` (the host is a persistence/exposure surface, not the semantic owner); confirmed non-drift in both siblings (§5.1) |
-| **P-2** | **No provider concept in the domain model.** No storage-host, cloud, runtime, or model-provider concept may appear in the estate domain model or in canonical migration semantics. Provider- and deployment-specific configuration lives only at the adapter/deployment boundary, never in domain code. | ADR-049 §9.1 clauses 1, 2, 5 (`docs/decisions/ADR-049-six-mvp-product-roadmap-and-governance.md:446`, `:447`, `:450`) |
+| **P-1** | **Semantic ownership is non-transferable.** Straylight defines estate semantics; a persistence substrate is a storage surface and never a semantic authority. No agent, controller, tenant, runtime, model provider, cloud, or storage host acquires definitional power over an estate by holding, enforcing at, or routing to its records. | ADR-048B `:155` (`loa-straylight` is the **permanent** owner of canonical Straylight semantic ownership) read with `:156` (the canonical-store **physical host** is UNSELECTED, gate #8 held) — the host surface is unselected, the semantic owner is not; ADR-022D `:106`–`:107` (the host is a persistence/exposure surface, not the semantic owner); both siblings' recorded non-ownership (§5.1) |
+| **P-2** | **No provider-, deployment-, or host-specific product concept in the domain model.** No provider-, deployment-, or host-specific product concept, semantics, or configuration — a named vendor or managed offering, its proprietary features, its product-specific behavior, or its deployment/configuration particulars — may appear in the estate domain model or in canonical migration semantics; such configuration lives only at the adapter/deployment boundary. Provider-neutral concepts are **not** prohibited: the domain model may name storage hosts, clouds, runtimes, controllers, tenants, and model providers **generically**, as this document's own neutrality dimensions do, precisely because generic naming is what makes an obligation host-invariant. | ADR-049 §9.1 clauses 1, 2, 5 (`docs/decisions/ADR-049-six-mvp-product-roadmap-and-governance.md:446`, `:447`, `:450`) — each clause is scoped to *Railway-specific* concepts, *Railway-specific* migration semantics, and configuration at the adapter/deployment boundary; none prohibits a provider-neutral concept |
 | **P-3** | **A conforming host satisfies the recorded adapter semantics exactly.** Actors, estates, keyrings, assertions, and receipts use upsert semantics (latest write wins by primary id); transitions and audit events are **append-only** — once written they must be returned in append order and must not be mutated; audit events are hash-chained per estate with a retrievable per-estate tail; unknown ids return absent rather than throwing; integrity violations surface as exceptions and **never as silent drops**. | `src/straylight/storage/types.ts:4`–`:13`, `:33`–`:68`; `src/straylight/audit.ts:31` |
 | **P-4** | **Chain of custody survives every move.** The per-estate audit hash chain must verify identically after export, restore, migration, or provider replacement. A broken chain means the store was tampered with or two writers raced, and the estate must be quarantined rather than served. Continuity is a property of the records, not of the host that happens to hold them. | `src/straylight/audit.ts:75`–`:88` (`verifyChain`); `tests/phase-5-hardening.test.ts:326`–`:327` (tampered chain is detectable); ADR-022D `:110`–`:120` (the invariants are the contract the host inherits) |
-| **P-5** | **Receipts are immutable and never re-minted.** A persistence host, runtime, or boundary surface may store, index, and serve receipts; it may not mint, re-mint, alter, or reconstruct them, and it may not surface a receipt it did not receive from the canonical authority. | ADR-022D `:110`–`:120`, `:170`–`:174` (preserve the receipt categories; refuse to re-mint) |
+| **P-5** | **Receipts are never semantically redefined and never re-minted without authority.** A receipt's shape and meaning are Straylight's to define, and no persistence host, runtime, or boundary surface may redefine them, re-mint a receipt without authority, alter or reconstruct one, or surface a receipt it did not receive or was not authorized to emit. This constrains *definition and unauthorized minting*, not participation: an **authorized runtime** — Finn in its ADR-022D role — executes the request under policy, **emits the receipt Straylight defines**, **appends the audit event Straylight defines**, and **persists the resulting chain**. Emitting a Straylight-defined receipt under granted authority is the runtime doing its job; minting one Straylight did not define, or emitting without that authority, is the prohibited act. | ADR-022D `:97`–`:99` (Finn "must execute a `RecallRequest` under policy, emit the receipt the wedge defines, and append the audit-event the wedge defines"); `:106`–`:107` (the host is a persistence/exposure surface, not the semantic owner); `:110`–`:120`, `:170`–`:174` (preserve the receipt categories; refuse to re-mint) |
 | **P-6** | **Portability is provider-neutral by construction.** Canonical estate state must be exportable in an ordinary, provider-neutral form and restorable into a **different** conforming host without altering assertion, transition, receipt, or audit semantics. Export and restore are capabilities of the canonical record, not features of a vendor. | ADR-049 §9.1 clauses 3, 6 (`:448`, `:452`) |
 | **P-7** | **Restoration is proven before reliance, not assumed.** A documented backup-and-restore exercise against the actual deployment must exist and pass before any production admission relies on that deployment. Provider marketing, defaults, or documentation are not restoration evidence — and, per §5.2, neither sibling can supply it. | ADR-049 §9.1 clause 4 (`:449`); the provider-side gap both siblings record (§3.2, §4.2) |
 | **P-8** | **Provider replacement stays live.** The ability to move to another conforming host without changing assertion or receipt semantics must be preserved for the life of the deployment, and no accepted provider may become a permanent architectural dependency. Replaceability that erodes as the deployment matures was never replaceability. | ADR-049 §9.1 clause 6 (`:452`); ADR-049 §10 step 4 (`:484`, "does not make Railway a permanent architectural dependency") |
 | **P-9** | **Migration and rollback are provider-neutral and reversible.** Canonical migrations carry no provider-specific semantics, and a rollback procedure must exist for a failed migration or a failed admission deployment before either is attempted. | ADR-049 §9.1 clauses 2, 7 (`:447`, `:454`) |
-| **P-10** | **Authority separation is structural, not procedural.** Substrate acceptance, adapter authorization, implementation authorization, production wiring, auth/consent/signer validation, and living-estate admission are **distinct authorities**, each requiring its own operator decision. Satisfying one never implies another; accepting a host never accepts production wiring. | ADR-049 §9.1 clauses 9, 10 (`:457`, `:458`); ADR-049 §6 (`:312`, sole authority); blockers B-3…B-7 (`docs/ADR-022E-GATE-8-PREFERRED-CANDIDATE-RESIDUAL-BLOCKERS-GATE.md:60`–`:64`) |
+| **P-10** | **Every authority is granted explicitly, never by implication.** Substrate acceptance, adapter authorization, implementation authorization, production wiring, auth/consent/signer validation, and living-estate admission are **distinct authorities**. Each requires its own **express** operator grant, and none is ever inferred from another: accepting a host never implies authorizing production wiring, and no grant may be read out of silence, adjacency, or the mere existence of a merged artifact. The requirement is **explicitness, not artificial separation**: ADR-049 §10 step 4 contemplates host selection, gate-#8 discharge for a bounded purpose, and `StorageAdapter`/implementation-lane authorization being **expressly co-recorded in one operator-signed Phase 49Q PR** (PR B), and §9.2 compresses the corridor to exactly two Straylight PRs for that reason. Co-recording several distinct grants in one operator-signed decision satisfies this requirement, provided each grant is stated in its own terms; what it forbids is an unstated grant riding along on a stated one. | ADR-049 §9.1 clauses 9, 10 (`:457`, `:458`); ADR-049 §10 step 4 (`:484`–`:492`, one operator-signed PR B carrying host selection, bounded gate-#8 discharge, and adapter/implementation authorization); ADR-049 §9.2 corridor compression (`:461`–`:470`); ADR-049 §6 (`:312`, sole authority); blockers B-3…B-7 (`docs/ADR-022E-GATE-8-PREFERRED-CANDIDATE-RESIDUAL-BLOCKERS-GATE.md:60`–`:64`) |
 | **P-11** | **Fail-closed behavior is host-invariant.** Missing policy denies; an unknown assertion class fails class validation; an unknown signer fails competence; revoked, forgotten, private, and contested material never surfaces as usable. These must hold identically on every conforming host — persistence unavailability or uncertainty must **deny**, never degrade into a permissive path. | `tests/phase-5-hardening.test.ts:50`, `:93`, `:123`, `:159`; ADR-022D `:110`–`:120` |
-| **P-12** | **Concurrency and isolation may not be inherited as assumptions.** The current MVP adapters are explicitly single-writer and single-host, and multi-process safety is recorded as **not guaranteed**. Any host serving concurrent writers must establish isolation and single-writer-equivalent ordering for append-only records **without** altering the semantics in P-3, and estate identity and controller binding must never be inferred from storage location or tenancy. | `src/straylight/storage/jsonl.ts:15`–`:20`; `src/straylight/storage/types.ts:7`–`:8` |
-| **P-13** | **Model providers and agent runtimes are candidate sources, never canonical writers.** Runtime or model output may propose candidate material; it may not mint, admit, activate, or mutate canonical records by itself, and no model provider's availability, identity, or behavior may condition canonical semantics. | ADR-049 §8 (`:404`–`:410`: runtime or model output may propose candidates but may not activate them; identity-, relationship-, and permission-affecting assertions require explicit operator acceptance) |
+| **P-12** | **Concurrency and isolation may not be inherited as assumptions.** The current MVP adapters are explicitly single-writer and single-host, and multi-process safety is recorded as **not guaranteed**. Any host serving concurrent writers must therefore establish isolation and single-writer-equivalent ordering for append-only records **without** altering the semantics in P-3 — the recorded guarantee does not extend to a concurrent deployment, so it must be re-established rather than assumed. | `src/straylight/storage/jsonl.ts:15`–`:20` (single-process, single-host only; multi-process safety NOT GUARANTEED; the MVP assumes a single writer); `src/straylight/storage/types.ts:7`–`:8` (transitions and audit events are append-only and must be returned in append order) |
+| **P-13** | **No self-authorized admission.** Runtime or model output may propose candidate material; it may not **admit or activate** that material **by its own authority**, and identity-, relationship-, and permission-affecting assertions require explicit operator acceptance. No model provider's availability, identity, or behavior may condition canonical semantics. The prohibition is on **self-authorization**, not on authorized participation: an authorized runtime executing under granted authority does emit Straylight-defined receipts, append Straylight-defined audit events, and persist the resulting chain (P-5) — it acts as an **authorized canonical writer of Straylight-defined records** while remaining unable to authorize its own admission decisions or redefine what it writes. | ADR-049 §8 (`:404`–`:410`: runtime or model output "may propose candidate observations but may not activate them by itself"; identity-, relationship-, and permission-affecting assertions require explicit operator acceptance); ADR-022D `:97`–`:99` (the authorized runtime executes under policy, emits the defined receipt, appends the defined audit event) |
 | **P-14** | **Operational failure reopens the infrastructure decision.** If durability, isolation, restore, or operational evidence fails for an accepted substrate, the infrastructure decision reopens. A reversible decision that is never actually revisited on failure is not reversible. | ADR-049 §9.1 clause 8 (`:455`); ADR-049 §9 (`:432`–`:439`: semantically non-authoritative but not inert — infrastructure still governs operational correctness) |
 
 **Standing of this set.** These are the persistence obligations that any future
@@ -360,8 +385,9 @@ classifies the decision as **Tier 1** — reversible infrastructure
 The scope of the candidate, stated once: Railway PostgreSQL is a **current,
 bounded deployment candidate for MVP-2's canonical store**. It is not the
 Straylight product boundary, not a Straylight architectural dependency, not the
-semantic owner of any estate (P-1), and not a term in the estate domain model
-(P-2). The Straylight invariants live above the storage adapter, and changing
+semantic owner of any estate — `loa-straylight` holds that permanently (P-1) —
+and, as a provider-specific product concept, not a term in the estate domain
+model (P-2). The Straylight invariants live above the storage adapter, and changing
 PostgreSQL hosts must not redefine any of them (ADR-049 §9, `:432`–`:436`). A
 future accepted host, whichever it is, holds bytes under the §6 requirements and
 holds nothing else.
@@ -380,8 +406,12 @@ document does not make, prejudge, or recommend.
 Everything this intake leaves unresolved routes to **one separate later
 decision**: the Phase 49Q operator acceptance and implementation-authorization
 lane, which is ADR-049 §10 step 4's **PR B**
-(`docs/decisions/ADR-049-six-mvp-product-roadmap-and-governance.md:484`) and
-which sits in the ADR-050 authorized corridor as `phase-49q`.
+(`docs/decisions/ADR-049-six-mvp-product-roadmap-and-governance.md:484`–`:492`)
+and which sits in the ADR-050 authorized corridor as `phase-49q`. That single
+operator-signed PR is where host acceptance and implementation authorization may
+be **expressly co-recorded** (P-10); routing them to one decision is the corridor
+compression ADR-049 §9.2 chose (`:461`–`:470`), not a collapse of the grants
+themselves.
 
 Carried to Phase 49Q, unresolved and unprejudged:
 
@@ -394,7 +424,9 @@ Carried to Phase 49Q, unresolved and unprejudged:
    restore behavior, failover, version pinning, network isolation, tenancy
    (§5.2) — including the P-7 restoration proof.
 5. The **dispositions of gates #9 and #10** themselves, which remain held (§5.3),
-   including Finn's two open enforce-not-define findings (§3.4).
+   including Finn's two open locally-defined-classification findings —
+   `TIER_TRUST_MAP` and `CRITICAL_ACTIONS` — which this intake carries forward
+   unresolved (§3.4).
 6. Whether the eventual substrate contract imposes **boundary-side requirements**
    on the references Dixie carries, which would need a further bounded Dixie lane
    *after* that contract exists (§4.3).
@@ -423,8 +455,11 @@ document:
 - **D.2** remains **NOT STARTED** (`:167`).
 - **MVP-2** remains **OPEN** (`:168`;
   `docs/decisions/ADR-049-six-mvp-product-roadmap-and-governance.md:498`).
-- **The canonical-store physical host remains UNSELECTED**, owner "none"
-  (`docs/decisions/ADR-048B-canonical-store-physical-host-ownership-routing.md:156`).
+- **The canonical-store physical host remains UNSELECTED** with gate #8 held
+  (`docs/decisions/ADR-048B-canonical-store-physical-host-ownership-routing.md:156`),
+  while **`loa-straylight` remains the permanent semantic owner** of canonical
+  Straylight semantic ownership (`:155`). The unselected surface is the physical
+  host; semantic ownership is settled.
 - **`InMemoryStorage` and `JsonlStorage` remain the only MVP adapters** behind the
   unchanged `StorageAdapter` swap-in seam
   (`docs/decisions/ADR-022D-mvp-persistence-and-audit-owner.md:79`;
@@ -482,11 +517,14 @@ intake:
 
 The two merged sibling evidence responses are bound to their exact merge commits
 and intaken as bounded sibling evidence, with what each proves, cannot prove, and
-defers recorded (§3, §4); neither sibling becomes the Straylight semantic owner
-(§5.1); the sibling-evidence-supply blockers B-1 and B-2 are closed while gates
-#9 and #10 remain held (§5.3); fourteen provider-neutral canonical-estate
-persistence requirements are recorded as the standard any future authorized work
-must satisfy (§6); Railway PostgreSQL remains a bounded MVP-2 deployment
+defers recorded (§3, §4); neither sibling becomes the Straylight semantic owner,
+which `loa-straylight` holds permanently while the physical host remains
+UNSELECTED (§5.1), with Finn's two locally-defined-classification findings carried
+forward unresolved (§3.4); the sibling-evidence-supply blockers B-1 and B-2 are
+closed while gates #9 and #10 remain held (§5.3); fourteen provider-neutral
+canonical-estate persistence requirements are recorded as the standard any future
+authorized work must satisfy (§6); Railway PostgreSQL remains a bounded MVP-2
+deployment
 candidate rather than the Straylight product boundary (§7); and provider
 acceptance together with implementation authorization routes to the separate
 Phase 49Q lane (§8). Gate #8 remains OPEN / HELD and MVP-2 remains OPEN (§9).
@@ -504,9 +542,24 @@ Phase 49Q lane (§8). Gate #8 remains OPEN / HELD and MVP-2 remains OPEN (§9).
 - [ ] **Proves / cannot prove / defers complete** for both siblings, including
       each sibling's own self-recorded qualifications and narrowings (§3.1, §3.4,
       §4.1, §4.3).
+- [ ] **Negative conclusions bounded.** Finn's negative evidence is recorded only
+      as literal Straylight/ADR-022E coupling absence in `src/` and as the
+      PostgreSQL storage surface; no broad non-drift or no-creep conclusion is
+      drawn, and `TIER_TRUST_MAP` / `CRITICAL_ACTIONS` stay unresolved (§3.1,
+      §3.4, §5.1).
 - [ ] **Requirements provider-neutral.** Every §6 requirement holds across
       agents, controllers, tenants, runtimes, model providers, clouds, and
       conforming storage hosts, and each cites an existing repository obligation.
+      P-2 bans only provider-, deployment-, and host-*specific* product concepts;
+      generic neutrality concepts remain permitted.
+- [ ] **Authorized runtime behavior preserved.** No requirement prevents an
+      authorized runtime from executing policy, emitting Straylight-defined
+      receipts, appending Straylight-defined audit events, or persisting the
+      chain; P-5 and P-13 constrain semantic redefinition, unauthorized
+      re-minting, and self-authorized admission only.
+- [ ] **Authority explicit, not fragmented.** P-10 requires express, non-implied
+      grants while permitting host acceptance and implementation authorization to
+      be co-recorded in one operator-signed Phase 49Q PR.
 - [ ] **No design or authorization.** No interface, adapter, migration, schema,
       wiring, credential, consent, or signer behavior is designed, proposed, or
       authorized (§1, §6 standing note, §10).
@@ -515,7 +568,8 @@ Phase 49Q lane (§8). Gate #8 remains OPEN / HELD and MVP-2 remains OPEN (§9).
       or as the product boundary (§7).
 - [ ] **Gates preserved.** Gate #8 OPEN / HELD; gates #9 / #10 held at
       `PARTIAL_RECORDED`; D.1(ii) unresolved; D.1 unsatisfied; D.2 not started;
-      MVP-2 open; host UNSELECTED (§9).
+      MVP-2 open; physical host UNSELECTED while `loa-straylight` remains the
+      permanent semantic owner (§9).
 - [ ] **Routing correct.** Provider acceptance and implementation authorization
       route to Phase 49Q; nothing is requested or prejudged there (§8).
 - [ ] **No leak.** No credential, connection string, endpoint, hostname, port,
@@ -541,8 +595,10 @@ Straylight (this repository, at the lane base SHA
 - [ADR-050](./decisions/ADR-050-autonomous-execution-control-plane.md) — the
   authorized corridor and shadow-mode control plane under which this lane runs.
 - [ADR-048B](./decisions/ADR-048B-canonical-store-physical-host-ownership-routing.md) —
-  canonical-store physical host UNSELECTED, owner "none" (`:156`); gate #9 Finn
-  lane (`:253`); gate #10 Dixie lane (`:254`).
+  `loa-straylight` as the permanent owner of canonical Straylight semantic
+  ownership (row S1, `:155`); canonical-store physical host UNSELECTED with gate
+  #8 held (row S2, `:156`); gate #9 Finn lane (`:253`); gate #10 Dixie lane
+  (`:254`).
 - [ADR-048C](./decisions/ADR-048C-host-selection-candidate-matrix-no-host-decision.md) —
   the `M5` production-adapter-proposal shape as a separate later authority
   (`:352`).
@@ -561,11 +617,13 @@ Straylight (this repository, at the lane base SHA
 - [Phase 49I residual blockers gate](./ADR-022E-GATE-8-PREFERRED-CANDIDATE-RESIDUAL-BLOCKERS-GATE.md) —
   blockers B-1…B-11 (`:58`–`:68`).
 - [Phase 49J Finn request packet](./ADR-022E-GATE-8-FINN-GATE-9-RAILWAY-POSTGRESQL-EVIDENCE-REQUEST-PACKET.md) —
-  the eight requested Finn evidence topics (`:61`).
+  the eight requested Finn evidence topics (`:63`–`:84`).
 - [Phase 49J Dixie request packet](./ADR-022E-GATE-8-DIXIE-GATE-10-RAILWAY-POSTGRESQL-EVIDENCE-REQUEST-PACKET.md) —
-  the eight requested Dixie evidence topics (`:61`).
+  the eight requested Dixie evidence topics (`:63`–`:84`).
 - [Phase 49L dispatch decision rollup](./ADR-022E-GATE-8-FINN-DIXIE-EVIDENCE-DISPATCH-DECISION-ROLLUP-GATE.md) —
-  the authorization under which both sibling PRs were opened (`:114`).
+  the authorization under which both sibling PRs were opened: the operator
+  decision and the Finn / Dixie dispatch authorization summaries (`:40`–`:67`),
+  and the authorization results they roll up (`:29`–`:33`).
 - `src/straylight/storage/types.ts` — recorded adapter semantics (`:4`–`:13`) and
   the unchanged interface (`:33`–`:68`).
 - `src/straylight/storage/jsonl.ts` — single-writer, single-host MVP adapter;
@@ -593,10 +651,12 @@ canonical-estate persistence requirements record. It binds and intakes the merge
 Finn gate #9 and Dixie gate #10 evidence responses as bounded sibling evidence,
 records what each proves, cannot prove, and defers, closes the
 sibling-evidence-supply blockers while leaving gates #9 and #10 held, confirms
-that neither sibling becomes the Straylight semantic owner, records fourteen
-provider-neutral persistence requirements, keeps Railway PostgreSQL a bounded
-MVP-2 deployment candidate rather than the Straylight product boundary, and
-routes provider acceptance and implementation authorization to the separate Phase
-49Q lane. It accepts no provider, discharges no gate, resolves no dependency,
-authorizes no implementation, and changes no estate semantics. Gate #8 remains
-OPEN / HELD; MVP-2 remains OPEN.*
+that neither sibling becomes the Straylight semantic owner — `loa-straylight`
+holds that permanently, while the canonical-store physical host stays UNSELECTED —
+carries Finn's two locally-defined-classification findings forward unresolved,
+records fourteen provider-neutral persistence requirements, keeps Railway
+PostgreSQL a bounded MVP-2 deployment candidate rather than the Straylight product
+boundary, and routes provider acceptance and implementation authorization to the
+separate Phase 49Q lane. It accepts no provider, discharges no gate, resolves no
+dependency, authorizes no implementation, and changes no estate semantics. Gate #8
+remains OPEN / HELD; MVP-2 remains OPEN.*
