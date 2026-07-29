@@ -316,3 +316,55 @@ routing `RECORDED`), preserves the held corridor state, and selects a docs-only 
 physical-host dependency decomposition / decision-prep gate as the next step. It claims no gate is
 satisfied, discharges no gate, selects no host, proposes no production adapter, and authorizes no
 implementation. No commit, no push, no PR.*
+
+---
+
+## 12. Later status — Phase 49Q (annotation; §1–§11 unchanged)
+
+Everything above is preserved as originally written and **was true when written**.
+Phase 48N's intake record, its `PARTIAL_RECORDED` classifications (§3), and its
+evidence-return routing `RECORDED` are unchanged and are **not** reopened. This
+annotation records only which §6 preserved-state lines a **later** decision
+supersedes, and takes effect **only if** `operator:eileen` authorizes the merge of
+[`ADR-049Q`](./decisions/ADR-049Q-railway-postgresql-canonical-store-host-acceptance-and-implementation-authorization.md)
+(Phase 49Q, Tier 1).
+
+**Superseded on that merge, for these bounded items only:**
+
+- **§6 gate #8** (`./ADR-022E-SIBLING-GATE-9-10-EVIDENCE-RESULT-INTAKE-COMPLETION-GATE.md:157`) — no longer OPEN / HELD in full: **DISCHARGED for two
+  bounded purposes only** — the canonical-store physical-host selection (Railway
+  PostgreSQL, bounded and reversible) and the opening of the provider-neutral
+  durable-storage implementation lane. Gate #8 **remains held** for production
+  admission, production writes, production migration execution, rollout,
+  production credentials, production auth/consent/signer implementation,
+  living-estate admission, and MVP-2 closure (ADR-049Q §6.3, §8).
+- **§6 D.1(ii)** (`./ADR-022E-SIBLING-GATE-9-10-EVIDENCE-RESULT-INTAKE-COMPLETION-GATE.md:163`) — **RESOLVED** by that host acceptance; it was the
+  canonical-store physical-host dependency (ADR-049Q §6.4, §7.2).
+- **§6 full D.1** (`./ADR-022E-SIBLING-GATE-9-10-EVIDENCE-RESULT-INTAKE-COMPLETION-GATE.md:165`) — **SATISFIED**: conjunct (i) ACCEPTED ∧ conjunct (ii)
+  RESOLVED.
+- **§6 D.2** (`./ADR-022E-SIBLING-GATE-9-10-EVIDENCE-RESULT-INTAKE-COMPLETION-GATE.md:167`) — **AUTHORIZED TO START** in Phase 50A within ADR-049Q §13;
+  **not started and not complete**, and the sequencing rule (D.2 downstream of
+  full D.1) is preserved.
+- **§6 canonical-store physical host**
+  (`./ADR-022E-SIBLING-GATE-9-10-EVIDENCE-RESULT-INTAKE-COMPLETION-GATE.md:169`) — a host is chosen. Until a
+  Phase 50A packet delivers an adapter, `InMemoryStorage` and `JsonlStorage`
+  remain the only MVP adapters behind the unchanged `StorageAdapter` seam.
+
+**Unchanged by that merge:**
+
+- **§3 and §6 gates #9 and #10**
+  (`./ADR-022E-SIBLING-GATE-9-10-EVIDENCE-RESULT-INTAKE-COMPLETION-GATE.md:159`, `./ADR-022E-SIBLING-GATE-9-10-EVIDENCE-RESULT-INTAKE-COMPLETION-GATE.md:161`) — both remain **HELD** at
+  `PARTIAL_RECORDED`. ADR-049Q satisfies none of their trigger conjuncts
+  (ADR-049Q §6.6, §7.2). **Recording a `PARTIAL` result was never gate
+  satisfaction, and resolving the host dependency is not sibling-gate closure.**
+- **§6 D.1(i)** — remains ACCEPTED and is **not reopened**.
+- **§6 MVP-2** (`./ADR-022E-SIBLING-GATE-9-10-EVIDENCE-RESULT-INTAKE-COMPLETION-GATE.md:168`) — remains **OPEN**.
+- **§6 ADR-026D narrow recall-intake slice** — **not widened**.
+- **§6 gates #11, #12, and the #20 threat-model discipline** — untouched.
+- **§4, §5, §7** — Finn's and Dixie's bounded partial evidence, the
+  does-not-support list, and the implications recorded there stand as written;
+  Finn's `TIER_TRUST_MAP` and `CRITICAL_ACTIONS` findings remain **UNRESOLVED**
+  (ADR-049Q §6.7).
+
+Until that merge, every §6 line stands exactly as recorded: gate #8 OPEN / HELD,
+D.1(ii) unresolved, D.1 not satisfied, D.2 not started, MVP-2 open, no host chosen.
