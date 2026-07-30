@@ -9,6 +9,13 @@
 // enumerable in one place.
 
 // ── schema version ──────────────────────────────────────────────────────
+//
+// The ledger is owned by the RUNNER (`migrate.ts`), not by a versioned file,
+// so rollback → re-apply works. Each row binds a version to the deterministic
+// checksum of the migration content that was applied for it, and that binding
+// is IMMUTABLE: a BEFORE UPDATE OR DELETE trigger refuses any change to the
+// checksum of an existing row, so a stale or forged checksum cannot be written
+// over a correct one through the ordinary SQL surface.
 
 export const CREATE_MIGRATION_LEDGER = `
   CREATE TABLE IF NOT EXISTS straylight_schema_migrations (
@@ -17,8 +24,70 @@ export const CREATE_MIGRATION_LEDGER = `
   )
 `;
 
+// The checksum column is added separately (not folded into the CREATE above)
+// so a ledger created by an earlier build gains the column rather than being
+// left without it. Adding it as NULLable is deliberate: a pre-existing row has
+// no recorded checksum, and a MISSING checksum must FAIL CLOSED at verification
+// time rather than be silently backfilled from whatever content ships now.
+export const ADD_MIGRATION_LEDGER_CHECKSUM = `
+  ALTER TABLE straylight_schema_migrations
+    ADD COLUMN IF NOT EXISTS content_checksum text
+`;
+
+// Immutability of the recorded binding. A ledger row's checksum is written once
+// by the apply path; refusing UPDATE/DELETE of an existing checksum means a
+// forged checksum cannot be swapped in to make changed migration content look
+// applied. Withdrawal is still possible via the rollback path, which deletes
+// the row through the same trigger's DELETE arm — so the trigger permits DELETE
+// while refusing an in-place checksum rewrite.
+export const CREATE_MIGRATION_LEDGER_IMMUTABILITY = `
+  CREATE OR REPLACE FUNCTION straylight_refuse_checksum_rewrite() RETURNS trigger AS $$
+  BEGIN
+    IF OLD.content_checksum IS NOT NULL
+       AND (NEW.content_checksum IS NULL OR NEW.content_checksum <> OLD.content_checksum) THEN
+      RAISE EXCEPTION
+        'straylight: the recorded migration checksum for version % is immutable', OLD.version
+        USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+    RETURN NEW;
+  END;
+  $$ LANGUAGE plpgsql
+`;
+
+// DROP + CREATE rather than `CREATE OR REPLACE TRIGGER`: the latter is core but
+// only from PostgreSQL 14, and the store commits to no version-gated feature
+// (§11.2, P-2). The pair is idempotent and runs inside the caller's
+// transaction, so a concurrent runner never observes the trigger absent.
+export const DROP_MIGRATION_LEDGER_IMMUTABILITY = `
+  DROP TRIGGER IF EXISTS straylight_schema_migrations_checksum_immutable
+    ON straylight_schema_migrations
+`;
+
+export const ATTACH_MIGRATION_LEDGER_IMMUTABILITY = `
+  CREATE TRIGGER straylight_schema_migrations_checksum_immutable
+    BEFORE UPDATE ON straylight_schema_migrations
+    FOR EACH ROW EXECUTE FUNCTION straylight_refuse_checksum_rewrite()
+`;
+
 export const SELECT_APPLIED_VERSIONS = `
   SELECT version FROM straylight_schema_migrations ORDER BY version ASC
+`;
+
+// Version + its recorded checksum. `content_checksum` is NULL for a row written
+// by a build that predates checksum binding; the caller treats NULL as a
+// verification FAILURE, never as "no opinion".
+export const SELECT_APPLIED_MIGRATIONS = `
+  SELECT version, content_checksum
+    FROM straylight_schema_migrations ORDER BY version ASC
+`;
+
+// Record the checksum for the version the migration file itself just claimed.
+// Runs inside the SAME transaction as the migration DDL, so a migration that
+// fails partway leaves neither the DDL nor the checksum binding.
+export const BIND_MIGRATION_CHECKSUM = `
+  UPDATE straylight_schema_migrations
+     SET content_checksum = $2
+   WHERE version = $1 AND content_checksum IS NULL
 `;
 
 // ── snapshot load (per estate) ──────────────────────────────────────────
@@ -230,6 +299,13 @@ export const INSERT_AUDIT_EVENT = `
 `;
 
 // ── existing-row lookups for idempotent retry ───────────────────────────
+//
+// Each statement selects EVERY durable column of its table, because
+// idempotency is decided by complete-row equality (`persist.ts`), never by the
+// canonical payload alone. A promoted enforcement column that the SELECT did
+// not return would be a column the equality check could not see — which is
+// precisely how a row with the right id and payload but the wrong estate,
+// position, or chain link could be miscounted as an idempotent retry.
 
 export const SELECT_TRANSITION_BY_ID = `
   SELECT transition_id, estate_id, append_position, payload
@@ -245,6 +321,6 @@ export const SELECT_RECALL_RECEIPT_BY_ID = `
 `;
 export const SELECT_AUDIT_EVENT_BY_ID = `
   SELECT audit_event_id, estate_id, append_position,
-         audit_hash, previous_audit_hash, payload
+         audit_hash, previous_audit_hash, previous_audit_hash_key, payload
     FROM audit_events WHERE audit_event_id = $1
 `;

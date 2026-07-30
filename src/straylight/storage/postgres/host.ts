@@ -14,7 +14,8 @@
 //       estate row lock when the row exists);
 //    4. load the transaction-scoped CanonicalState snapshot;
 //    5. hand a synchronous PostgresAdapterSession over that snapshot to ONE
-//       bounded callback;
+//       bounded callback, and REFUSE a Promise-like return value before
+//       anything else happens (see `isThenable` / `absorbSettlement` below);
 //    6. close the session, computing its deterministic delta;
 //    7. re-verify the immutable append prefix is unchanged and the audit
 //       chain still verifies with the delta applied;
@@ -105,6 +106,15 @@ export class PostgresEstateHost {
    * Open a transaction-scoped synchronous adapter session over one estate,
    * run `body`, and commit before returning. See the module header for the
    * exact ordering guarantee.
+   *
+   * `body` MUST be synchronous. The session it receives performs no I/O and
+   * lives only for the duration of the call, so there is nothing for a
+   * callback to await — and code resuming after an `await` would run after
+   * the transaction had already been decided. A callback that returns a
+   * Promise or any other thenable is therefore REFUSED (see
+   * `isThenable` / `absorbSettlement`), not awaited: this is not an
+   * asynchronous-callback feature, and `Awaited<T>` never appears in this
+   * signature.
    */
   async withEstateSession<T>(
     estate_id: ID,
@@ -136,6 +146,27 @@ export class PostgresEstateHost {
 
       session = new PostgresAdapterSession(state);
       const value = body(session);
+
+      // FIRST thing after the callback returns, before `session.close()`,
+      // before `persistDelta`, and before COMMIT: refuse a Promise-like
+      // return value. The refusal invalidates the session (so any code
+      // resuming after an `await` inside the callback finds it closed and
+      // throws instead of mutating a decided transaction), absorbs the
+      // thenable's eventual settlement (so a later rejection cannot surface
+      // as an unhandled rejection), and throws — which routes into the
+      // catch below, ROLLBACKs, and leaves nothing durable.
+      if (isThenable(value)) {
+        session.abandon();
+        session = undefined;
+        absorbSettlement(value);
+        throw new PostgresUnavailableError(
+          'async_callback_unsupported',
+          'withEstateSession requires a SYNCHRONOUS callback; the callback returned a ' +
+            'Promise-like value, so the session was invalidated and the transaction ' +
+            'rolled back without persisting anything',
+        );
+      }
+
       const delta = session.close();
       session = undefined;
 
@@ -303,6 +334,59 @@ async function assertDurableChainIntact(client: PoolClient, estate_id: ID): Prom
       `post-write chain verification failed for estate ${estate_id} at index ` +
         `${verdict.broken_at}: ${verdict.reason}`,
     );
+  }
+}
+
+/**
+ * Is this value Promise-like? True for a native Promise and for any thenable
+ * (an object or function with a callable `then`), which is exactly the set of
+ * values `await` would treat asynchronously.
+ *
+ * The `then` property is read ONCE here, and `absorbSettlement` reuses that
+ * same read rather than touching the value again — a hostile thenable with a
+ * getter that returns a different `then` on each access therefore cannot make
+ * the two functions disagree about what it is.
+ */
+function isThenable(value: unknown): value is PromiseLike<unknown> {
+  if (value === null) return false;
+  const t = typeof value;
+  if (t !== 'object' && t !== 'function') return false;
+  return typeof (value as { then?: unknown }).then === 'function';
+}
+
+/**
+ * Settle a refused thenable safely: attach a handler so its eventual outcome
+ * — resolution OR rejection, immediate or delayed — is consumed and can never
+ * become an unhandled rejection that escapes into the process.
+ *
+ * The outcome is DISCARDED, not reported: the operation has already been
+ * refused and rolled back, so neither a late value nor a late error can change
+ * what happened. `then` is invoked defensively because a caller-supplied
+ * thenable is untrusted input — a `then` that throws synchronously must not
+ * displace the refusal error this function's caller is about to throw.
+ */
+function absorbSettlement(value: PromiseLike<unknown>): void {
+  const swallow = (): void => {
+    /* discarded: the operation was refused and rolled back before this
+       settled; a late outcome is not a result and not a second failure. */
+  };
+  try {
+    // Not `Promise.resolve(value)`: adopting the thenable would require
+    // calling `then` anyway, and doing it directly keeps a hostile `then`'s
+    // synchronous throw inside this try.
+    const attached = value.then(swallow, swallow);
+    // A well-behaved `then` returns another thenable; if that one can itself
+    // reject (a subclass overriding `then`), absorb it too.
+    if (isThenable(attached)) {
+      try {
+        attached.then(swallow, swallow);
+      } catch {
+        /* see below */
+      }
+    }
+  } catch {
+    // A thenable whose `then` throws synchronously never scheduled anything,
+    // so there is nothing left to absorb. The refusal stands.
   }
 }
 

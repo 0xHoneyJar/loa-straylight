@@ -24,12 +24,27 @@ on:
       - '.github/workflows/phase-50a-postgres-conformance.yml'
       - 'package.json'
       - 'package-lock.json'
+      # Test INPUTS of this workflow's own suites. `no-leak-and-neutrality`
+      # reads these three files verbatim (the public-export guard reads
+      # src/straylight/index.ts; the leak-surface guard reads the proof
+      # document and its runbook), so a change to any of them can invalidate
+      # this workflow's conclusions and must therefore trigger it.
+      - 'src/straylight/index.ts'
+      - 'docs/PHASE-50A-PROVIDER-NEUTRAL-POSTGRESQL-CANONICAL-STORE-IMPLEMENTATION-AND-PROOF.md'
+      - 'docs/runbooks/phase-50a-postgresql-backup-restore-and-rollback.md'
   workflow_dispatch:
 
-# Least privilege: read the code, nothing else. No contents:write, no
-# issues:write, no pull-requests:write.
+# Least privilege: read the code and read the private package registry.
+# No contents:write, no issues:write, no pull-requests:write, no packages:write.
+#
+# `packages: read` exists solely so `npm ci` can resolve the private
+# `@0xhoneyjar/loa-hounfour` dependency from GitHub Packages using the
+# EPHEMERAL, job-scoped `GITHUB_TOKEN`. No credential is committed, printed,
+# persisted, or transformed, and the token is exposed to the install step
+# only (see "Install dependencies" below).
 permissions:
   contents: read
+  packages: read
 
 concurrency:
   group: phase-50a-postgres-${{ github.ref }}
@@ -80,14 +95,30 @@ jobs:
         with:
           submodules: recursive
 
+      # `registry-url` + `scope` make setup-node write a runner-local .npmrc
+      # that points the @0xhoneyjar scope at GitHub Packages and reads its
+      # credential from NODE_AUTH_TOKEN at install time. The repository's own
+      # .npmrc is untouched (it is a forbidden path for this packet), and no
+      # credential is written into the tree.
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
           cache: npm
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@0xhoneyjar'
 
+      # The ONLY step that receives a token, and it receives the ephemeral,
+      # job-scoped workflow identity — never a PAT, never a committed
+      # credential. It is consumed by npm's registry auth and is never echoed,
+      # written to a file in the tree, exported to a later step, or
+      # transformed. There is deliberately NO fallback registry: if package
+      # authorization is unavailable the install FAILS rather than silently
+      # resolving the dependency from somewhere else.
       - name: Install dependencies
         run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Confirm two distinct PostgreSQL instances
         run: |
@@ -120,21 +151,23 @@ jobs:
       - name: Phase 50A two-host export/restore/replacement proof
         run: npm run phase-50a:proof
 
-      # The packet requires generated build/type artifacts to be REPRODUCIBLE
-      # but NOT COMMITTED, and `dist/` + `dist-types/` are forbidden paths for
-      # Phase 50A. So the assertion is not "the tree is pristine" — the build
-      # legitimately emits new untracked declarations for the new source files.
-      # It is:
-      #   1. no TRACKED file changed as a result of building (the committed
-      #      dist-types/ artifact still reproduces byte-identically);
-      #   2. the newly generated declarations are NOT committed;
-      #   3. no whitespace damage anywhere.
-      - name: Confirm generated artifacts are reproducible and not committed
-        run: |
-          git diff --check
-          echo "--- tracked changes after build (must be empty) ---"
-          git diff --name-only
-          test -z "$(git diff --name-only)"
-          echo "--- generated declarations must be untracked ---"
-          test -n "$(git status --porcelain --untracked-files=all -- dist-types/src/straylight/storage/postgres)"
-          test -z "$(git ls-files -- dist-types/src/straylight/storage/postgres)"
+      # Complete-tree and package reproducibility under the INTERNAL-ONLY
+      # EXCLUSION contract.
+      #
+      # The PostgreSQL store is internal: it is not exported from
+      # src/straylight/index.ts, has no package subpath, and its declarations
+      # are therefore NOT package artifacts. `npm run build` prunes them, and
+      # this step proves the result exactly — the generated dist-types tree
+      # equals the tracked tree, and `npm pack --dry-run --json` ships neither
+      # an untracked file nor any PostgreSQL declaration.
+      #
+      # This REPLACES the earlier assertion, which only checked that tracked
+      # files were unchanged and explicitly tolerated ("blessed") the 12
+      # untracked PostgreSQL declarations that `npm pack` then packed. Refusing
+      # them is the point: see scripts/phase-50a/verify-generated-artifact.mjs
+      # for the C1..C9 clauses this enforces.
+      - name: Confirm complete generated tree and package are reproducible
+        run: npm run phase-50a:verify-artifact
+
+      - name: Confirm no whitespace damage
+        run: git diff --check

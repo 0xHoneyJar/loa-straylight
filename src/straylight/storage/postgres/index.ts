@@ -26,12 +26,17 @@ export type { PostgresStoreConfig, ResolvedPostgresStoreConfig } from './config.
 
 export {
   MIGRATIONS_DIR,
+  MIGRATION_CHECKSUM_ALGORITHM,
+  appliedMigrations,
   appliedVersions,
   assertSchemaVersion,
   migrate,
+  migrationChecksum,
   readMigrationSql,
   rollback,
+  verifyAppliedChecksums,
 } from './migrate.js';
+export type { AppliedMigration, MigrationSource } from './migrate.js';
 
 export { emptyCanonicalState, isDeltaEmpty } from './canonical-state.js';
 export type { CanonicalDelta, CanonicalState, Positioned } from './canonical-state.js';

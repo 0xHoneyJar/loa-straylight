@@ -300,3 +300,65 @@ admission deployment.
 
 Each must be demonstrated, documented, and **separately accepted** before any
 production-admission decision may be evaluated.
+
+---
+
+## 9. Migration checksum binding (patch cycle 1)
+
+Appended so the `file:line` references above stay valid. Operator-relevant
+change from Phase 50A patch cycle 1 (Codex audit comment `5135002802`,
+finding 4).
+
+The migration ledger (`straylight_schema_migrations`, runner-owned) now binds
+each applied version to a deterministic checksum of the shipped migration
+content, in a `content_checksum` column. A `BEFORE UPDATE` trigger refuses any
+in-place rewrite of a recorded checksum, and the binding is written in the same
+transaction as the migration DDL — so a migration that fails partway leaves
+neither the schema change, the version claim, nor the checksum.
+
+### 9.1 What you will see
+
+```bash
+psql "$STRAYLIGHT_PG_URL" -c \
+  'SELECT version, content_checksum, applied_at FROM straylight_schema_migrations ORDER BY version'
+```
+
+Each applied row carries a value of the form
+`straylight-migration-sha256-v1:<64 hex chars>`. The algorithm identifier is
+part of the value, so a future algorithm change is a visible mismatch rather
+than a silent reinterpretation of an old digest.
+
+### 9.2 When it refuses, and why that is correct
+
+The checksum is verified **before** any decision that treats a version as
+applied: before `migrate` skips it, before the host serves the schema (every
+session, state read, and estate listing), and before `rollback` runs a DOWN
+file. Verification failure surfaces as `PostgresIntegrityError`:
+
+| Reason | Meaning |
+|---|---|
+| `migration_checksum_missing` | the ledger claims the version is applied but records no checksum — typically a ledger written before this binding existed. Never backfilled: an unbound claim is not evidence. |
+| `migration_checksum_mismatch` | the recorded checksum does not equal the hash of the migration content that ships now. Forged, stale, or the file changed. The runner does not and cannot tell which side moved. |
+
+Either way the store **denies** rather than serving a schema it cannot prove
+came from the shipped migration. `rollback` also refuses, deliberately: running
+the current DOWN file against a schema applied from different content could
+drop or half-drop objects it does not describe.
+
+### 9.3 Operator response
+
+1. **Do not** hand-edit the ledger to make the error go away. That reinstates
+   exactly the unbound claim this binding exists to prevent.
+2. Take an export first (§3) if the database holds any estate data. This is the
+   same precondition as a deliberate migration rollback.
+3. Establish which side actually moved — compare the deployed migration files
+   against the revision the schema was applied from. The checksum covers both
+   the up and the down file, so a changed rollback file is also a mismatch.
+4. If the shipped content is correct and the database's schema is stale, the
+   route forward is export → rollback → re-apply (§5.2), which re-establishes a
+   correct binding. If the database's schema is correct and the shipped files
+   drifted, restore the correct migration content and re-verify.
+
+Both paths are non-production procedures in Phase 50A. Nothing in this section
+authorizes a production migration or a production rollback, and §8's unproven
+pre-production obligations are unchanged.

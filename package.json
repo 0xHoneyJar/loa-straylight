@@ -28,6 +28,7 @@
     "clean:types": "node -e \"require('node:fs').rmSync('dist-types', { recursive: true, force: true })\"",
     "clean:dist": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "npm run clean:types && npm run clean:dist && tsc -p tsconfig.build.json && tsc -p tsconfig.runtime.json && node scripts/prune-dist-runtime.mjs",
+    "postbuild": "node scripts/phase-50a/prune-internal-postgres-types.mjs",
     "prepare": "npm run build",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -48,7 +49,8 @@
     "phase-50a:up": "docker compose -f docker-compose.phase-50a.yml up -d --wait",
     "phase-50a:down": "docker compose -f docker-compose.phase-50a.yml down -v",
     "phase-50a:test": "node scripts/phase-50a/run-postgres-suites.mjs",
-    "phase-50a:proof": "node scripts/phase-50a/run-two-host-proof.mjs"
+    "phase-50a:proof": "node scripts/phase-50a/run-two-host-proof.mjs",
+    "phase-50a:verify-artifact": "node scripts/phase-50a/verify-generated-artifact.mjs"
   },
   "engines": {
     "node": ">=22"

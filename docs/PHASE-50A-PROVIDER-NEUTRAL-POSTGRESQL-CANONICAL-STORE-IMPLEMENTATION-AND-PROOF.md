@@ -403,3 +403,228 @@ estate-semantic change, MVP-2 closure, and any work beyond MVP-2.
   implementation agent under lease `lease-phase-50a-implementer-001`. No
   subagent, agent team, or delegated implementation was used, and no advisor
   wrote code.
+
+---
+
+## 12. Patch cycle 1 — closure of the six Codex audit findings
+
+Appended (not rewritten) so every `file:line` reference above stays valid.
+
+Authority: Codex `PATCH` audit comment `5135002802`
+(digest `sha256:9a4b1cf70bab99ccfb662ff8949569a47da56d40b0d5edd09aa5b54a635e005b`)
+at audited head `8602a2c753b2ad873175bc227e091a06da19a663`, and the bounded
+patch packet comment `5135196808`
+(digest `sha256:976c65331b3b7bea7799acd2d0be800e598a3408437e90c93ba28bfc63c9291c`),
+applied under implementer lease `lease-phase-50a-implementer-002`. Six findings,
+nothing else: no redesign, no asyncification, no public semantic or interface
+change, no dependency or lockfile change, no provider/production/sibling work.
+
+### 12.1 Finding 1 (blocker) — GitHub Packages authentication
+
+The required remote proof never reached a substantive step: `npm ci` failed
+`E401` fetching the private `@0xhoneyjar/loa-hounfour`, so every build, test,
+two-host, and artifact step was skipped.
+
+Closed with the standard least-privilege ephemeral pattern in
+[`../.github/workflows/phase-50a-postgres-conformance.yml`](../.github/workflows/phase-50a-postgres-conformance.yml):
+`packages: read` alongside `contents: read`; `actions/setup-node` configured
+with Node 22, `registry-url: https://npm.pkg.github.com`, and scope
+`@0xhoneyjar`; and `NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` on the
+install step **only**.
+
+No credential is committed, echoed, written into the tree, exported to a later
+step, or transformed. The repository `.npmrc` is untouched (a forbidden path);
+setup-node writes a runner-local one. There is deliberately **no fallback
+registry** and the Hounfour dependency is unchanged — if package authorization
+is unavailable the install fails rather than resolving from elsewhere.
+
+### 12.2 Finding 2 (high) — Promise-like callback commit race
+
+`withEstateSession` committed immediately after `body(session)` without
+inspecting the returned value. A callback returning a Promise had its writes
+**committed** (`committed: true`, one durable actor row) and only then rejected.
+
+`withEstateSession` keeps a **synchronous** callback contract. A Promise-like
+return value is now REFUSED — asynchronous callbacks are not a supported
+feature and the signature is unchanged (`body: (storage: StorageAdapter) => T`;
+no `Awaited<T>`). In [`../src/straylight/storage/postgres/host.ts`](../src/straylight/storage/postgres/host.ts),
+immediately after the callback returns and **before** `session.close()`, delta
+persistence, or `COMMIT`:
+
+1. the value is inspected (`isThenable` — a callable `then`, read once, so a
+   native Promise and any hostile thenable are both caught);
+2. the session is invalidated (`session.abandon()`), so code resuming after an
+   `await` finds it closed and throws `session_closed` instead of mutating a
+   decided transaction;
+3. the thenable's settlement is absorbed (`absorbSettlement`), so a later
+   rejection cannot escape as an unhandled rejection;
+4. a bounded `PostgresUnavailableError` `async_callback_unsupported` is thrown;
+5. the enclosing `catch` `ROLLBACK`s, so no actor, estate, assertion,
+   transition, receipt, audit event, or migration row becomes durable.
+
+Regressions ([`../tests/phase-50a/postgres-callback-and-row-idempotency.test.ts`](../tests/phase-50a/postgres-callback-and-row-idempotency.test.ts)):
+already-rejected Promise; Promise rejecting later; Promise resolving later;
+post-`await` attempted mutation; non-Promise thenable; thenable whose `then`
+throws synchronously; falsy returns not mistaken for thenables; and the
+ordinary synchronous callback still committing. Every case asserts **zero
+durable rows across all eight tables** (read back through a fresh connection)
+and **no unhandled rejection**.
+
+### 12.3 Finding 3 (high) — complete-row idempotency
+
+The unique-violation path classified an existing immutable id by canonical
+payload **alone**. A direct-SQL row with the same id and payload under a
+different promoted `estate_id` was counted as an idempotent convergence: the
+session reported `committed: true` with `{inserted: 0, idempotent: 1}` while
+zero rows were visible to the estate it was writing.
+
+[`../src/straylight/storage/postgres/persist.ts`](../src/straylight/storage/postgres/persist.ts)
+now compares the **complete durable row**. Each insert declares its
+`durableColumns` beside the parameters it binds, and the same declaration is
+the comparison basis, so the two cannot drift: immutable primary id, promoted
+`estate_id`, promoted `append_position`, promoted `audit_hash`, promoted
+`previous_audit_hash`, normalized `previous_audit_hash_key`, and the complete
+canonical payload. Column-appropriate equality applies (`bigint` arrives as a
+string; `jsonb` is re-canonicalized; `NULL` equals only `NULL`, never `''`), an
+unselected column is itself a mismatch, and `SELECT_AUDIT_EVENT_BY_ID` now
+returns `previous_audit_hash_key`. `assertColumnsMatchStatement` parses the
+column list out of the INSERT text and refuses before any write if the declared
+set has drifted — closing the defect class, not just the instance.
+
+Any mismatch raises `PostgresIntegrityError` `immutable_id_conflict` and rolls
+the complete transaction back. Only complete-row equality is idempotent.
+
+Direct-SQL adversarial regressions plant a row with the same id and
+byte-identical payload but one deliberately wrong column — wrong estate, wrong
+append position, wrong audit hash, wrong previous audit hash, wrong normalized
+parent key — and prove each is refused rather than counted as idempotent, with
+nothing from the refused session durable. A vacuity guard asserts the replayed
+canonical payload really is byte-identical, so the refusals cannot be passing
+for the wrong reason. Two notes on where each refusal fires: a wrong position
+**inside the same estate** is caught earlier by the load-time dense-position
+guard (`append_prefix_mutated`), and an inconsistent
+`previous_audit_hash`/`previous_audit_hash_key` pair is refused by the schema's
+own `CHECK` — both are fail-closed, and the suite asserts the specific reason
+rather than accepting any error. A cross-estate plant at a wrong position
+reaches the classifier itself and is refused there. The **exact retry remains
+idempotent** (3 append-only rows converging, one durable row of each kind).
+
+### 12.4 Finding 4 (high) — migration checksum binding
+
+The ledger stored only `version` and `applied_at`, so it recorded *that* 0001
+was applied but not *which* 0001; `migrate` skipped a present version and the
+host served the schema on that unbound claim.
+
+Every applied version is now bound to a deterministic checksum of the shipped
+migration content. The algorithm (`migrationChecksum`, identifier
+`straylight-migration-sha256-v1`, recorded inside each value) is explicit,
+stable, documented, and collision-unambiguous: read both shipped directions,
+apply the **only** documented normalization (CRLF → LF; a lone CR is not
+touched and no arbitrary SQL is trimmed), **length-frame** the algorithm
+identifier, version, up SQL, and down SQL so no boundary is ambiguous, then
+SHA-256 the framed UTF-8 bytes. Both directions participate: a changed
+rollback file is a different migration.
+
+The ledger stores it immutably — `content_checksum` plus a `BEFORE UPDATE`
+trigger refusing any in-place rewrite of a recorded value — and the binding is
+written in the **same transaction** as the DDL and the migration's own ledger
+row, guarded by `content_checksum IS NULL` so it can only fill, never overwrite.
+
+Verification precedes every "is this version applied?" decision:
+`migrate` verifies before skipping; `assertSchemaVersion` verifies before the
+host treats the schema as serviceable (so every `withEstateSession`,
+`readEstateState`, and `listEstateIds` is covered); `rollback` verifies before
+running a DOWN file. A **missing, forged, stale, or mismatched** checksum fails
+closed with `migration_checksum_missing` / `migration_checksum_mismatch`.
+
+Tests ([`../tests/phase-50a/postgres-migration-checksum.test.ts`](../tests/phase-50a/postgres-migration-checksum.test.ts)):
+algorithm stability, version binding, both-direction binding, boundary-shift
+non-collision, and normalization scope; then clean apply, matching-checksum
+skip, forged checksum, stale checksum, changed shipped content,
+host/schema-service refusal on all three read paths, recorded-checksum
+immutability, rollback → re-apply, failed-migration atomicity, a pre-patch
+ledger gaining the column with its unbound row failing closed, and diagnostic
+message content. `migrations/postgres/` is a forbidden path for this patch and
+is byte-unchanged; the ledger remains runner-owned.
+
+### 12.5 Finding 5 (medium) — generated type/package reproducibility
+
+`clean:types` + `build` emitted 12 untracked PostgreSQL declarations, and
+`npm pack --dry-run` (which runs `prepare`) packed all 12 because `files`
+includes `dist-types/`. The workflow checked only tracked-file equality and
+explicitly blessed the extras.
+
+The packet selects the **internal-only exclusion** contract, and it is
+coherent here: no public root/host/runtime declaration references PostgreSQL,
+the store has no package export or subpath, and nothing outside
+`src/straylight/storage/postgres/` imports it — so no consumer-visible
+declaration requires these, and no package-contract escalation is needed.
+
+[`../scripts/phase-50a/prune-internal-postgres-types.mjs`](../scripts/phase-50a/prune-internal-postgres-types.mjs)
+deterministically removes only that subtree, invoked from the authorized
+`package.json` `postbuild` lifecycle hook — which npm runs immediately after
+`build`, including when `build` is reached through `prepare` (and therefore
+`npm pack`). The hook is used rather than splicing into the `build` string
+because `tests/phase-24h-package-exports.test.ts` pins that exact string and is
+outside this packet's allowed paths. The prune target is a fixed constant inside
+`dist-types/`, nothing is derived from argv or the environment, and it **refuses
+to delete a git-tracked file** — a tracked declaration would be a
+package-contract decision, not a build-step action.
+
+`dist-types/`, `dist/`, `.gitignore`, and the TypeScript configuration are all
+untouched (each is forbidden or outside scope), and no public export was added.
+
+[`../scripts/phase-50a/verify-generated-artifact.mjs`](../scripts/phase-50a/verify-generated-artifact.mjs)
+**replaces** the assertion that blessed untracked declarations with an exact
+complete-tree/package check that refuses them, using
+`npm pack --dry-run --json` for machine-readable package evidence:
+
+| Clause | Requirement |
+|---|---|
+| C1 | no tracked `dist-types` file differs after a clean build |
+| C2 | the complete generated tree equals the tracked tree — no untracked file remains |
+| C3 | no PostgreSQL declaration exists under `dist-types`, tracked or untracked |
+| C4 | every expected tracked package declaration is present |
+| C5 | no PostgreSQL declaration is packed |
+| C6 | every packed `dist-types` entry is a tracked file |
+| C7 | every tracked `dist-types` file is packed (set equality, not nesting) |
+| C8 | no packed declaration references an absent PostgreSQL declaration |
+| C9 | running `prepare` yields the same artifact and re-prunes |
+
+C9 is scoped to the artifact directories rather than the whole working tree: an
+unrelated source edit is not a package-reproducibility failure.
+
+### 12.6 Finding 6 (medium) — workflow path filters
+
+`pull_request.paths` omitted three files the suites read verbatim, so a change
+to the public-export guard or the leak surface could bypass this workflow. Added
+`src/straylight/index.ts`, this document, and the backup/restore runbook. A test
+asserts each added path is genuinely read by
+`no-leak-and-neutrality.test.ts`, so the trigger set cannot drift from the real
+inputs. `src/straylight/index.ts` is a forbidden path for this patch and is
+byte-unchanged — it is a trigger only.
+
+### 12.7 Regression adequacy
+
+Each implementation fix was reverted in isolation to confirm the new tests
+actually catch the original defect: removing the thenable refusal fails 6
+Finding-2 regressions; reverting to payload-only comparison fails 5 Finding-3
+regressions; removing checksum verification fails 5 Finding-4 regressions. The
+artifact verifier was likewise proven non-vacuous — an injected untracked
+PostgreSQL declaration makes it exit 1 naming C2 and C3, and a tracked one makes
+the prune refuse rather than delete.
+
+### 12.8 Scope
+
+Patch-only changed paths (14), all inside `allowed_paths`, zero forbidden-path
+changes: the workflow; `package.json` (scripts only — `dependencies`,
+`devDependencies`, `engines`, `files`, `exports`, `types`, and `version` are
+byte-identical); `scripts/phase-50a/prune-internal-postgres-types.{mjs,d.mts}`;
+`scripts/phase-50a/verify-generated-artifact.mjs`;
+`src/straylight/storage/postgres/{errors,host,index,migrate,persist,queries}.ts`;
+and three new `tests/phase-50a/` suites. Plus this document and the runbook.
+
+`StorageAdapter` remains synchronous (no `Promise` in the seam) and the error
+reasons are purely additive. Nothing in §10's residual unproven pre-production
+obligations is discharged by this patch, and it authorizes no acceptance, gate
+disposition, Phase 50B work, MVP-2 claim, audit, or merge.

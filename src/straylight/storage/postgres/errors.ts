@@ -25,6 +25,13 @@ export type PostgresIntegrityReason =
   | 'duplicate_append_position'
   | 'immutable_id_conflict'
   | 'malformed_row'
+  // The migration ledger records a version as applied but does not bind it to
+  // the shipped migration content: no checksum at all, or a checksum that
+  // disagrees. Either way the applied schema and the shipped migration cannot
+  // be proven to be the same schema, so the store refuses to treat the version
+  // as applied — for skipping a migration or for serving the schema.
+  | 'migration_checksum_missing'
+  | 'migration_checksum_mismatch'
   | 'restore_verification_failed';
 
 export class PostgresIntegrityError extends Error {
@@ -43,7 +50,15 @@ export type PostgresUnavailableReason =
   | 'connection_failed'
   | 'transaction_aborted'
   | 'schema_version_mismatch'
-  | 'session_closed';
+  | 'session_closed'
+  // `withEstateSession`'s callback contract is SYNCHRONOUS. A callback that
+  // returns a Promise or any other thenable is unsupported and is refused
+  // before the session closes, before the delta is persisted, and before
+  // COMMIT — so the transaction rolls back and nothing becomes durable.
+  // It belongs to this class rather than the integrity class because the
+  // durable content is not corrupt: the operation was simply refused and
+  // aborted, and no successful durable operation is reported.
+  | 'async_callback_unsupported';
 
 export class PostgresUnavailableError extends Error {
   readonly reason: PostgresUnavailableReason;
