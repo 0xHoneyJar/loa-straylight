@@ -539,3 +539,55 @@ before publication.
 ownership / sibling-gate-routing decision frame and routes candidate evidence lanes; it
 SELECTS no host, RESOLVES no gate, SATISFIES no D.1, STARTS no D.2, DISCHARGES no gate #8,
 CLOSES no MVP-2, and authorizes none of the §11 items. No commit, no push, no PR.*
+
+---
+
+## 15. Later status — Phase 49Q (annotation; §1–§14 unchanged)
+
+Everything above is preserved as originally written and **was true when written**.
+Phase 48B correctly recorded that it selected no host and authorized none of §11.
+This annotation records only which of those bounded items a **later** decision
+supersedes, and takes effect **only if** `operator:eileen` authorizes the merge of
+[`ADR-049Q`](./ADR-049Q-railway-postgresql-canonical-store-host-acceptance-and-implementation-authorization.md)
+(Phase 49Q, Tier 1). Nothing here re-adjudicates Phase 48B or reopens D.1(i).
+
+**Superseded on that merge, for these bounded items only:**
+
+- **§4 row S2** (`./ADR-048B-canonical-store-physical-host-ownership-routing.md:156`) — the canonical-store physical host is no longer
+  UNSELECTED: Railway PostgreSQL is accepted as the **bounded, reversible** MVP-2
+  canonical-store physical host (ADR-049Q §6.1). The row's own boundary holds
+  unchanged: the physical host is a substrate placement, never the semantic owner
+  and never conflated with the ADR-024B endpoint host.
+- **§11 items 1–5** — canonical-store physical-host selection (1); D.1
+  satisfaction (3); the start of D.2 (4); and ADR-022E gate #8 discharge (5) are
+  superseded to the exact extent ADR-049Q states: item 3 satisfied via D.1(ii)
+  resolution, item 4 **authorized to start** in Phase 50A but not started or
+  completed, and item 5 discharged **only** for bounded host selection and for
+  opening the provider-neutral durable-storage implementation lane. **Item 2
+  (sibling gate #9 / #10 resolution) is NOT superseded** — both gates remain
+  HELD at `PARTIAL_RECORDED`.
+- **§8 row R1** (`./ADR-048B-canonical-store-physical-host-ownership-routing.md:274`) — the "explicit host-routing decision" it required is
+  the decision ADR-049Q records; R1's requirement that a host-selection /
+  production-adapter proposal be **separately accepted** under the `ADR-022E:57`
+  trigger is what the operator merge supplies (ADR-049Q §8.1).
+
+**Unchanged by that merge:**
+
+- **§4 row S1** (`./ADR-048B-canonical-store-physical-host-ownership-routing.md:155`) — `loa-straylight` remains the **permanent** owner of
+  canonical Straylight semantic ownership. A host acceptance does not move it
+  (§6, E2).
+- **§11 items 6–18** and every additional "does not" clause — including MVP-2
+  closure (6), production DB execution (7), production writes (8), production
+  migration execution (9), production durable storage (10), and production
+  auth/consent/signer implementation (11) — remain **unauthorized**.
+- **§3 D.1 conjunct (i)**
+  (`./ADR-048B-canonical-store-physical-host-ownership-routing.md:108`–`:109`) — remains ACCEPTED and is **not
+  reopened**. **§3's D.2 sequencing rule**
+  (`./ADR-048B-canonical-store-physical-host-ownership-routing.md:131`–`:132`) — D.2 downstream of
+  full D.1, full D.1 not gated on D.2 — is preserved, not inverted.
+- **§4 surfaces S1, S3–S6, §5–§7, §8 rows R2–R8, §9, §12, §13** — unchanged; this
+  ADR remains the authority for the decision frame, the six surfaces, the
+  candidate-lane routing, and the evidence checklist.
+
+Until that merge, every statement in §1–§14 stands exactly as written: no host is
+selected, gate #8 is not discharged, D.1 is not satisfied, and D.2 is not started.

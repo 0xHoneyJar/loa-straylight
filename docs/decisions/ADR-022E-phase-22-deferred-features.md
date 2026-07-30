@@ -121,3 +121,28 @@ explicitly cites the trigger.
 - [`../handoffs/hounfour-v850-shadow-review-packet.md`](../handoffs/hounfour-v850-shadow-review-packet.md)
 - [`../handoffs/phase-20e-recall-wedge-closeout.md`](../handoffs/phase-20e-recall-wedge-closeout.md)
 - [`../handoffs/phase-21b-v86-schema-readiness-lock.md`](../handoffs/phase-21b-v86-schema-readiness-lock.md)
+
+---
+
+## Later status — Phase 49Q (annotation; original rows above unchanged)
+
+Every row above is preserved as originally written and remains the binding gate
+inventory. This annotation records only a later status for one gate, and takes
+effect **only if** `operator:eileen` authorizes the merge of
+[`ADR-049Q`](./ADR-049Q-railway-postgresql-canonical-store-host-acceptance-and-implementation-authorization.md).
+
+- **Gate #8** (row `./ADR-022E-phase-22-deferred-features.md:57`) — on that merge, gate #8 is **DISCHARGED for two
+  bounded purposes only**: the canonical-store physical-host selection (Railway
+  PostgreSQL, bounded and reversible) and the opening of the provider-neutral
+  durable-storage implementation lane. It **remains held** for production
+  admission, production writes, production migration execution, rollout,
+  cutover, production credentials, production auth/consent/signer
+  implementation, living-estate admission, and MVP-2 closure. See ADR-049Q §6.3
+  and §8.
+- **Gates #9 and #10** (rows `./ADR-022E-phase-22-deferred-features.md:58`, `./ADR-022E-phase-22-deferred-features.md:59`) — **unchanged and still HELD** at
+  `PARTIAL_RECORDED`. ADR-049Q satisfies none of their trigger conjuncts and does
+  not widen the narrow ADR-026D Dixie recall-intake slice (ADR-049Q §6.6, §7.2).
+- **All other rows** — unchanged. ADR-049Q unblocks none of them.
+
+Until that merge, gate #8 remains **OPEN / HELD** exactly as row
+`./ADR-022E-phase-22-deferred-features.md:57` records.
