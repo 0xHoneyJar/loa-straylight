@@ -1,0 +1,140 @@
+name: Phase 50A PostgreSQL Conformance
+
+# Runs the Phase 50A canonical-store proof against TWO separate PostgreSQL
+# server instances (ADR-049Q §13.1(c), (i)).
+#
+# Non-production only (§13.2). This workflow provisions nothing outside the
+# runner, contacts no provider, holds no production credential, and touches no
+# living estate. The two services below are ephemeral upstream `postgres`
+# containers on the runner, and the credentials are the same fixed local-only
+# values the checked-in harness uses.
+#
+# Scope note: this is a NEW, self-contained workflow. It does not modify — and
+# holds no permission over — the Straylight control-plane workflows.
+
+on:
+  pull_request:
+    paths:
+      - 'src/straylight/storage/**'
+      - 'migrations/postgres/**'
+      - 'scripts/phase-50a/**'
+      - 'tests/phase-50a/**'
+      - 'tests/storage-conformance.test.ts'
+      - 'docker-compose.phase-50a.yml'
+      - '.github/workflows/phase-50a-postgres-conformance.yml'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+# Least privilege: read the code, nothing else. No contents:write, no
+# issues:write, no pull-requests:write.
+permissions:
+  contents: read
+
+concurrency:
+  group: phase-50a-postgres-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres-proof:
+    name: Canonical store — two-host proof
+    runs-on: ubuntu-latest
+
+    # TWO separately initialized PostgreSQL servers, on two different ports.
+    # Not one server with two databases: §13.1(i) requires the restore to land
+    # in a different conforming host, and the proof mechanically verifies the
+    # two clusters report different system identifiers.
+    services:
+      source:
+        image: postgres:16
+        env:
+          POSTGRES_USER: straylight_proof
+          POSTGRES_PASSWORD: straylight_local_proof_only
+          POSTGRES_DB: straylight_source
+        ports:
+          - 55432:5432
+        options: >-
+          --name straylight-phase-50a-source
+          --health-cmd "pg_isready -U straylight_proof -d straylight_source"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+      replacement:
+        image: postgres:16
+        env:
+          POSTGRES_USER: straylight_proof
+          POSTGRES_PASSWORD: straylight_local_proof_only
+          POSTGRES_DB: straylight_replacement
+        ports:
+          - 55433:5432
+        options: >-
+          --name straylight-phase-50a-replacement
+          --health-cmd "pg_isready -U straylight_proof -d straylight_replacement"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          submodules: recursive
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Confirm two distinct PostgreSQL instances
+        run: |
+          docker exec straylight-phase-50a-source \
+            psql -tA -U straylight_proof -d straylight_source \
+            -c 'SELECT system_identifier FROM pg_control_system()'
+          docker exec straylight-phase-50a-replacement \
+            psql -tA -U straylight_proof -d straylight_replacement \
+            -c 'SELECT system_identifier FROM pg_control_system()'
+
+      - name: Build
+        run: npm run build
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Existing test suite (unchanged adapters must not regress)
+        run: npm test
+
+      - name: Control-plane validation
+        run: npm run control-plane:validate
+
+      - name: Control-plane tests
+        run: npm run control-plane:test
+
+      # Requires both instances. Fails — never skips — if either is unreachable.
+      - name: Phase 50A PostgreSQL suites
+        run: npm run phase-50a:test
+
+      - name: Phase 50A two-host export/restore/replacement proof
+        run: npm run phase-50a:proof
+
+      # The packet requires generated build/type artifacts to be REPRODUCIBLE
+      # but NOT COMMITTED, and `dist/` + `dist-types/` are forbidden paths for
+      # Phase 50A. So the assertion is not "the tree is pristine" — the build
+      # legitimately emits new untracked declarations for the new source files.
+      # It is:
+      #   1. no TRACKED file changed as a result of building (the committed
+      #      dist-types/ artifact still reproduces byte-identically);
+      #   2. the newly generated declarations are NOT committed;
+      #   3. no whitespace damage anywhere.
+      - name: Confirm generated artifacts are reproducible and not committed
+        run: |
+          git diff --check
+          echo "--- tracked changes after build (must be empty) ---"
+          git diff --name-only
+          test -z "$(git diff --name-only)"
+          echo "--- generated declarations must be untracked ---"
+          test -n "$(git status --porcelain --untracked-files=all -- dist-types/src/straylight/storage/postgres)"
+          test -z "$(git ls-files -- dist-types/src/straylight/storage/postgres)"
