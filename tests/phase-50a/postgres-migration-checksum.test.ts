@@ -46,6 +46,11 @@ import {
   readMigrationSql,
   verifyAppliedChecksums,
 } from '../../src/straylight/storage/postgres/index.js';
+// The ledger-initialization entry point is imported from its own module rather
+// than the barrel: `index.ts` is a FORBIDDEN path for this patch, so the
+// public surface is byte-unchanged and this internal-only helper is reached by
+// module path (the same way the suites already reach `hosts.js`).
+import { initializeLedger } from '../../src/straylight/storage/postgres/migrate.js';
 import {
   openUnmigratedDatabase,
   phase50aEnabled,
@@ -58,6 +63,17 @@ import {
 const NOW = '2026-05-05T12:00:00Z';
 const ESTATE_ID = loadEstate().estate_id;
 const VERSION = '0001';
+
+/**
+ * The ledger read the verification path performs, replayed verbatim so the lock
+ * probe measures the real statement rather than a stand-in.
+ */
+const Q_LEDGER_READ = `
+  SELECT version,
+         to_jsonb(ledger) ->> 'content_checksum' AS content_checksum
+    FROM straylight_schema_migrations AS ledger
+   ORDER BY version ASC
+`;
 
 phase50aGateReport('postgres-migration-checksum');
 
@@ -363,7 +379,7 @@ maybe('Phase 50A patch — the ledger binds each applied version to its content 
     );
   });
 
-  it('a ledger created WITHOUT the checksum column gains it, and its unbound row fails closed', async () => {
+  it('a ledger created WITHOUT the checksum column fails closed, and READING it upgrades nothing', async () => {
     // Simulate a ledger written by a build that predates checksum binding:
     // create the pre-patch shape, claim the version, then apply the schema DDL
     // by hand so the database really is at version 0001 with an unbound row.
@@ -376,10 +392,15 @@ maybe('Phase 50A patch — the ledger binds each applied version to its content 
       await client.query(readMigrationSql(VERSION, 'up'));
     });
 
-    // The column is added on first ledger access, and the pre-existing row has
-    // NO checksum — which must NOT be backfilled from whatever ships now.
+    // The pre-existing row has NO checksum — read as `null` because the column
+    // itself is absent — and it must NOT be backfilled from whatever ships now.
     const ledger = await db.host.withClient(appliedMigrations);
     expect(ledger).toEqual([{ version: VERSION, content_checksum: null }]);
+
+    // And the READ upgraded nothing: the checksum column is still absent.
+    // Steady-state verification is read-only (patch cycle 2, finding 2), so the
+    // column is added only by the migration/initialization path.
+    expect(await ledgerColumns()).toEqual(['applied_at', 'version']);
 
     await expect(
       db.host.withEstateSession(ESTATE_ID, (storage) => storage.getEstate(ESTATE_ID)),
@@ -387,6 +408,132 @@ maybe('Phase 50A patch — the ledger binds each applied version to its content 
       name: 'PostgresIntegrityError',
       reason: 'migration_checksum_missing',
     });
+
+    // Still absent after a refused session, too — the refusal path adds no DDL.
+    expect(await ledgerColumns()).toEqual(['applied_at', 'version']);
+
+    // The INITIALIZATION path is what upgrades the shape, explicitly.
+    await db.host.withClient(initializeLedger);
+    expect(await ledgerColumns()).toEqual(['applied_at', 'content_checksum', 'version']);
+    // The upgraded row is STILL unbound, so it still fails closed: an upgrade
+    // establishes the column, never a checksum value.
+    expect(await db.host.withClient(appliedMigrations)).toEqual([
+      { version: VERSION, content_checksum: null },
+    ]);
+    await expect(
+      db.host.withEstateSession(ESTATE_ID, (storage) => storage.getEstate(ESTATE_ID)),
+    ).rejects.toMatchObject({ reason: 'migration_checksum_missing' });
+  });
+
+  /**
+   * The ledger's complete catalog definition: its columns, its triggers, and
+   * the oid of each trigger's function. Any `ensureLedger` statement changes at
+   * least one of these — `ALTER TABLE ADD COLUMN` the columns, `DROP`/`CREATE
+   * TRIGGER` the trigger's own oid, `CREATE OR REPLACE FUNCTION` the function's
+   * oid — so comparing the whole record catches DDL that a column list alone
+   * would miss.
+   */
+  async function ledgerDefinition(): Promise<{
+    columns: string[];
+    triggers: Array<{ trigger: string; oid: string; function_oid: string }>;
+  }> {
+    return db.host.withClient(async (client) => {
+      const cols = await client.query<{ column_name: string }>(
+        `SELECT column_name FROM information_schema.columns
+          WHERE table_name = 'straylight_schema_migrations' ORDER BY column_name ASC`,
+      );
+      const trg = await client.query<{ trigger: string; oid: string; function_oid: string }>(
+        `SELECT t.tgname AS trigger,
+                t.oid::text AS oid,
+                t.tgfoid::text AS function_oid
+           FROM pg_trigger t
+           JOIN pg_class c ON c.oid = t.tgrelid
+          WHERE c.relname = 'straylight_schema_migrations'
+            AND NOT t.tgisinternal
+          ORDER BY t.tgname ASC`,
+      );
+      return {
+        columns: cols.rows.map((x) => x.column_name),
+        triggers: trg.rows.map((x) => ({
+          trigger: x.trigger,
+          oid: x.oid,
+          function_oid: x.function_oid,
+        })),
+      };
+    });
+  }
+
+  /** The ledger's own column names, ascending. */
+  async function ledgerColumns(): Promise<string[]> {
+    return db.host.withClient(async (client) => {
+      const r = await client.query<{ column_name: string }>(
+        `SELECT column_name FROM information_schema.columns
+          WHERE table_name = 'straylight_schema_migrations' ORDER BY column_name ASC`,
+      );
+      return r.rows.map((x) => x.column_name);
+    });
+  }
+
+  // ── patch cycle 2, finding 2 — steady-state verification is READ-ONLY ──
+  //
+  // The defect: `ensureLedger` (CREATE TABLE / ALTER TABLE ADD COLUMN / CREATE
+  // OR REPLACE FUNCTION / DROP TRIGGER / CREATE TRIGGER) ran from every ledger
+  // READ, including `assertSchemaVersion` inside each estate transaction. That
+  // DDL took an ACCESS EXCLUSIVE ledger lock held until the estate callback
+  // committed, so unrelated estates contended on it.
+  //
+  // These prove the verification path issues no DDL at all. The cross-estate
+  // consequence is proven end-to-end, across processes, in
+  // `postgres-concurrency.test.ts`.
+
+  it('an estate session issues NO ledger DDL — verification only reads', async () => {
+    await db.host.migrate();
+
+    // A ledger DDL statement would show up as a catalog change. Pin the ledger's
+    // full definition — columns, the trigger, and the trigger function's oid —
+    // then run the ordinary serving paths and require every one to be identical.
+    const before = await ledgerDefinition();
+    await db.host.withEstateSession(ESTATE_ID, (storage) => {
+      newStore(storage).admit(observation('steady state'), NOW).ok;
+    });
+    await db.host.readEstateState(ESTATE_ID);
+    await db.host.listEstateIds();
+    await db.host.withClient((client) => verifyAppliedChecksums(client, SHIPPED_SCHEMA_VERSIONS));
+    await db.host.withClient(appliedMigrations);
+    await db.host.withClient(appliedVersions);
+    expect(await ledgerDefinition()).toEqual(before);
+  });
+
+  it('the estate transaction takes NO lock on the ledger relation beyond an ordinary read', async () => {
+    await db.host.migrate();
+
+    // Read the locks the estate transaction itself holds on the ledger, from
+    // INSIDE the callback (so the transaction is still open). ACCESS EXCLUSIVE
+    // — what `ALTER TABLE`/`CREATE TRIGGER` take — is the failure. `AccessShare`
+    // from the SELECTs is expected and harmless: it does not conflict with
+    // another transaction's AccessShare.
+    const modes = await db.host.withEstateSession(ESTATE_ID, () => 'probe-marker');
+    expect(modes.value).toBe('probe-marker');
+
+    const observed = await db.host.withClient(async (client) => {
+      await client.query('BEGIN');
+      try {
+        await client.query(Q_LEDGER_READ);
+        const r = await client.query<{ mode: string }>(
+          `SELECT l.mode FROM pg_locks l
+             JOIN pg_class c ON c.oid = l.relation
+            WHERE c.relname = 'straylight_schema_migrations'
+              AND l.pid = pg_backend_pid()
+            ORDER BY l.mode`,
+        );
+        return r.rows.map((x) => x.mode);
+      } finally {
+        await client.query('ROLLBACK');
+      }
+    });
+    // A pure read takes AccessShareLock and nothing stronger.
+    expect(observed).toEqual(['AccessShareLock']);
+    expect(observed).not.toContain('AccessExclusiveLock');
   });
 
   it('the integrity error names the version and both checksums, so an operator can diagnose it', async () => {

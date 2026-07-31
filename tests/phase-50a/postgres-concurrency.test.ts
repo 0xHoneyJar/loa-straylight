@@ -15,6 +15,12 @@
 //   * no silent drop — a refused operation FAILED LOUDLY, it did not vanish;
 //   * different estates never contend and never leak into each other.
 
+import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { beforeAll, describe, expect, it } from 'vitest';
 
 import { EstateStore, type StorageAdapter } from '../../src/straylight/index.js';
@@ -25,7 +31,10 @@ import {
   loadEstate,
   loadKeyring,
 } from '../../fixtures/index.js';
-import { PostgresIntegrityError } from '../../src/straylight/storage/postgres/index.js';
+import {
+  PostgresEstateHost,
+  PostgresIntegrityError,
+} from '../../src/straylight/storage/postgres/index.js';
 import {
   openScratchDatabase,
   phase50aEnabled,
@@ -35,9 +44,30 @@ import {
   type ScratchDatabase,
 } from './_support.js';
 
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ROOT = resolve(HERE, '../..');
+/** Absolute specifier the child process imports the store from. */
+const HOST_MODULE = resolve(ROOT, 'src/straylight/storage/postgres/index.ts');
+
 const NOW = '2026-05-05T12:00:00Z';
 const ESTATE_ID = loadEstate().estate_id;
 const OTHER_ESTATE_ID = 'estate:phase-50a-second';
+/** The estate the child process holds in the cross-process lock regressions. */
+const HELD_ESTATE_ID = ESTATE_ID;
+/** How long the child holds its synchronous callback. */
+const HOLD_MS = 4_000;
+/**
+ * The unrelated estate's statement timeout. Deliberately far below `HOLD_MS`:
+ * under the defect the ledger's ACCESS EXCLUSIVE lock outlasted this and the
+ * unrelated estate failed with `transaction_aborted`.
+ */
+const SHORT_STATEMENT_TIMEOUT_MS = 500;
+/**
+ * The bound for "reached its callback promptly". Well under both `HOLD_MS` (so
+ * the assertion cannot be satisfied by the hold simply ending) and generous
+ * enough that a loaded runner does not make it flaky.
+ */
+const PROMPT_MS = 1_500;
 
 phase50aGateReport('postgres-concurrency');
 
@@ -297,6 +327,119 @@ maybe('Phase 50A isolation — different estates do not contend or leak', () => 
     }
   });
 
+  // ── patch cycle 2, finding 2 — no cross-estate relation-lock coupling ──
+  //
+  // The defect Codex found by direct probe: `assertSchemaVersion` ran ledger
+  // DDL (`CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT
+  // EXISTS`, `CREATE OR REPLACE FUNCTION`, `DROP`/`CREATE TRIGGER`) inside every
+  // estate transaction, BEFORE the per-estate locks. DDL takes an ACCESS
+  // EXCLUSIVE lock on the ledger relation that is held until the transaction
+  // ends — i.e. until the estate's synchronous callback returns and the
+  // transaction commits. Two sessions on COMPLETELY DIFFERENT estates therefore
+  // contended on the ledger: with estate A's callback held for 4000 ms, estate
+  // B waited on `Lock/relation` and, with a short statement timeout, failed
+  // outright with `transaction_aborted: canceling statement due to statement
+  // timeout`.
+  //
+  // The correction moves all ledger DDL to the migration/initialization path and
+  // makes steady-state verification strictly read-only.
+  //
+  // ── why this test uses a CHILD PROCESS ─────────────────────────────────
+  //
+  // `withEstateSession`'s callback is SYNCHRONOUS by contract, and holding it
+  // open means blocking. In ONE process that blocks the event loop, so the
+  // second session could not even issue its first statement and the test would
+  // pass for the wrong reason — it would prove nothing about database locks. So
+  // estate A is held in a genuinely separate OS process with its own connection,
+  // and estate B runs here. That is also exactly the shape of the auditor's
+  // reproduction.
+  it('an unrelated estate reaches its callback promptly while another estate holds one (cross-process)', async () => {
+    const db = await openScratchDatabase(sourceHost(), 'cross-estate-locks');
+    const holder = holdEstateInChildProcess(db.connectionString, HELD_ESTATE_ID, HOLD_MS);
+    try {
+      // Wait until the child is genuinely INSIDE its callback — so its estate
+      // transaction is open and, under the defect, its ledger DDL lock is held.
+      await holder.callbackEntered;
+
+      // Estate B: a DIFFERENT estate, its own connection, and a SHORT statement
+      // timeout. Under the defect this timed out at ~500 ms; correct behaviour
+      // reaches the callback immediately.
+      const strict = new PostgresEstateHost({
+        connectionString: db.connectionString,
+        statementTimeoutMs: SHORT_STATEMENT_TIMEOUT_MS,
+      });
+      let enteredAfterMs = -1;
+      try {
+        const started = Date.now();
+        const out = await strict.withEstateSession(OTHER_ESTATE_ID, (storage) => {
+          enteredAfterMs = Date.now() - started;
+          return newOtherStore(storage).admit(otherObservation('unblocked'), NOW).ok;
+        });
+        expect(out.value).toBe(true);
+        expect(out.committed).toBe(true);
+      } finally {
+        await strict.close();
+      }
+
+      // Reached its callback PROMPTLY: no relation-lock wait, no timeout. The
+      // bound is far below the hold, so this cannot pass by the hold expiring —
+      // and it is generous enough not to be flaky on a loaded runner.
+      expect(enteredAfterMs).toBeGreaterThanOrEqual(0);
+      expect(enteredAfterMs).toBeLessThan(PROMPT_MS);
+
+      // The holder was still holding while B committed, so B genuinely
+      // overlapped it rather than following it.
+      expect(await holder.stillHolding()).toBe(true);
+
+      // No `Lock/relation` wait was recorded for the ledger at any point.
+      const waits = await db.host.withClient(async (client) => {
+        const r = await client.query<{ n: string }>(
+          `SELECT count(*)::text AS n FROM pg_stat_activity
+            WHERE wait_event_type = 'Lock' AND datname = current_database()`,
+        );
+        return Number(r.rows[0]?.n ?? '-1');
+      });
+      expect(waits).toBe(0);
+
+      // The holder still completes successfully — B did not disturb it.
+      const held = await holder.result;
+      expect(held.committed, held.output).toBe(true);
+    } finally {
+      await holder.dispose();
+      await db.dispose();
+    }
+  }, 60_000);
+
+  it('per-estate serialization is PRESERVED: same-estate sessions still queue behind each other', async () => {
+    // The finding-2 correction must not have loosened same-estate ordering into
+    // the cross-estate concurrency it enabled. Estate A is held in a child
+    // process; a second session on THAT SAME estate must NOT reach its callback
+    // while the hold lasts.
+    const db = await openScratchDatabase(sourceHost(), 'same-estate-serialize');
+    const holder = holdEstateInChildProcess(db.connectionString, HELD_ESTATE_ID, HOLD_MS);
+    try {
+      await holder.callbackEntered;
+
+      const started = Date.now();
+      const out = await db.host.withEstateSession(HELD_ESTATE_ID, () => Date.now() - started);
+      const enteredAfterMs = out.value;
+
+      // It DID eventually run (no deadlock, no silent drop) but only after the
+      // holder's transaction released the estate — so the per-estate mutex is
+      // intact. The wait is asserted against `PROMPT_MS`, the same bound the
+      // cross-estate test requires an UNRELATED estate to stay under: same
+      // estate waits, different estate does not. That contrast is the point.
+      expect(out.committed).toBe(true);
+      expect(enteredAfterMs).toBeGreaterThan(PROMPT_MS);
+
+      const held = await holder.result;
+      expect(held.committed, held.output).toBe(true);
+    } finally {
+      await holder.dispose();
+      await db.dispose();
+    }
+  }, 60_000);
+
   it('each estate keeps its OWN independent chain and append positions', async () => {
     const db = await openScratchDatabase(sourceHost(), 'independent-chains');
     try {
@@ -337,6 +480,122 @@ maybe('Phase 50A isolation — different estates do not contend or leak', () => 
 });
 
 // ── helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Run ONE estate session in a separate OS process and hold its synchronous
+ * callback open for `holdMs`.
+ *
+ * A separate process is required, not a convenience: the callback contract is
+ * synchronous, so "holding" it means blocking, and blocking the test's own event
+ * loop would stop the second session from issuing any statement at all — the
+ * assertion would then pass without testing a database lock. The child gets its
+ * own connection and its own pool, so the only thing the two sessions can
+ * possibly share is server-side locking, which is exactly what is under test.
+ *
+ * The child prints one line when it ENTERS the callback and one when it
+ * finishes, so the parent can synchronize on the hold actually being in effect
+ * rather than on a sleep.
+ */
+function holdEstateInChildProcess(
+  connectionString: string,
+  estate_id: string,
+  holdMs: number,
+): EstateHolder {
+  const dir = mkdtempSync(join(tmpdir(), 'p50a-hold-'));
+  const script = join(dir, 'hold-estate.ts');
+  // The child imports the store by absolute path and takes every parameter from
+  // its environment, so no value is interpolated into the source it runs.
+  writeFileSync(
+    script,
+    [
+      `import { PostgresEstateHost } from ${JSON.stringify(HOST_MODULE)};`,
+      'const host = new PostgresEstateHost({',
+      "  connectionString: process.env['P50A_CONN'],",
+      // No statement timeout in the holder: the hold itself must not be cut
+      // short by one, or the test would measure the timeout, not the lock.
+      '  statementTimeoutMs: 0,',
+      '});',
+      'try {',
+      "  const out = await host.withEstateSession(process.env['P50A_ESTATE'], () => {",
+      "    process.stdout.write('CALLBACK_ENTERED\\n');",
+      "    const until = Date.now() + Number(process.env['P50A_HOLD_MS']);",
+      '    while (Date.now() < until) { /* hold the transaction open */ }',
+      "    return 'held';",
+      '  });',
+      "  process.stdout.write(`DONE committed=${out.committed}\\n`);",
+      '} catch (err) {',
+      '  process.stdout.write(`FAILED ${err && err.message}\\n`);',
+      '  process.exitCode = 1;',
+      '} finally {',
+      '  await host.close();',
+      '}',
+      '',
+    ].join('\n'),
+  );
+
+  const child = spawn('npx', ['vite-node', script], {
+    cwd: ROOT,
+    env: {
+      ...process.env,
+      P50A_CONN: connectionString,
+      P50A_ESTATE: estate_id,
+      P50A_HOLD_MS: String(holdMs),
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    shell: process.platform === 'win32',
+  });
+
+  let output = '';
+  let entered = false;
+  let finished = false;
+  let signalEntered: () => void;
+  const callbackEntered = new Promise<void>((resolve, reject) => {
+    signalEntered = resolve;
+    // A child that dies before entering its callback must fail the test loudly
+    // rather than leave the parent awaiting forever.
+    child.on('exit', () => {
+      if (!entered) reject(new Error(`holder exited before entering its callback:\n${output}`));
+    });
+    child.on('error', (err) => reject(err));
+  });
+  const collect = (chunk: Buffer): void => {
+    output += chunk.toString();
+    if (!entered && output.includes('CALLBACK_ENTERED')) {
+      entered = true;
+      signalEntered();
+    }
+  };
+  child.stdout.on('data', collect);
+  child.stderr.on('data', collect);
+
+  const result = new Promise<{ committed: boolean; output: string }>((resolve) => {
+    child.on('exit', () => {
+      finished = true;
+      resolve({ committed: /DONE committed=true/.test(output), output });
+    });
+  });
+
+  return {
+    callbackEntered,
+    result,
+    stillHolding: async () => entered && !finished,
+    dispose: async () => {
+      if (!finished) child.kill('SIGKILL');
+      await result.catch(() => undefined);
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
+}
+
+interface EstateHolder {
+  /** Resolves once the child is genuinely inside its synchronous callback. */
+  callbackEntered: Promise<void>;
+  /** Resolves when the child exits, with its commit outcome and full output. */
+  result: Promise<{ committed: boolean; output: string }>;
+  /** True while the child has entered its callback and has not yet exited. */
+  stillHolding: () => Promise<boolean>;
+  dispose: () => Promise<void>;
+}
 
 /**
  * Assert each named table holds exactly `expected` rows for the estate, at

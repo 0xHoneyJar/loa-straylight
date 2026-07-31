@@ -195,6 +195,8 @@ as an assumption. It is re-established here:
   concurrent first-writes would both load an empty snapshot and both write a
   genesis link, forking the chain at position 1.
 - **Different estates never contend** — different lock keys, different rows.
+  Proven across processes in §13.2, which also records the patch-cycle-1
+  regression that briefly broke this claim via steady-state ledger DDL.
 - **Stale-snapshot fence** — the loaded append prefix is re-fingerprinted
   before persisting and must be unchanged.
 
@@ -451,8 +453,9 @@ no `Awaited<T>`). In [`../src/straylight/storage/postgres/host.ts`](../src/stray
 immediately after the callback returns and **before** `session.close()`, delta
 persistence, or `COMMIT`:
 
-1. the value is inspected (`isThenable` — a callable `then`, read once, so a
-   native Promise and any hostile thenable are both caught);
+1. the value is inspected for a callable `then`, so a native Promise and any
+   hostile thenable are both caught (this cycle's `isThenable` in fact read the
+   property twice; superseded by §13.1's single-read `captureThen`);
 2. the session is invalidated (`session.abandon()`), so code resuming after an
    `await` finds it closed and throws `session_closed` instead of mutating a
    decided transaction;
@@ -547,6 +550,12 @@ ledger gaining the column with its unbound row failing closed, and diagnostic
 message content. `migrations/postgres/` is a forbidden path for this patch and
 is byte-unchanged; the ledger remains runner-owned.
 
+Superseded in part by §13.2: this cycle's ledger-shape statements ran from every
+READ, which coupled unrelated estates on a relation lock. Ledger DDL now belongs
+to the initialization path alone and steady-state verification is read-only. All
+the refusals listed above are retained; the pre-patch-ledger test now also proves
+a read upgrades nothing.
+
 ### 12.5 Finding 5 (medium) — generated type/package reproducibility
 
 `clean:types` + `build` emitted 12 untracked PostgreSQL declarations, and
@@ -604,6 +613,12 @@ asserts each added path is genuinely read by
 inputs. `src/straylight/index.ts` is a forbidden path for this patch and is
 byte-unchanged — it is a trigger only.
 
+Superseded by §13.3: that assertion hardcoded the same three strings and was not
+anti-vacuous, so it could not have detected a fourth fixed input outside the
+existing globs. The complete input set is now derived from one authoritative
+declaration and compared against workflow coverage, with mutation evidence — which
+surfaced eight further uncovered inputs, recorded there as a residual limit.
+
 ### 12.7 Regression adequacy
 
 Each implementation fix was reverted in isolation to confirm the new tests
@@ -616,15 +631,253 @@ the prune refuse rather than delete.
 
 ### 12.8 Scope
 
-Patch-only changed paths (14), all inside `allowed_paths`, zero forbidden-path
-changes: the workflow; `package.json` (scripts only — `dependencies`,
-`devDependencies`, `engines`, `files`, `exports`, `types`, and `version` are
-byte-identical); `scripts/phase-50a/prune-internal-postgres-types.{mjs,d.mts}`;
+Patch-only changed paths: **16 total** — 14 implementation/test paths plus 2
+documents. All inside `allowed_paths`, zero forbidden-path changes.
+
+The 14 implementation/test paths: the workflow; `package.json` (scripts only —
+`dependencies`, `devDependencies`, `engines`, `files`, `exports`, `types`, and
+`version` are byte-identical);
+`scripts/phase-50a/prune-internal-postgres-types.{mjs,d.mts}`;
 `scripts/phase-50a/verify-generated-artifact.mjs`;
 `src/straylight/storage/postgres/{errors,host,index,migrate,persist,queries}.ts`;
-and three new `tests/phase-50a/` suites. Plus this document and the runbook.
+and three new `tests/phase-50a/` suites. The 2 documents: this document and the
+backup/restore runbook.
+
+That total is the `8602a2c753b2ad873175bc227e091a06da19a663..212e9ee769a31d69e0c0d0b508465b12d23a9a4d`
+range, which changes 16 paths.
 
 `StorageAdapter` remains synchronous (no `Promise` in the seam) and the error
 reasons are purely additive. Nothing in §10's residual unproven pre-production
 obligations is discharged by this patch, and it authorizes no acceptance, gate
 disposition, Phase 50B work, MVP-2 claim, audit, or merge.
+
+---
+
+## 13. Patch cycle 2 — closure of the five Codex audit concerns
+
+Appended (not rewritten) so every `file:line` reference above stays valid.
+
+Authority: Codex `PATCH` audit comment `5136408097`
+(digest `sha256:b0437172594b8994954a2f1acd95ce55da9a3a6e77389527543a24c298251fb0`)
+at audited head `212e9ee769a31d69e0c0d0b508465b12d23a9a4d`, and the bounded
+patch packet comment `5136483215`
+(digest `sha256:168143b40df51af3d5d6ecb122dbb44889fc24bf19b3d75e23ce991dc8701a7a`),
+applied under implementer lease `lease-phase-50a-implementer-003`. Five concerns,
+nothing else. Findings the audit confirmed closed (F1 workflow authentication, F3
+complete-row idempotency, F5 declaration/package exclusion) are **not** reopened.
+No redesign, no asyncification, no migration-SQL change, no workflow change, no
+public API or semantic change, no dependency or lockfile change, no
+provider/production/sibling/Phase 50B work.
+
+### 13.1 Concern 1 (high) — a custom thenable's `then` was read twice
+
+The refusal read `then` **twice**: once in the shape check and again in the
+absorber, despite the comment claiming the first read was reused. Codex's probe
+made the first getter access return a bound `then` for a delayed-rejecting
+Promise and the second access throw. The operation did refuse with
+`async_callback_unsupported` and did roll back to zero rows — but the getter was
+accessed twice, and because the second access threw, the settlement was never
+absorbed and the delayed rejection escaped as an `unhandledRejection`.
+
+Closed in [`../src/straylight/storage/postgres/host.ts`](../src/straylight/storage/postgres/host.ts).
+`isThenable` is replaced by `captureThen`, which reads `then` **exactly once**
+and returns both the callable and the original value as its receiver:
+
+1. the property read is itself guarded — a getter that throws on its *first*
+   access yields `null`, so the value is treated as an ordinary (non-thenable)
+   return rather than the getter's throw displacing the operation's outcome;
+2. a non-callable `then` yields `null`;
+3. otherwise the captured pair is returned, and **no property of the value is
+   ever read again**;
+4. `absorbSettlement` takes that capture and invokes the captured function via
+   `Reflect.apply(then, receiver, [swallow, swallow])`. The original receiver is
+   essential: `Promise.prototype.then` reads internal slots from its receiver, so
+   a detached call would throw instead of absorbing;
+5. the chained result is captured through the same single-read path;
+6. the refusal is unchanged — the session is invalidated, the bounded
+   `PostgresUnavailableError` `async_callback_unsupported` is thrown before
+   `session.close()`, `persistDelta`, and `COMMIT`, and the enclosing `catch`
+   `ROLLBACK`s.
+
+Order is preserved exactly: detection and refusal still happen before any
+persistence or `COMMIT`.
+
+New regressions in [`../tests/phase-50a/postgres-callback-and-row-idempotency.test.ts`](../tests/phase-50a/postgres-callback-and-row-idempotency.test.ts):
+
+- **the stateful getter the audit describes** — first access returns a `then` for
+  a delayed-rejecting Promise, second access throws. Asserts the getter is
+  accessed **exactly once** (before *and* after settlement), that `then` was
+  invoked with the **original object** as receiver, **zero durable rows** across
+  all eight tables read back through a fresh connection, and **no
+  `unhandledRejection`**;
+- a getter throwing on its first access does not displace the outcome;
+- a **native Promise** is absorbed through its own `then` with itself as
+  receiver — the regression that pins the `Reflect.apply` receiver.
+
+The pre-existing native-Promise (already-rejected, rejecting later, resolving
+later) and post-`await` session-mutation regressions are retained unchanged.
+
+### 13.2 Concern 2 (high) — steady-state ledger DDL coupled unrelated estates
+
+`ensureLedger` — `CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT
+EXISTS`, `CREATE OR REPLACE FUNCTION`, `DROP TRIGGER`, `CREATE TRIGGER` — ran
+from **every ledger read**, including `assertSchemaVersion` inside every estate
+transaction, before the per-estate locks. That DDL takes an `ACCESS EXCLUSIVE`
+lock on the ledger relation held until the transaction ends, i.e. until the
+estate's synchronous callback returns and commits. Two sessions on *completely
+different* estates therefore contended: with estate A's callback held 4000 ms,
+estate B reached its callback only 4021 ms later, waiting on `Lock/relation`; with
+a 500 ms statement timeout, the unrelated estate failed outright with
+`transaction_aborted: canceling statement due to statement timeout`. That
+contradicted §4's documented "different estates never contend".
+
+Closed by splitting initialization from verification:
+
+- **initialization** ([`../src/straylight/storage/postgres/migrate.ts`](../src/straylight/storage/postgres/migrate.ts)) —
+  `ensureLedger` now runs only from `migrate`, `rollback`, and a new explicit
+  `initializeLedger` entry point. It is the only path that issues ledger DDL;
+- **steady state** — `appliedVersions`, `appliedMigrations`,
+  `verifyAppliedChecksums`, and `assertSchemaVersion` are strictly **read-only**.
+  A read tolerates an absent or pre-checksum ledger without altering it:
+  - absence is checked with `to_regclass` (a pure catalog lookup), so a missing
+    ledger yields "nothing applied" rather than a `42P01` that would abort the
+    caller's estate transaction;
+  - the possibly-absent `content_checksum` column is read through
+    `to_jsonb(ledger) ->> 'content_checksum'`, which yields SQL `NULL` when the
+    column does not exist instead of failing.
+
+`to_regclass` and `to_jsonb` are core PostgreSQL functions, not extensions, so
+provider neutrality is unaffected. **Migration SQL is byte-unchanged** (a
+forbidden path), and no checksum refusal is weakened: `NULL` remains a
+verification **failure**, so a pre-checksum ledger still fails closed with
+`migration_checksum_missing` rather than being silently upgraded by a read. All
+missing / stale / forged / changed-content refusals are retained, on `migrate`, on
+schema service, and on `rollback`.
+
+**Cross-process regression** ([`../tests/phase-50a/postgres-concurrency.test.ts`](../tests/phase-50a/postgres-concurrency.test.ts)):
+estate A's synchronous callback is held for 4000 ms in a **genuinely separate OS
+process** with its own connection and pool, while estate B — a *different* estate
+with a 500 ms statement timeout — runs in the test process. A separate process is
+required, not a convenience: the callback contract is synchronous, so "holding"
+it means blocking, and blocking the test's own event loop would stop B from
+issuing any statement at all and the assertion would pass without testing a
+database lock. B must reach its callback under 1500 ms (measured: **~30 ms**),
+with no relation-lock wait and no timeout, while the holder is still holding.
+`pg_stat_activity` is asserted to show **zero** `Lock` waits.
+
+**Per-estate serialization is preserved**, proven by the contrasting case: a
+second session on the *same* held estate does **not** reach its callback within
+that bound and only proceeds once the holder's transaction releases. Same estate
+waits; different estate does not.
+
+**Read-only behaviour is asserted directly** ([`../tests/phase-50a/postgres-migration-checksum.test.ts`](../tests/phase-50a/postgres-migration-checksum.test.ts)):
+an estate session plus every read path leaves the ledger's complete catalog
+definition — columns, trigger names, trigger oids, and trigger-function oids —
+**identical**; and the estate transaction is shown to hold only
+`AccessShareLock`, never `AccessExclusiveLock`, on the ledger relation. The
+pre-checksum-ledger test now additionally proves a **read upgrades nothing** (the
+column stays absent through both the read and a refused session) and that the
+explicit initialization path is what adds it — without binding a checksum, so the
+row still fails closed.
+
+### 13.3 Concern 3 (medium) — the anti-drift proof was not anti-vacuous
+
+Both prior tests hardcoded the **same three strings** and only checked each
+appeared in the no-leak source and the workflow. A fourth fixed input read
+outside the existing globs would have left both green while the workflow omitted
+it.
+
+Closed by deriving the **complete** input set from one authoritative declaration:
+
+- [`../tests/phase-50a/no-leak-and-neutrality.test.ts`](../tests/phase-50a/no-leak-and-neutrality.test.ts)
+  now declares its fixed inputs in two marker-delimited blocks —
+  `SCANNED_TREE_ROOTS` (the roots actually walked) and `NAMED_TEXT_INPUTS` (every
+  file read by name). The declaration is **load-bearing, not documentation**:
+  every by-name read goes through `readFixedInput`, which **refuses** an
+  undeclared path. That is what makes the declaration complete by construction
+  rather than by inspection;
+- [`../tests/phase-50a/artifact-and-workflow-contract.test.ts`](../tests/phase-50a/artifact-and-workflow-contract.test.ts)
+  extracts those blocks by marker, parses the workflow's `pull_request.paths`,
+  interprets only the two glob shapes actually used (exact path and `dir/**`;
+  anything else is treated as *not* covering), and compares the whole derived set
+  against that coverage. Nothing is restated, so a new input cannot be added
+  without this test seeing it. The extractor is itself guarded against matching
+  nothing, and it asserts no by-name read bypasses `readFixedInput`.
+
+**Mutation evidence** (all four run and observed):
+
+| Mutation | Result |
+|---|---|
+| Declare a new fixed input outside the workflow globs (`src/straylight/host/index.ts`) | **FAILS**, naming the path |
+| Omit a declared input from the declaration | **FAILS** (the set shrinks) |
+| Read a by-name input without declaring it | **REFUSED** by `readFixedInput` |
+| Remove a real trigger path from the workflow globs | Coverage for that input **fails** |
+
+Deriving the complete set surfaced a **pre-existing gap the hardcoded test could
+not see**: the no-leak suite reads eight estate-domain files
+(`src/straylight/{types,estate,recall,audit,policy,keyring,signatures,commitment}.ts`)
+that the workflow's `pull_request.paths` does **not** cover. On the merits they
+belong in the trigger set. They are **recorded** in `KNOWN_UNCOVERED_INPUTS`
+rather than fixed, because `.github/` is a forbidden path for this packet and
+adding trigger paths is a workflow change it does not authorize. The comparison is
+**exact equality**, so this cuts both ways: a *new* uncovered input fails, and
+closing one of the recorded gaps without updating the record also fails — the
+record cannot go stale.
+
+**Residual limit, stated plainly:** a change to one of those eight files alone
+does not trigger the Phase 50A workflow on a pull request. Every one of them is
+also a forbidden path for this patch and is byte-unchanged here, and the no-leak
+suite runs unconditionally under plain `npm test`, so the guard itself still
+executes on every ordinary test run. Closing the gap requires a workflow change
+under separate authority.
+
+### 13.4 Concern 4 (low) — the runbook's retry condition was too weak
+
+§7 of [`../docs/runbooks/phase-50a-postgresql-backup-restore-and-rollback.md`](runbooks/phase-50a-postgresql-backup-restore-and-rollback.md)
+still said an uncertain retry is safe when the *canonical payload* is identical —
+the very sufficiency that patch-cycle-1 finding 3 disproved.
+
+Corrected to require the **complete immutable durable row** to match: the
+immutable id, the promoted `estate_id` and `append_position`, the promoted
+`audit_hash` and `previous_audit_hash`, the normalized
+`previous_audit_hash_key`, and the canonical payload. Any column differing under
+the same immutable id is refused (`immutable_id_conflict`). The correction states
+explicitly that payload equality alone is **not** a safe retry condition and that
+a same-payload promoted-column mismatch must be treated as the conflict it is,
+because such a row is invisible to the estate the operation was writing. The
+error-table row that pointed at §7 is aligned with the same wording.
+
+### 13.5 Concern 5 (low) — the patch-cycle-1 path count was wrong
+
+§12.8 reported 14 patch-only changed paths while the
+`8602a2c753b2ad873175bc227e091a06da19a663..212e9ee769a31d69e0c0d0b508465b12d23a9a4d`
+range changes **16**. Corrected to state the total as 16, explicitly
+distinguished as **14 implementation/test paths plus 2 documents**.
+
+### 13.6 Scope
+
+Patch-only changed paths: **6 total** — 4 implementation/test paths plus 2
+documents. All inside `allowed_paths`; zero forbidden-path changes, with
+forbidden winning on overlap.
+
+- `src/straylight/storage/postgres/host.ts` — single-read `then` capture;
+- `src/straylight/storage/postgres/migrate.ts` — initialization/read-only split;
+- `src/straylight/storage/postgres/queries.ts` — read-only ledger statements;
+- `tests/phase-50a/postgres-callback-and-row-idempotency.test.ts`,
+  `tests/phase-50a/postgres-concurrency.test.ts`,
+  `tests/phase-50a/postgres-migration-checksum.test.ts`,
+  `tests/phase-50a/artifact-and-workflow-contract.test.ts`,
+  `tests/phase-50a/no-leak-and-neutrality.test.ts` — the new regressions and the
+  authoritative fixed-input declaration;
+- this document and the backup/restore runbook.
+
+Deliberately **unchanged**: the workflow, `package.json`, `package-lock.json`,
+migration SQL, every script, `src/straylight/storage/postgres/index.ts` (so the
+module surface is byte-identical — `initializeLedger` is reached by module path,
+not added to the barrel), `src/straylight/index.ts`, the estate domain model,
+`.npmrc`, and the TypeScript configuration.
+
+`StorageAdapter` remains synchronous (no `Promise` in the seam); no public export,
+dependency, package artifact, or error reason was added. Nothing in §10's residual
+unproven pre-production obligations is discharged by this patch, and it authorizes
+no acceptance, gate disposition, Phase 50B work, MVP-2 claim, audit, or merge.

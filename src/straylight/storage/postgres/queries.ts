@@ -13,9 +13,14 @@
 // The ledger is owned by the RUNNER (`migrate.ts`), not by a versioned file,
 // so rollback → re-apply works. Each row binds a version to the deterministic
 // checksum of the migration content that was applied for it, and that binding
-// is IMMUTABLE: a BEFORE UPDATE OR DELETE trigger refuses any change to the
-// checksum of an existing row, so a stale or forged checksum cannot be written
-// over a correct one through the ordinary SQL surface.
+// is IMMUTABLE: a BEFORE UPDATE trigger refuses any change to the checksum of
+// an existing row, so a stale or forged checksum cannot be written over a
+// correct one through the ordinary SQL surface.
+//
+// The four DDL statements below are the INITIALIZATION statements. They run
+// only from `ensureLedger` on the migration/initialization path — never from a
+// read, and never inside an estate transaction. See the read-only section
+// further down for why.
 
 export const CREATE_MIGRATION_LEDGER = `
   CREATE TABLE IF NOT EXISTS straylight_schema_migrations (
@@ -56,8 +61,7 @@ export const CREATE_MIGRATION_LEDGER_IMMUTABILITY = `
 
 // DROP + CREATE rather than `CREATE OR REPLACE TRIGGER`: the latter is core but
 // only from PostgreSQL 14, and the store commits to no version-gated feature
-// (§11.2, P-2). The pair is idempotent and runs inside the caller's
-// transaction, so a concurrent runner never observes the trigger absent.
+// (§11.2, P-2). The pair is idempotent.
 export const DROP_MIGRATION_LEDGER_IMMUTABILITY = `
   DROP TRIGGER IF EXISTS straylight_schema_migrations_checksum_immutable
     ON straylight_schema_migrations
@@ -69,16 +73,50 @@ export const ATTACH_MIGRATION_LEDGER_IMMUTABILITY = `
     FOR EACH ROW EXECUTE FUNCTION straylight_refuse_checksum_rewrite()
 `;
 
+// ── read-only ledger inspection (the STEADY-STATE path) ─────────────────
+//
+// Every statement below is READ-ONLY. This matters for more than tidiness:
+// the ledger reads run inside the caller's ESTATE transaction
+// (`assertSchemaVersion`, reached by every `withEstateSession`), and any DDL
+// there would take an ACCESS EXCLUSIVE relation lock held until that estate's
+// callback committed — which would make two sessions on DIFFERENT estates
+// contend on the ledger and defeat the per-estate isolation the store
+// guarantees (§13.1(h), P-12). Ledger creation, the checksum-column upgrade,
+// and the immutability trigger therefore belong exclusively to the
+// migration/initialization path (`ensureLedger`), never to a read.
+//
+// A read must also tolerate a ledger that is ABSENT or PRE-CHECKSUM, without
+// creating or altering anything:
+//
+//   * absence is checked with `to_regclass`, a pure catalog lookup — querying
+//     a missing relation directly would raise 42P01 and abort the enclosing
+//     estate transaction;
+//   * the possibly-absent `content_checksum` column is read through
+//     `to_jsonb(row) ->> 'content_checksum'`, which yields SQL NULL when the
+//     column does not exist instead of failing. NULL is a verification
+//     FAILURE for the caller either way (`migration_checksum_missing`), so a
+//     pre-checksum ledger fails closed rather than being silently upgraded by
+//     a read.
+//
+// `to_regclass` and `to_jsonb` are core PostgreSQL functions, not extensions.
+
+export const MIGRATION_LEDGER_EXISTS = `
+  SELECT to_regclass('straylight_schema_migrations') IS NOT NULL AS present
+`;
+
 export const SELECT_APPLIED_VERSIONS = `
   SELECT version FROM straylight_schema_migrations ORDER BY version ASC
 `;
 
 // Version + its recorded checksum. `content_checksum` is NULL for a row written
-// by a build that predates checksum binding; the caller treats NULL as a
-// verification FAILURE, never as "no opinion".
+// by a build that predates checksum binding — and also when the column itself
+// is absent (see above). The caller treats NULL as a verification FAILURE,
+// never as "no opinion".
 export const SELECT_APPLIED_MIGRATIONS = `
-  SELECT version, content_checksum
-    FROM straylight_schema_migrations ORDER BY version ASC
+  SELECT version,
+         to_jsonb(ledger) ->> 'content_checksum' AS content_checksum
+    FROM straylight_schema_migrations AS ledger
+   ORDER BY version ASC
 `;
 
 // Record the checksum for the version the migration file itself just claimed.

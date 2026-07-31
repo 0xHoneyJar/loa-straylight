@@ -254,6 +254,128 @@ maybe('Phase 50A patch — a Promise-like callback is refused before any durable
     expect(unhandled).toEqual([]);
   });
 
+  // ── patch cycle 2, finding 1 — `then` is read EXACTLY ONCE ─────────────
+  //
+  // The defect Codex found by direct probe: the refusal read `then` TWICE — once
+  // in the shape check and again in the absorber — despite the comment claiming
+  // the first read was reused. A stateful getter whose first access returned a
+  // bound `then` for a delayed-rejecting Promise and whose second access threw
+  // therefore saw two accesses, and the second access's throw meant the
+  // settlement was never absorbed: the delayed rejection escaped as an
+  // `unhandledRejection`.
+  //
+  // The correction captures the callable `then` once (`captureThen`) and invokes
+  // THAT captured function, with the original value as its receiver.
+
+  it('a STATEFUL `then` getter is accessed exactly ONCE, and its delayed rejection is absorbed', async () => {
+    let accesses = 0;
+    /** Receivers `then` was invoked with — must be the original object only. */
+    const receivers: unknown[] = [];
+    let rejectLater: ((err: Error) => void) | undefined;
+    const pending = new Promise<string>((_resolve, reject) => {
+      rejectLater = reject;
+    });
+
+    // The exact adversarial shape from the audit: access #1 hands back a
+    // working `then` whose Promise rejects LATER; access #2 throws. Under the
+    // defect the second access happened and threw, so nothing absorbed the
+    // rejection.
+    const hostile = {
+      get then() {
+        accesses += 1;
+        if (accesses > 1) {
+          throw new Error(`hostile then getter: unexpected access #${accesses}`);
+        }
+        return function then(
+          this: unknown,
+          onFulfilled: (v: unknown) => void,
+          onRejected: (e: unknown) => void,
+        ) {
+          receivers.push(this);
+          return pending.then(onFulfilled, onRejected);
+        };
+      },
+    };
+
+    await expect(
+      db.host.withEstateSession(ESTATE_ID, (storage) => {
+        storage.upsertActor(loadActor());
+        return hostile;
+      }),
+    ).rejects.toMatchObject({
+      name: 'PostgresUnavailableError',
+      reason: 'async_callback_unsupported',
+    });
+
+    // EXACTLY ONE access. Two would mean the getter could observe — or poison —
+    // the refusal a second time, which is the defect.
+    expect(accesses, 'the `then` getter must be read exactly once').toBe(1);
+
+    // The captured `then` was invoked with the ORIGINAL value as its receiver.
+    // A detached call would pass undefined and would break a native Promise's
+    // `then`, which reads internal slots from its receiver.
+    expect(receivers).toHaveLength(1);
+    expect(receivers[0]).toBe(hostile);
+
+    // Now settle the underlying Promise. The refusal already happened; this must
+    // be absorbed through the captured `then`, NOT surface as an unhandled
+    // rejection.
+    rejectLater?.(new Error('delayed rejection after the refusal'));
+    await drainMicrotasks();
+
+    // Still exactly one access after settlement — the absorber never re-reads.
+    expect(accesses).toBe(1);
+    expect(await durableCounts(db)).toEqual(ZERO_ROWS);
+    expect(unhandled, 'a delayed rejection must not escape as unhandledRejection').toEqual([]);
+  });
+
+  it('a `then` GETTER that throws on its FIRST access does not displace the outcome', async () => {
+    // Nothing can be captured and nothing was ever scheduled, so there is no
+    // settlement to absorb. The value is treated as an ordinary return rather
+    // than the getter's throw replacing the operation's own outcome.
+    let accesses = 0;
+    const hostile = {
+      get then() {
+        accesses += 1;
+        throw new Error('getter throws immediately');
+      },
+    };
+
+    const out = await db.host.withEstateSession(ESTATE_ID, (storage) => {
+      storage.upsertActor(loadActor());
+      return hostile;
+    });
+
+    // Not a thenable as far as the store can tell, so the ordinary synchronous
+    // path applies: it commits, and the getter's error is not raised.
+    expect(out.committed).toBe(true);
+    expect(accesses).toBe(1);
+    expect((await durableCounts(db))['actors']).toBe(1);
+    expect(unhandled).toEqual([]);
+  });
+
+  it('a NATIVE Promise is absorbed through its own `then`, with itself as receiver', async () => {
+    // The receiver matters most for a native Promise: `Promise.prototype.then`
+    // reads internal slots, so invoking a detached copy would throw instead of
+    // absorbing. This is the regression guarding the `Reflect.apply` receiver.
+    let rejectLater: ((err: Error) => void) | undefined;
+
+    await expect(
+      db.host.withEstateSession(ESTATE_ID, (storage) => {
+        storage.upsertActor(loadActor());
+        return new Promise<string>((_resolve, reject) => {
+          rejectLater = reject;
+        });
+      }),
+    ).rejects.toMatchObject({ reason: 'async_callback_unsupported' });
+
+    rejectLater?.(new Error('native promise rejecting after the refusal'));
+    await drainMicrotasks();
+
+    expect(await durableCounts(db)).toEqual(ZERO_ROWS);
+    expect(unhandled).toEqual([]);
+  });
+
   it('a thenable whose `then` THROWS synchronously still yields the refusal, not its own error', async () => {
     const hostile = {
       then() {

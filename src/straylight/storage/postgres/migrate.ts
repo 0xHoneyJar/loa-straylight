@@ -18,6 +18,13 @@
 // file), so rollback → re-apply works: dropping 0001's tables must not drop
 // the ledger that records which versions exist.
 //
+// Ledger DDL — creating the table, adding the checksum column, attaching the
+// immutability trigger — belongs to the INITIALIZATION path alone (`migrate`,
+// `rollback`, `initializeLedger`). The steady-state verification path is
+// strictly READ-ONLY, because it runs inside the caller's estate transaction
+// and DDL there would hold a relation lock for the whole estate callback,
+// coupling unrelated estates. See `ensureLedger` for the full argument.
+//
 // ── content binding (the version↔content checksum) ─────────────────────
 //
 // A ledger that records only "version 0001 is applied" says nothing about
@@ -48,6 +55,7 @@ import {
   CREATE_MIGRATION_LEDGER,
   CREATE_MIGRATION_LEDGER_IMMUTABILITY,
   DROP_MIGRATION_LEDGER_IMMUTABILITY,
+  MIGRATION_LEDGER_EXISTS,
   SELECT_APPLIED_MIGRATIONS,
   SELECT_APPLIED_VERSIONS,
 } from './queries.js';
@@ -149,9 +157,26 @@ function frame(label: string, value: string): string {
 
 /**
  * Create the ledger if absent, ensure it carries the checksum column, and
- * attach the trigger that makes a recorded checksum immutable. Idempotent, and
- * every caller of the ledger runs it first, so no path can read the ledger
- * before its shape is current.
+ * attach the trigger that makes a recorded checksum immutable. Idempotent.
+ *
+ * ── this is INITIALIZATION, not a read ───────────────────────────────────
+ *
+ * Every statement here is DDL, and DDL takes an ACCESS EXCLUSIVE lock on the
+ * ledger relation that is held until the enclosing transaction ends. So this
+ * function runs ONLY from the migration/initialization path — `migrate`,
+ * `rollback`, and the explicit `initializeLedger` entry point — and NEVER from
+ * a ledger read.
+ *
+ * The reason is cross-estate isolation. `assertSchemaVersion` runs inside the
+ * caller's ESTATE transaction, before the per-estate locks, and that
+ * transaction stays open for the whole synchronous callback. Running this DDL
+ * there would park an ACCESS EXCLUSIVE ledger lock for the callback's entire
+ * duration, so a session on a COMPLETELY DIFFERENT estate would block on
+ * `Lock/relation` behind it — or hit its statement timeout. Different estates
+ * must never contend (§13.1(h), P-12), so the steady-state verification path
+ * is strictly read-only (`appliedMigrations`, `verifyAppliedChecksums`,
+ * `assertSchemaVersion`) and tolerates an absent or pre-checksum ledger
+ * without touching its shape.
  */
 async function ensureLedger(client: PoolClient): Promise<void> {
   await client.query(CREATE_MIGRATION_LEDGER);
@@ -161,8 +186,38 @@ async function ensureLedger(client: PoolClient): Promise<void> {
   await client.query(ATTACH_MIGRATION_LEDGER_IMMUTABILITY);
 }
 
-export async function appliedVersions(client: PoolClient): Promise<string[]> {
+/**
+ * Bring the ledger's own shape up to date: create it if absent, add the
+ * checksum column if a pre-checksum build created it, and (re)attach the
+ * immutability trigger. Idempotent, and the ONLY exported way to run ledger
+ * DDL.
+ *
+ * `migrate` and `rollback` call this for you. It is exported so a deployment
+ * that wants the ledger current WITHOUT applying migrations — an
+ * initialization step, or a test asserting the upgrade path — can ask for it
+ * explicitly instead of a read silently performing it.
+ */
+export async function initializeLedger(client: PoolClient): Promise<void> {
   await ensureLedger(client);
+}
+
+/**
+ * Is the ledger relation present? A pure catalog lookup (`to_regclass`), so an
+ * absent ledger is a `false` rather than a 42P01 that would abort the caller's
+ * transaction — and so a read never has to create the table to find out.
+ */
+async function ledgerPresent(client: PoolClient): Promise<boolean> {
+  const result = await client.query<{ present: boolean }>(MIGRATION_LEDGER_EXISTS);
+  return result.rows[0]?.present === true;
+}
+
+/**
+ * Versions the ledger claims are applied, version-ascending. READ-ONLY: an
+ * absent ledger yields `[]` (nothing is claimed applied) rather than being
+ * created.
+ */
+export async function appliedVersions(client: PoolClient): Promise<string[]> {
+  if (!(await ledgerPresent(client))) return [];
   const result = await client.query<{ version: string }>(SELECT_APPLIED_VERSIONS);
   return result.rows.map((r) => r.version);
 }
@@ -174,9 +229,19 @@ export interface AppliedMigration {
   content_checksum: string | null;
 }
 
-/** Every ledger row, version-ascending, with its recorded checksum. */
+/**
+ * Every ledger row, version-ascending, with its recorded checksum. READ-ONLY:
+ * this is the steady-state verification path and it creates, alters, and
+ * upgrades NOTHING (see `ensureLedger` for why).
+ *
+ * An absent ledger yields `[]` — no version is claimed applied. A ledger
+ * written by a pre-checksum build yields rows whose `content_checksum` is
+ * `null`, because the column is read through `to_jsonb(row) ->>` and is simply
+ * absent; `null` is a verification FAILURE for every caller, so such a ledger
+ * fails closed rather than being silently backfilled or migrated by a read.
+ */
 export async function appliedMigrations(client: PoolClient): Promise<AppliedMigration[]> {
-  await ensureLedger(client);
+  if (!(await ledgerPresent(client))) return [];
   const result = await client.query<AppliedMigration>(SELECT_APPLIED_MIGRATIONS);
   return result.rows.map((r) => ({
     version: r.version,
@@ -197,6 +262,11 @@ export async function appliedMigrations(client: PoolClient): Promise<AppliedMigr
  * cannot and does not try to distinguish which side moved; either way the
  * database's schema and the shipped migration no longer provably agree, so it
  * refuses.
+ *
+ * READ-ONLY. This runs inside the caller's estate transaction on every
+ * `withEstateSession`, so it issues no DDL and takes no relation lock beyond
+ * the ordinary read (see `ensureLedger`). An absent or pre-checksum ledger is
+ * observed, not repaired.
  *
  * Returns the versions that are present in the ledger AND verified.
  */
@@ -246,6 +316,12 @@ export async function migrate(
   client: PoolClient,
   versions: readonly string[] = SHIPPED_SCHEMA_VERSIONS,
 ): Promise<string[]> {
+  // The ledger's own shape is established HERE, on the initialization path,
+  // and nowhere else — a version's DDL below inserts its ledger row, and the
+  // checksum binding updates it, so both need the table, the checksum column,
+  // and the immutability trigger to exist first. Steady-state reads never do
+  // this (see `ensureLedger`).
+  await ensureLedger(client);
   // Verify BEFORE deciding anything. This throws on the first version whose
   // ledger checksum does not match the shipped content, so no migration is
   // applied and no version is skipped on the strength of an unproven claim.
@@ -305,6 +381,10 @@ export async function migrate(
  * operator route out of a mismatched ledger.
  */
 export async function rollback(client: PoolClient, version: string): Promise<boolean> {
+  // Also an initialization-path caller: the DOWN file deletes the version's
+  // ledger row, so the ledger must exist and carry its current shape. As in
+  // `migrate`, this is the only kind of caller permitted to run ledger DDL.
+  await ensureLedger(client);
   const verified = new Set(await verifyAppliedChecksums(client, [version]));
   if (!verified.has(version)) return false;
   const sql = readMigrationSql(version, 'down');
@@ -332,6 +412,11 @@ export async function rollback(client: PoolClient, version: string): Promise<boo
  * This is the host-side guard: `PostgresEstateHost.withEstateSession` and every
  * read path call it before serving any operation, so an unverifiable schema is
  * refused at the boundary rather than discovered mid-session.
+ *
+ * READ-ONLY, and that is load-bearing: this runs inside the estate transaction
+ * before the per-estate locks, so any DDL here would hold a ledger relation
+ * lock for the whole callback and couple unrelated estates together
+ * (see `ensureLedger`). Verification only observes.
  */
 export async function assertSchemaVersion(
   client: PoolClient,

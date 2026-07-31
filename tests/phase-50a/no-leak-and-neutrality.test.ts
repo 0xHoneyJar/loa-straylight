@@ -18,8 +18,35 @@ import { describe, expect, it } from 'vitest';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, '../..');
 
-/** Everything Phase 50A introduced or modified, as repository-relative paths. */
-const PHASE_50A_PATHS = [
+// ── the authoritative fixed-input declaration (patch cycle 2, finding 3) ─
+//
+// This suite's conclusions depend on the content of specific repository paths.
+// If one of them changes, this suite's verdict can change with it — so the
+// workflow that runs the suite must be triggered by all of them, and drift
+// between "what the suite reads" and "what the workflow watches" is a real
+// hole (the defect recorded as patch-cycle-1 finding 6).
+//
+// The two marked blocks below are THE authoritative declaration of that input
+// set. They are load-bearing, not documentation:
+//
+//   * the tree roots are what `phase50aFiles()` actually walks;
+//   * every by-name text read in this file goes through `readFixedInput`,
+//     which REFUSES a path that is not declared;
+//   * `artifact-and-workflow-contract.test.ts` extracts these blocks by their
+//     markers and compares the declared set against the workflow's
+//     `pull_request.paths` coverage, with a mutation proving an undeclared or
+//     uncovered new input fails.
+//
+// The markers are parsed by that test. Keep them exactly as they are, keep one
+// single-quoted path per line, and add a new fixed input HERE — nowhere else.
+
+/**
+ * Tree roots walked wholesale. Everything Phase 50A introduced or modified; a
+ * new file under one of these is automatically in scope, which is why they are
+ * roots rather than a file list.
+ */
+// straylight:no-leak-tree-roots:begin
+const SCANNED_TREE_ROOTS = [
   'src/straylight/storage/postgres',
   'migrations/postgres',
   'scripts/phase-50a',
@@ -29,6 +56,52 @@ const PHASE_50A_PATHS = [
   'docs/PHASE-50A-PROVIDER-NEUTRAL-POSTGRESQL-CANONICAL-STORE-IMPLEMENTATION-AND-PROOF.md',
   'docs/runbooks/phase-50a-postgresql-backup-restore-and-rollback.md',
 ] as const;
+// straylight:no-leak-tree-roots:end
+
+/**
+ * Files read BY NAME, individually, outside any tree root. Each is read through
+ * `readFixedInput`, so this list is exactly the set of by-name text inputs —
+ * an undeclared read throws rather than silently widening the input set.
+ *
+ * `src/straylight/index.ts` is the public-surface guard's input. The rest are
+ * the estate domain model, read to prove Phase 50A did not touch it.
+ */
+// straylight:no-leak-named-inputs:begin
+const NAMED_TEXT_INPUTS = [
+  'src/straylight/index.ts',
+  'src/straylight/types.ts',
+  'src/straylight/estate.ts',
+  'src/straylight/recall.ts',
+  'src/straylight/audit.ts',
+  'src/straylight/policy.ts',
+  'src/straylight/keyring.ts',
+  'src/straylight/signatures.ts',
+  'src/straylight/commitment.ts',
+  'src/straylight/storage/types.ts',
+  'src/straylight/storage/in-memory.ts',
+  'src/straylight/storage/jsonl.ts',
+  'scripts/phase-50a/hosts.js',
+] as const;
+// straylight:no-leak-named-inputs:end
+
+/** Everything Phase 50A introduced or modified, as repository-relative paths. */
+const PHASE_50A_PATHS = SCANNED_TREE_ROOTS;
+
+/**
+ * Read one declared by-name input. A path that is not in `NAMED_TEXT_INPUTS`
+ * is REFUSED: that is what makes the declaration complete by construction
+ * rather than by inspection, so a future read cannot quietly add an input the
+ * workflow does not watch.
+ */
+function readFixedInput(path: string): string {
+  if (!(NAMED_TEXT_INPUTS as readonly string[]).includes(path)) {
+    throw new Error(
+      `no-leak: ${path} is not a declared fixed input. Add it to NAMED_TEXT_INPUTS ` +
+        '(and give it workflow path coverage) rather than reading it directly.',
+    );
+  }
+  return readFileSync(resolve(ROOT, path), 'utf8');
+}
 
 /**
  * The single deliberate exception to the credential scan: the non-production
@@ -299,21 +372,15 @@ describe('Phase 50A neutrality — no provider-specific concept in the implement
     // defines. If any of these files had changed, the packet says STOP AND
     // ESCALATE rather than proceed — so this test is the mechanical form of
     // that stop condition.
-    const domainFiles = [
-      'src/straylight/types.ts',
-      'src/straylight/estate.ts',
-      'src/straylight/recall.ts',
-      'src/straylight/audit.ts',
-      'src/straylight/policy.ts',
-      'src/straylight/keyring.ts',
-      'src/straylight/signatures.ts',
-      'src/straylight/commitment.ts',
-      'src/straylight/storage/types.ts',
-      'src/straylight/storage/in-memory.ts',
-      'src/straylight/storage/jsonl.ts',
-    ];
+    // Every domain file this reads is a declared fixed input (see
+    // NAMED_TEXT_INPUTS): the whole declared set minus the public-surface guard's
+    // own input and the harness module, which are asserted elsewhere.
+    const domainFiles = NAMED_TEXT_INPUTS.filter(
+      (p) => p !== 'src/straylight/index.ts' && p !== 'scripts/phase-50a/hosts.js',
+    );
+    expect(domainFiles.length).toBeGreaterThan(10);
     for (const path of domainFiles) {
-      const text = readFileSync(resolve(ROOT, path), 'utf8');
+      const text = readFixedInput(path);
       // No domain file may reach into the adapter boundary or the driver.
       expect(/from\s+['"]pg['"]/.test(text), `${path} must not import pg`).toBe(false);
       expect(
@@ -330,10 +397,8 @@ describe('Phase 50A neutrality — no provider-specific concept in the implement
   it('the wedge public surface is NOT widened by Phase 50A', () => {
     // ADR-024G / ADR-026A §5 keep the root export type-only. Re-exporting the
     // store would make `pg` a runtime dependency of every type-only consumer.
-    const index = readFileSync(resolve(ROOT, 'src/straylight/index.ts'), 'utf8');
-    expect(/postgres/i.test(index), 'src/straylight/index.ts must not export the store').toBe(
-      false,
-    );
+    const index = readFixedInput('src/straylight/index.ts');
+    expect(/postgres/i.test(index), 'the wedge barrel must not export the store').toBe(false);
     expect(/from\s+['"]pg['"]/.test(index)).toBe(false);
   });
 });

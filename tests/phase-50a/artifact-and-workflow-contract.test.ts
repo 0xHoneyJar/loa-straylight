@@ -24,9 +24,137 @@ const ROOT = resolve(HERE, '../..');
 
 const WORKFLOW = resolve(ROOT, '.github/workflows/phase-50a-postgres-conformance.yml');
 const PACKAGE_JSON = resolve(ROOT, 'package.json');
+const NO_LEAK = resolve(ROOT, 'tests/phase-50a/no-leak-and-neutrality.test.ts');
+const PROOF_DOC =
+  'docs/PHASE-50A-PROVIDER-NEUTRAL-POSTGRESQL-CANONICAL-STORE-IMPLEMENTATION-AND-PROOF.md';
+const RUNBOOK = 'docs/runbooks/phase-50a-postgresql-backup-restore-and-rollback.md';
+
+/**
+ * Declared fixed inputs that the workflow's `pull_request.paths` does NOT cover.
+ *
+ * Deriving the complete input set (rather than restating three strings) surfaced
+ * these: the estate-domain files the no-leak suite reads to prove Phase 50A did
+ * not touch the domain model. A change to any of them can change that suite's
+ * verdict, so on the merits they belong in the trigger set.
+ *
+ * They are RECORDED rather than fixed because `.github/` is a forbidden path for
+ * this patch — adding trigger paths is a workflow change this packet does not
+ * authorize. Recording them keeps the proof honest in both directions:
+ *
+ *   * the set is compared for EXACT equality, so a NEW uncovered fixed input is
+ *     a failure — which is the drift the audit asked to be made detectable;
+ *   * closing a gap without updating this list is also a failure, so the record
+ *     cannot quietly become stale.
+ *
+ * Residual limit, stated plainly: a change to one of these files alone does not
+ * trigger the Phase 50A workflow on a pull request. Every one of them is also a
+ * forbidden path for this patch and is byte-unchanged here, and `npm test` runs
+ * the no-leak suite unconditionally, so the guard itself still executes on every
+ * ordinary test run.
+ */
+const KNOWN_UNCOVERED_INPUTS: readonly string[] = [
+  'src/straylight/types.ts',
+  'src/straylight/estate.ts',
+  'src/straylight/recall.ts',
+  'src/straylight/audit.ts',
+  'src/straylight/policy.ts',
+  'src/straylight/keyring.ts',
+  'src/straylight/signatures.ts',
+  'src/straylight/commitment.ts',
+];
+/** A path no declaration contains — the "undeclared input" mutation. */
+const UNDECLARED_PROBE = 'src/straylight/anti-drift-undeclared-probe.ts';
+/** A path outside every workflow glob — the "uncovered input" mutation. */
+const UNCOVERED_PROBE = 'src/straylight/host/anti-drift-uncovered-probe.ts';
 
 function readWorkflow(): string {
   return readFileSync(WORKFLOW, 'utf8');
+}
+
+function readNoLeak(): string {
+  return readFileSync(NO_LEAK, 'utf8');
+}
+
+/**
+ * Extract the no-leak suite's AUTHORITATIVE fixed-input declaration from its
+ * marked blocks. Nothing is restated here: the sole source is the suite's own
+ * source, so this cannot drift from what the suite actually reads.
+ */
+function declaredFixedInputs(): { treeRoots: string[]; namedInputs: string[] } {
+  const text = readNoLeak();
+  return {
+    treeRoots: extractBlock(text, 'no-leak-tree-roots'),
+    namedInputs: extractBlock(text, 'no-leak-named-inputs'),
+  };
+}
+
+/** The single-quoted paths inside one `straylight:<name>:begin/end` block. */
+function extractBlock(text: string, name: string): string[] {
+  const begin = `// straylight:${name}:begin`;
+  const end = `// straylight:${name}:end`;
+  const from = text.indexOf(begin);
+  const to = text.indexOf(end);
+  if (from === -1 || to === -1 || to < from) {
+    throw new Error(`no-leak declaration block ${name} not found (markers must not be renamed)`);
+  }
+  const body = text.slice(from + begin.length, to);
+  return [...body.matchAll(/'([^']+)'/g)].map((m) => m[1]!);
+}
+
+/** The workflow's `pull_request.paths` globs, in declaration order. */
+function workflowPathFilters(): string[] {
+  const text = readWorkflow();
+  // Take the `paths:` list inside the pull_request trigger: contiguous
+  // comment-or-item lines. Comments are skipped, so the explanatory notes
+  // between entries do not terminate the block.
+  const start = text.indexOf('    paths:\n');
+  if (start === -1) throw new Error('workflow has no pull_request.paths block');
+  const rest = text.slice(start + '    paths:\n'.length).split('\n');
+  const globs: string[] = [];
+  for (const line of rest) {
+    const item = /^\s*- '([^']+)'\s*$/.exec(line);
+    if (item?.[1] !== undefined) {
+      globs.push(item[1]);
+      continue;
+    }
+    if (/^\s*#/.test(line) || line.trim() === '') continue;
+    break;
+  }
+  return globs;
+}
+
+/**
+ * Does one repository-relative path trigger the workflow under `globs`?
+ *
+ * Only the two glob shapes the workflow actually uses are interpreted: an
+ * exact path, and a `dir/**` prefix. Anything else is treated as NOT matching
+ * — an unrecognized shape must never be assumed to cover something.
+ */
+function isCovered(path: string, globs: readonly string[]): boolean {
+  return globs.some((glob) => {
+    if (glob.endsWith('/**')) {
+      const dir = glob.slice(0, -3);
+      return path === dir || path.startsWith(`${dir}/`);
+    }
+    if (glob.includes('*')) return false;
+    return glob === path;
+  });
+}
+
+/** Which of `paths` no glob covers, sorted — the anti-drift comparison set. */
+function uncoveredAmong(paths: readonly string[], globs: readonly string[]): string[] {
+  return paths.filter((p) => !isCovered(p, globs)).sort();
+}
+
+/**
+ * The no-leak accessor's refusal rule, applied to a candidate declaration. Used
+ * by the mutation test to show an undeclared input is rejected without editing
+ * the suite on disk.
+ */
+function simulateReadFixedInput(path: string, declared: readonly string[]): void {
+  if (!declared.includes(path)) {
+    throw new Error(`no-leak: ${path} is not a declared fixed input.`);
+  }
 }
 
 // ── Finding 5 — internal-only exclusion contract ───────────────────────
@@ -186,30 +314,114 @@ describe('Phase 50A patch — the proof workflow authenticates and triggers corr
     expect(/--registry|registry\.npmjs\.org/.test(text)).toBe(false);
   });
 
-  it('triggers on the three authorized test-input paths the suites actually read', () => {
-    const text = readWorkflow();
-    for (const path of [
-      'src/straylight/index.ts',
-      'docs/PHASE-50A-PROVIDER-NEUTRAL-POSTGRESQL-CANONICAL-STORE-IMPLEMENTATION-AND-PROOF.md',
-      'docs/runbooks/phase-50a-postgresql-backup-restore-and-rollback.md',
-    ]) {
-      expect(text, `pull_request.paths must include ${path}`).toContain(`- '${path}'`);
+  // ── patch cycle 2, finding 3 — anti-drift, derived not hardcoded ───────
+  //
+  // The defect: the previous pair of tests hardcoded the SAME three strings and
+  // only checked each appeared in both the no-leak source and the workflow. A
+  // fourth fixed input read by the no-leak suite outside the existing globs
+  // would leave both tests green while the workflow omitted it — the assertion
+  // was not anti-vacuous.
+  //
+  // The correction derives the COMPLETE fixed-input set from the no-leak
+  // suite's own authoritative declaration (the marked `SCANNED_TREE_ROOTS` and
+  // `NAMED_TEXT_INPUTS` blocks) and compares that whole set against the
+  // workflow's `pull_request.paths` coverage. Nothing is restated here, so a new
+  // input cannot be added without this test seeing it.
+
+  it('the declaration is parsed non-vacuously (the extractor really finds both blocks)', () => {
+    const declared = declaredFixedInputs();
+    // Guard the guard: an extractor that silently matched nothing would make
+    // every comparison below pass for the wrong reason.
+    expect(declared.treeRoots.length).toBeGreaterThan(5);
+    expect(declared.namedInputs.length).toBeGreaterThan(10);
+    // And the declaration must be the suite's REAL behaviour, not a stale list:
+    // every declared name is read through the refusing accessor.
+    const noLeak = readNoLeak();
+    expect(noLeak).toContain('function readFixedInput(');
+    expect(noLeak).toContain('is not a declared fixed input');
+    // No by-name read may bypass the accessor. `readFileSync` appears only in
+    // the tree walker and inside `readFixedInput` itself.
+    const bypasses = [...noLeak.matchAll(/readFileSync\(resolve\(ROOT, *'([^']+)'/g)].map(
+      (m) => m[1],
+    );
+    expect(bypasses, 'every by-name read must go through readFixedInput').toEqual([]);
+  });
+
+  it('the declared fixed inputs are covered by the workflow, except an EXACT recorded set', () => {
+    const declared = declaredFixedInputs();
+    const globs = workflowPathFilters();
+    expect(globs.length).toBeGreaterThan(5);
+
+    const uncovered = [...declared.treeRoots, ...declared.namedInputs]
+      .filter((p) => !isCovered(p, globs))
+      .sort();
+
+    // EXACT equality, not a subset check. That is what makes this anti-drift:
+    // a newly added fixed input outside the workflow's globs changes this set
+    // and fails, and closing one of the recorded gaps also fails (so the record
+    // cannot go stale). See KNOWN_UNCOVERED_INPUTS for why these are recorded
+    // rather than fixed.
+    expect(
+      uncovered,
+      'the set of fixed inputs without workflow path coverage must match the recorded set exactly',
+    ).toEqual([...KNOWN_UNCOVERED_INPUTS].sort());
+
+    // Every path that IS covered stays covered: the tree roots and the two
+    // inputs patch cycle 1 added are load-bearing triggers.
+    for (const path of declared.treeRoots) {
+      expect(isCovered(path, globs), `tree root ${path} must trigger the workflow`).toBe(true);
+    }
+    for (const path of ['src/straylight/index.ts', PROOF_DOC, RUNBOOK]) {
+      expect(isCovered(path, globs), `${path} must trigger the workflow`).toBe(true);
     }
   });
 
-  it('the added trigger paths are EXACTLY the files the no-leak suite reads', () => {
-    // Guards against the trigger set drifting from the suite's real inputs: the
-    // no-leak test reads these three paths by name, so they must be triggers.
-    const noLeak = readFileSync(resolve(ROOT, 'tests/phase-50a/no-leak-and-neutrality.test.ts'), 'utf8');
-    const workflow = readWorkflow();
-    for (const path of [
-      'src/straylight/index.ts',
-      'docs/PHASE-50A-PROVIDER-NEUTRAL-POSTGRESQL-CANONICAL-STORE-IMPLEMENTATION-AND-PROOF.md',
-      'docs/runbooks/phase-50a-postgresql-backup-restore-and-rollback.md',
-    ]) {
-      expect(noLeak, `${path} must actually be read by the no-leak suite`).toContain(path);
-      expect(workflow).toContain(`- '${path}'`);
-    }
+  it('MUTATION: an undeclared fixed input is refused, and an uncovered declared one fails', () => {
+    // (a) Adding a by-name read WITHOUT declaring it is refused at read time.
+    // This is the mechanism that keeps the declaration complete: the accessor
+    // throws, so the suite cannot quietly acquire an undeclared input.
+    const declared = declaredFixedInputs();
+    expect(declared.namedInputs).not.toContain(UNDECLARED_PROBE);
+    expect(() => simulateReadFixedInput(UNDECLARED_PROBE, declared.namedInputs)).toThrow(
+      /not a declared fixed input/,
+    );
+    // A declared one is accepted, so the refusal is specific rather than blanket.
+    expect(() =>
+      simulateReadFixedInput('src/straylight/index.ts', declared.namedInputs),
+    ).not.toThrow();
+
+    // (b) Adding a fixed input the workflow does NOT cover changes the uncovered
+    // set, so the exact-equality comparison fails. This is the omission case the
+    // previous hardcoded test could not detect at all.
+    const globs = workflowPathFilters();
+    const baseline = uncoveredAmong(
+      [...declared.treeRoots, ...declared.namedInputs],
+      globs,
+    );
+    expect(baseline).toEqual([...KNOWN_UNCOVERED_INPUTS].sort());
+
+    expect(isCovered(UNCOVERED_PROBE, globs)).toBe(false);
+    const withNewInput = uncoveredAmong(
+      [...declared.treeRoots, ...declared.namedInputs, UNCOVERED_PROBE],
+      globs,
+    );
+    expect(withNewInput).not.toEqual(baseline);
+    expect(withNewInput).toContain(UNCOVERED_PROBE);
+
+    // (b2) And OMITTING a declared input from the comparison also changes the
+    // set — so the check is sensitive to a shrinking declaration too, not only a
+    // growing one.
+    const omitted = [...declared.treeRoots, ...declared.namedInputs].filter(
+      (p) => p !== KNOWN_UNCOVERED_INPUTS[0],
+    );
+    expect(uncoveredAmong(omitted, globs)).not.toEqual(baseline);
+
+    // (c) And REMOVING a real trigger path breaks coverage for the input that
+    // needed it — so the workflow side is load-bearing too, not just the
+    // declaration side.
+    const withoutDocTrigger = globs.filter((g) => g !== PROOF_DOC);
+    expect(isCovered(PROOF_DOC, globs)).toBe(true);
+    expect(isCovered(PROOF_DOC, withoutDocTrigger)).toBe(false);
   });
 
   it('runs the artifact/package verification instead of blessing untracked declarations', () => {

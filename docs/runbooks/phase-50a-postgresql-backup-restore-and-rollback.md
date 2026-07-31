@@ -257,7 +257,7 @@ await host.withEstateSession(estateId, (storage) => {
 |---|---|---|
 | Store refuses every operation | `PostgresUnavailableError` `schema_version_mismatch` | Run `migrate()`. |
 | Store cannot connect | `PostgresUnavailableError` `connection_failed` | Check the host is up and the connection string targets it. Never fall back to another adapter. |
-| Operation aborted | `PostgresUnavailableError` `transaction_aborted` | Transient. Retry; an identical retry is idempotent (§7). |
+| Operation aborted | `PostgresUnavailableError` `transaction_aborted` | Transient. Retry; a retry converges only when the COMPLETE durable row matches — payload equality is not sufficient (§7). |
 | Estate will not load | `PostgresIntegrityError` `audit_chain_broken` | Quarantine. Restore from a verified backup (§4). |
 | Estate will not load | `PostgresIntegrityError` `append_prefix_mutated` | History is not a dense prefix — rows were added or removed out of band. Quarantine and restore. |
 | Write refused | `PostgresIntegrityError` `immutable_id_conflict` | An immutable id was reused for different content. Investigate the caller; do not force the write. |
@@ -272,18 +272,35 @@ leaking a credential.
 
 ## 7. Idempotency
 
-Retrying an operation whose commit outcome was uncertain is safe **when the
-canonical payload is identical**:
+Retrying an operation whose commit outcome was uncertain is safe **only when the
+complete immutable durable row matches** — not merely when the canonical payload
+does. Every column the insert wrote must be identical:
 
-- identical content, already durable → converges on the existing rows, creates
-  no duplicate, takes no second append position;
-- **different** content under the same immutable id → refused
+- the **immutable id** (the row's primary identity);
+- the promoted **`estate_id`** and **`append_position`**;
+- the promoted **`audit_hash`** and **`previous_audit_hash`**, and the
+  normalized **`previous_audit_hash_key`**;
+- the **canonical payload**.
+
+Given that:
+
+- every column identical, already durable → converges on the existing row,
+  creates no duplicate, takes no second append position;
+- **any** column different under the same immutable id → refused
   (`immutable_id_conflict`) and rolled back.
 
-Note the distinction the suites make explicit: replaying the *same records* is
-a retry, while *re-executing* an operation against advanced state derives a
-different chain link and is therefore conflicting reuse, not a retry. The
-store refuses the latter rather than papering over it.
+**Payload equality alone is not a safe retry condition.** A row carrying the same
+id and the same canonical payload but a different promoted `estate_id`,
+`append_position`, or chain link is a *different durable row*: it is not visible
+to the estate the operation was writing, so accepting it as an idempotent
+convergence would report success for a write that produced no visible row. Do not
+reason "same payload, therefore a safe retry" — compare the whole row, and treat a
+promoted-column mismatch as the conflict it is.
+
+Note also the distinction the suites make explicit: replaying the *same records*
+is a retry, while *re-executing* an operation against advanced state derives a
+different chain link and is therefore conflicting reuse, not a retry. The store
+refuses the latter rather than papering over it.
 
 ---
 
