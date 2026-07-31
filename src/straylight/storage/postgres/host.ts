@@ -14,8 +14,9 @@
 //       estate row lock when the row exists);
 //    4. load the transaction-scoped CanonicalState snapshot;
 //    5. hand a synchronous PostgresAdapterSession over that snapshot to ONE
-//       bounded callback, and REFUSE a Promise-like return value before
-//       anything else happens (see `captureThen` / `absorbSettlement` below);
+//       bounded callback, and REFUSE a Promise-like return value — or one whose
+//       thenability cannot be determined at all — before anything else happens
+//       (see `captureThen` / `absorbSettlement` below);
 //    6. close the session, computing its deterministic delta;
 //    7. re-verify the immutable append prefix is unchanged and the audit
 //       chain still verifies with the delta applied;
@@ -115,7 +116,9 @@ export class PostgresEstateHost {
    * `captureThen` / `absorbSettlement`), not awaited: this is not an
    * asynchronous-callback feature, and `Awaited<T>` never appears in this
    * signature. The detection reads `then` exactly once (`captureThen`), so a
-   * hostile getter cannot be observed twice.
+   * hostile getter cannot be observed twice — and a `then` getter that THROWS
+   * on that one access is refused too, because a value whose thenability the
+   * store failed to inspect cannot be shown to be a synchronous result.
    */
   async withEstateSession<T>(
     estate_id: ID,
@@ -149,25 +152,51 @@ export class PostgresEstateHost {
       const value = body(session);
 
       // FIRST thing after the callback returns, before `session.close()`,
-      // before `persistDelta`, and before COMMIT: refuse a Promise-like
-      // return value. The `then` property is read EXACTLY ONCE, here, and the
-      // captured function is what gets invoked — see `captureThen`. The
-      // refusal invalidates the session (so any code resuming after an
-      // `await` inside the callback finds it closed and throws instead of
-      // mutating a decided transaction), absorbs the thenable's eventual
-      // settlement through that same captured function (so a later rejection
-      // cannot surface as an unhandled rejection), and throws — which routes
-      // into the catch below, ROLLBACKs, and leaves nothing durable.
-      const captured = captureThen(value);
-      if (captured !== null) {
+      // before `persistDelta`, and before COMMIT: refuse a return value that
+      // is Promise-like — or whose thenability cannot be determined at all.
+      // The `then` property is read EXACTLY ONCE, here, and the captured
+      // function is what gets invoked — see `captureThen`. Both refusals
+      // invalidate the session (so any code resuming after an `await` inside
+      // the callback finds it closed and throws instead of mutating a decided
+      // transaction) and throw — which routes into the catch below, ROLLBACKs,
+      // and leaves nothing durable. Only the `thenable` case has a settlement
+      // to absorb, through that same captured function, so that a later
+      // rejection cannot surface as an unhandled rejection.
+      //
+      // ONLY a value proven NON-thenable reaches the commit path below. There
+      // is deliberately no third disposition: an inspection that fails is a
+      // refusal, never a synchronous success.
+      const outcome = captureThen(value);
+      if (outcome.kind === 'thenable') {
         session.abandon();
         session = undefined;
-        absorbSettlement(captured);
+        absorbSettlement(outcome.captured);
         throw new PostgresUnavailableError(
           'async_callback_unsupported',
           'withEstateSession requires a SYNCHRONOUS callback; the callback returned a ' +
             'Promise-like value, so the session was invalidated and the transaction ' +
             'rolled back without persisting anything',
+        );
+      }
+      if (outcome.kind === 'unreadable') {
+        // The `then` getter threw on its only access, so whether this value is
+        // Promise-like is UNDECIDABLE. Refuse on the same path and at the same
+        // point as a thenable: invalidate the session first, then throw into
+        // the catch below, which ROLLBACKs. Nothing is absorbed because nothing
+        // was captured or scheduled.
+        //
+        // The getter's own error is REPORTED as bounded detail, never
+        // propagated: `describe` reduces it to a message string, so an
+        // adversarial getter cannot substitute its own error class for the
+        // store's refusal, and callers keep a single reason to match on.
+        session.abandon();
+        session = undefined;
+        throw new PostgresUnavailableError(
+          'async_callback_unsupported',
+          'withEstateSession could not determine whether the callback\'s return value ' +
+            'was Promise-like: reading its `then` property threw, so the value was ' +
+            'refused as undecidable. The session was invalidated and the transaction ' +
+            `rolled back without persisting anything. Getter error: ${describe(outcome.error)}`,
         );
       }
 
@@ -353,39 +382,76 @@ interface CapturedThenable {
 }
 
 /**
- * Is this value Promise-like, and if so, what is its `then`? Returns the
- * capture for a native Promise and for any thenable (an object or function
- * with a callable `then`) — exactly the set of values `await` would treat
- * asynchronously — and `null` for everything else.
+ * The outcome of the single `then` read. Exactly three cases, because the read
+ * has exactly three outcomes and each demands a different disposition:
+ *
+ *   `not-thenable`  the value has no callable `then`. The ordinary synchronous
+ *                   path applies: close, persist, commit.
+ *   `thenable`      a callable `then` was captured. REFUSE and absorb the
+ *                   eventual settlement through the captured function.
+ *   `unreadable`    the `then` GETTER THREW on its first (and only) access.
+ *                   REFUSE — see `captureThen` for why this cannot be treated
+ *                   as `not-thenable`. There is nothing to absorb: nothing was
+ *                   captured, so nothing was ever scheduled.
+ *
+ * A discriminated union rather than `CapturedThenable | null`: the previous
+ * two-valued shape had no way to express "unreadable", which is precisely how
+ * the getter-throws case came to be silently folded into success.
+ */
+type ThenReadOutcome =
+  | { kind: 'not-thenable' }
+  | { kind: 'thenable'; captured: CapturedThenable }
+  | { kind: 'unreadable'; error: unknown };
+
+/**
+ * Is this value Promise-like, and if so, what is its `then`? Returns
+ * `not-thenable` for an ordinary value, `thenable` with the capture for a
+ * native Promise and for any thenable (an object or function with a callable
+ * `then`) — exactly the set of values `await` would treat asynchronously — and
+ * `unreadable` when the `then` property access itself throws.
  *
  * The `then` property is read EXACTLY ONCE, here, and the captured function is
  * what the caller invokes. A hostile thenable whose `then` is a getter cannot
  * therefore be observed twice, cannot return one function to the check and a
  * different one to the absorber, and cannot throw on a second access that
- * never happens. Reading the property is itself guarded: a getter that throws
- * on its FIRST access yields `null`, so such a value is treated as an ordinary
- * (non-thenable) return rather than displacing the caller's own error.
+ * never happens.
+ *
+ * A getter that THROWS on its first access yields `unreadable`, which the
+ * caller turns into a bounded refusal — it is NOT treated as an ordinary
+ * non-thenable return. The distinction is load-bearing: the value's thenability
+ * is UNDECIDABLE (the only channel for deciding it threw), and an undecidable
+ * return value cannot be shown to be a synchronous result. Treating it as one
+ * committed the transaction on the strength of a value the store had failed to
+ * inspect, so a callback could reach COMMIT precisely by making inspection
+ * fail. Refusing is the fail-closed reading of the same ambiguity the
+ * `thenable` branch already refuses, and it costs nothing legitimate: a
+ * synchronous callback returning an ordinary value has no throwing `then`
+ * getter.
  *
  * Note that `receiver` is retained separately: `then` must be invoked with the
  * original value as its `this`, because a native Promise's `then` is a
  * prototype method that reads internal slots from its receiver. Calling a
  * detached `then` would throw instead of absorbing the settlement.
  */
-function captureThen(value: unknown): CapturedThenable | null {
-  if (value === null) return null;
+function captureThen(value: unknown): ThenReadOutcome {
+  if (value === null) return { kind: 'not-thenable' };
   const t = typeof value;
-  if (t !== 'object' && t !== 'function') return null;
+  if (t !== 'object' && t !== 'function') return { kind: 'not-thenable' };
   const receiver = value as object;
   let then: unknown;
   try {
     then = (receiver as { then?: unknown }).then;
-  } catch {
-    // The `then` GETTER threw. Nothing was captured and nothing was scheduled,
-    // so there is no settlement to absorb and no thenable to refuse.
-    return null;
+  } catch (err) {
+    // The `then` GETTER threw on its FIRST and ONLY access. Nothing was
+    // captured and nothing was scheduled, so there is no settlement to absorb
+    // — but thenability is now UNDECIDABLE and the value must be refused, not
+    // committed. The error is carried back for the refusal's detail only; it is
+    // never rethrown as-is, so a hostile getter cannot choose the error class
+    // the caller sees.
+    return { kind: 'unreadable', error: err };
   }
-  if (typeof then !== 'function') return null;
-  return { receiver, then: then as CapturedThenable['then'] };
+  if (typeof then !== 'function') return { kind: 'not-thenable' };
+  return { kind: 'thenable', captured: { receiver, then: then as CapturedThenable['then'] } };
 }
 
 /**
@@ -417,11 +483,13 @@ function absorbSettlement(captured: CapturedThenable): void {
     const attached: unknown = Reflect.apply(captured.then, captured.receiver, [swallow, swallow]);
     // A well-behaved `then` returns another thenable; if that one can itself
     // reject (a subclass overriding `then`), absorb it too. Capturing it goes
-    // through the same single-read path.
+    // through the same single-read path. An `unreadable` chained value has
+    // nothing to absorb — its getter threw, so it never scheduled anything —
+    // and the refusal has already been decided either way.
     const chained = captureThen(attached);
-    if (chained !== null) {
+    if (chained.kind === 'thenable') {
       try {
-        Reflect.apply(chained.then, chained.receiver, [swallow, swallow]);
+        Reflect.apply(chained.captured.then, chained.captured.receiver, [swallow, swallow]);
       } catch {
         /* see below */
       }

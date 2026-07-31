@@ -20,6 +20,13 @@
 //
 // Both suites assert on DURABLE state read back through a fresh connection, so
 // a passing result cannot come from in-session bookkeeping.
+//
+// Patch cycle 2 added the single-read `then` capture regression (audit comment
+// 5136408097, finding 1). Patch cycle 3 adds the fail-closed regression for a
+// `then` getter that THROWS on that one access (audit comment 5147131563,
+// concern 1): the previous correction caught the exception and returned `null`,
+// so the value was treated as a synchronous result and COMMITTED. Both are in
+// the Promise-like suite below.
 
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
@@ -329,25 +336,147 @@ maybe('Phase 50A patch — a Promise-like callback is refused before any durable
     expect(unhandled, 'a delayed rejection must not escape as unhandledRejection').toEqual([]);
   });
 
-  it('a `then` GETTER that throws on its FIRST access does not displace the outcome', async () => {
-    // Nothing can be captured and nothing was ever scheduled, so there is no
-    // settlement to absorb. The value is treated as an ordinary return rather
-    // than the getter's throw replacing the operation's own outcome.
+  // ── patch cycle 3, concern 1 — a THROWING `then` getter FAILS CLOSED ────
+  //
+  // The defect Codex found by direct probe at the exact head: `captureThen`
+  // caught the first `then` access's exception and returned `null`, which
+  // `withEstateSession` read as "not a thenable". The refused-value branch was
+  // therefore skipped entirely and the ordinary synchronous path ran: the
+  // session closed, its delta persisted, and the transaction COMMITTED. The
+  // probe observed one getter access, `committed: true`, and one durable actor
+  // row — so a callback could reach COMMIT precisely by making the store's
+  // inspection FAIL.
+  //
+  // The correction distinguishes "proven non-thenable" from "could not be
+  // determined" (`ThenReadOutcome`) and refuses the latter, on the same path
+  // and at the same point as a thenable: before `session.close()`, before
+  // `persistDelta`, and before COMMIT.
+
+  it('a `then` GETTER that throws on its FIRST access FAILS CLOSED: refused, rolled back, zero durable rows', async () => {
     let accesses = 0;
+    const getterError = new Error('getter throws immediately');
     const hostile = {
       get then() {
         accesses += 1;
-        throw new Error('getter throws immediately');
+        throw getterError;
+      },
+    };
+
+    let caught: unknown;
+    try {
+      await db.host.withEstateSession(ESTATE_ID, (storage) => {
+        // A real mutation, so "nothing became durable" is a claim with teeth:
+        // under the defect this row committed.
+        storage.upsertActor(loadActor());
+        return hostile;
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    // (a) A BOUNDED refusal of the store's own class and reason — NOT the
+    // getter's error object. A hostile getter must not be able to choose the
+    // error class the caller sees, and callers keep one reason to match on.
+    expect(caught, 'the operation must be refused, not resolved').toBeInstanceOf(
+      PostgresUnavailableError,
+    );
+    expect(caught).toMatchObject({ reason: 'async_callback_unsupported' });
+    expect(caught).not.toBe(getterError);
+    // The getter's message survives as bounded DETAIL, so an operator can see
+    // why the value was undecidable.
+    expect(String((caught as Error).message)).toContain('getter throws immediately');
+
+    // (b) EXACTLY ONE getter access. The refusal path must not re-read the
+    // property — a second access is the patch-cycle-2 defect, and here it would
+    // also throw again.
+    expect(accesses, 'the `then` getter must be read exactly once').toBe(1);
+
+    // (c) ZERO durable rows: the refusal happened before close/persist/COMMIT
+    // and the transaction rolled back. Read through a FRESH connection.
+    await drainMicrotasks();
+    expect(await durableCounts(db)).toEqual(ZERO_ROWS);
+
+    // (d) No unhandled rejection. Nothing was captured, so nothing was ever
+    // scheduled to settle — the absence must be real, not incidental.
+    expect(unhandled).toEqual([]);
+  });
+
+  it('the session escaped from a throwing-getter callback is UNUSABLE afterwards', async () => {
+    // The companion guarantee to (c): the session is invalidated, so a callback
+    // that squirreled the reference away cannot write into a decided
+    // transaction — for reads or writes.
+    const escaped: { storage?: StorageAdapter } = {};
+    let accesses = 0;
+
+    await expect(
+      db.host.withEstateSession(ESTATE_ID, (storage) => {
+        escaped.storage = storage;
+        storage.upsertActor(loadActor());
+        return {
+          get then() {
+            accesses += 1;
+            throw new Error('undecidable thenability');
+          },
+        };
+      }),
+    ).rejects.toMatchObject({
+      name: 'PostgresUnavailableError',
+      reason: 'async_callback_unsupported',
+    });
+
+    expect(accesses).toBe(1);
+    expect(escaped.storage, 'the callback must actually have received a session').toBeDefined();
+
+    // Writes and reads both refuse with `session_closed`.
+    expect(() => escaped.storage?.upsertActor(loadActor())).toThrow(PostgresUnavailableError);
+    let readErr: unknown;
+    try {
+      escaped.storage?.getActor(loadActor().actor_id);
+    } catch (err) {
+      readErr = err;
+    }
+    expect(readErr).toMatchObject({ reason: 'session_closed' });
+
+    await drainMicrotasks();
+    expect(await durableCounts(db)).toEqual(ZERO_ROWS);
+    expect(unhandled).toEqual([]);
+  });
+
+  it('a getter that throws is refused even when the callback mutated NOTHING', async () => {
+    // Narrowness check: the refusal is a property of the return value, not a
+    // consequence of pending writes. An empty delta must not commit either.
+    await expect(
+      db.host.withEstateSession(ESTATE_ID, () => ({
+        get then(): never {
+          throw new Error('undecidable, empty delta');
+        },
+      })),
+    ).rejects.toMatchObject({ reason: 'async_callback_unsupported' });
+
+    await drainMicrotasks();
+    expect(await durableCounts(db)).toEqual(ZERO_ROWS);
+    expect(unhandled).toEqual([]);
+  });
+
+  it('a NON-throwing `then` getter returning a NON-function still commits — the refusal is narrow', async () => {
+    // The boundary next to the refusal: the property was READ successfully and
+    // is provably not callable, so the value is provably NOT thenable and the
+    // ordinary synchronous path must still apply. This is what keeps the
+    // fail-closed correction from swallowing legitimate return values that
+    // merely happen to own a `then` property.
+    let accesses = 0;
+    const notThenable = {
+      get then() {
+        accesses += 1;
+        return 'not a function';
       },
     };
 
     const out = await db.host.withEstateSession(ESTATE_ID, (storage) => {
       storage.upsertActor(loadActor());
-      return hostile;
+      return notThenable;
     });
 
-    // Not a thenable as far as the store can tell, so the ordinary synchronous
-    // path applies: it commits, and the getter's error is not raised.
     expect(out.committed).toBe(true);
     expect(accesses).toBe(1);
     expect((await durableCounts(db))['actors']).toBe(1);

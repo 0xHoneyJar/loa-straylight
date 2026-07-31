@@ -30,38 +30,22 @@ const PROOF_DOC =
 const RUNBOOK = 'docs/runbooks/phase-50a-postgresql-backup-restore-and-rollback.md';
 
 /**
- * Declared fixed inputs that the workflow's `pull_request.paths` does NOT cover.
+ * Patch cycle 3, concern 2 — there is NO accepted-gap list any more.
  *
- * Deriving the complete input set (rather than restating three strings) surfaced
- * these: the estate-domain files the no-leak suite reads to prove Phase 50A did
- * not touch the domain model. A change to any of them can change that suite's
- * verdict, so on the merits they belong in the trigger set.
+ * Patch cycle 2 recorded eight uncovered fixed inputs (the estate-domain files
+ * the no-leak suite reads) in a `KNOWN_UNCOVERED_INPUTS` constant, which turned
+ * the assertion from "zero uncovered inputs" into "exactly this accepted set".
+ * That made the required remote proof bypassable: a pull request changing any
+ * ONE of those eight files alone could change the no-leak suite's verdict
+ * without ever starting the Phase 50A workflow, and live repository state has no
+ * branch protection, no ruleset, and no other pre-merge workflow that would run
+ * the suite instead.
  *
- * They are RECORDED rather than fixed because `.github/` is a forbidden path for
- * this patch — adding trigger paths is a workflow change this packet does not
- * authorize. Recording them keeps the proof honest in both directions:
- *
- *   * the set is compared for EXACT equality, so a NEW uncovered fixed input is
- *     a failure — which is the drift the audit asked to be made detectable;
- *   * closing a gap without updating this list is also a failure, so the record
- *     cannot quietly become stale.
- *
- * Residual limit, stated plainly: a change to one of these files alone does not
- * trigger the Phase 50A workflow on a pull request. Every one of them is also a
- * forbidden path for this patch and is byte-unchanged here, and `npm test` runs
- * the no-leak suite unconditionally, so the guard itself still executes on every
- * ordinary test run.
+ * The gap is now CLOSED at the source — all eight are `pull_request.paths`
+ * triggers — and the assertion below requires the uncovered set to equal `[]`.
+ * An empty required set is the only shape that cannot be quietly widened: there
+ * is no list to append a new exception to.
  */
-const KNOWN_UNCOVERED_INPUTS: readonly string[] = [
-  'src/straylight/types.ts',
-  'src/straylight/estate.ts',
-  'src/straylight/recall.ts',
-  'src/straylight/audit.ts',
-  'src/straylight/policy.ts',
-  'src/straylight/keyring.ts',
-  'src/straylight/signatures.ts',
-  'src/straylight/commitment.ts',
-];
 /** A path no declaration contains — the "undeclared input" mutation. */
 const UNDECLARED_PROBE = 'src/straylight/anti-drift-undeclared-probe.ts';
 /** A path outside every workflow glob — the "uncovered input" mutation. */
@@ -327,6 +311,17 @@ describe('Phase 50A patch — the proof workflow authenticates and triggers corr
   // `NAMED_TEXT_INPUTS` blocks) and compares that whole set against the
   // workflow's `pull_request.paths` coverage. Nothing is restated here, so a new
   // input cannot be added without this test seeing it.
+  //
+  // ── patch cycle 3, concern 2 — the uncovered set must be EMPTY ──────────
+  //
+  // Cycle 2 derived the set correctly but then compared it against an accepted
+  // eight-path gap (`KNOWN_UNCOVERED_INPUTS`), because `.github/` was forbidden
+  // to that packet. Disclosure is not enforcement: a pull request touching only
+  // one of those eight could flip the no-leak suite's verdict without starting
+  // this workflow at all, and nothing else in live repository state would have
+  // run the suite. Cycle 3 adds the eight trigger paths and requires zero
+  // uncovered inputs, so coverage is now complete by assertion rather than
+  // documented as incomplete.
 
   it('the declaration is parsed non-vacuously (the extractor really finds both blocks)', () => {
     const declared = declaredFixedInputs();
@@ -347,40 +342,98 @@ describe('Phase 50A patch — the proof workflow authenticates and triggers corr
     expect(bypasses, 'every by-name read must go through readFixedInput').toEqual([]);
   });
 
-  it('the declared fixed inputs are covered by the workflow, except an EXACT recorded set', () => {
+  it('EVERY declared fixed input triggers the workflow — the uncovered set is empty', () => {
     const declared = declaredFixedInputs();
     const globs = workflowPathFilters();
     expect(globs.length).toBeGreaterThan(5);
 
-    const uncovered = [...declared.treeRoots, ...declared.namedInputs]
-      .filter((p) => !isCovered(p, globs))
-      .sort();
+    const allInputs = [...declared.treeRoots, ...declared.namedInputs];
+    const uncovered = uncoveredAmong(allInputs, globs);
 
-    // EXACT equality, not a subset check. That is what makes this anti-drift:
-    // a newly added fixed input outside the workflow's globs changes this set
-    // and fails, and closing one of the recorded gaps also fails (so the record
-    // cannot go stale). See KNOWN_UNCOVERED_INPUTS for why these are recorded
-    // rather than fixed.
+    // ZERO uncovered inputs. Not "an accepted set", not a subset check: every
+    // path whose content can change this workflow's conclusions must be able to
+    // START this workflow. `[]` is the only shape that cannot be widened by
+    // appending a new exception — which is exactly how the patch-cycle-2
+    // accepted-gap list made the remote proof bypassable.
     expect(
       uncovered,
-      'the set of fixed inputs without workflow path coverage must match the recorded set exactly',
-    ).toEqual([...KNOWN_UNCOVERED_INPUTS].sort());
+      'every declared fixed input must have workflow path coverage; the uncovered set must be empty',
+    ).toEqual([]);
 
-    // Every path that IS covered stays covered: the tree roots and the two
-    // inputs patch cycle 1 added are load-bearing triggers.
-    for (const path of declared.treeRoots) {
-      expect(isCovered(path, globs), `tree root ${path} must trigger the workflow`).toBe(true);
+    // Anti-vacuity: the comparison must have examined a real, non-trivial set.
+    // An extractor that returned nothing would also produce an empty uncovered
+    // set, and would do so for entirely the wrong reason.
+    expect(allInputs.length).toBeGreaterThan(15);
+
+    // And every input is individually covered, so the aggregate above cannot
+    // pass while some specific load-bearing trigger is missing.
+    for (const path of allInputs) {
+      expect(isCovered(path, globs), `fixed input ${path} must trigger the workflow`).toBe(true);
     }
     for (const path of ['src/straylight/index.ts', PROOF_DOC, RUNBOOK]) {
       expect(isCovered(path, globs), `${path} must trigger the workflow`).toBe(true);
     }
   });
 
-  it('MUTATION: an undeclared fixed input is refused, and an uncovered declared one fails', () => {
-    // (a) Adding a by-name read WITHOUT declaring it is refused at read time.
-    // This is the mechanism that keeps the declaration complete: the accessor
-    // throws, so the suite cannot quietly acquire an undeclared input.
+  it('the eight estate-domain inputs are trigger paths (patch cycle 3, concern 2)', () => {
+    // Named explicitly as well as derived, because these eight are the specific
+    // gap the audit required closed. The derived assertion above would also fail
+    // if one were dropped from the workflow — this one names WHICH, so a
+    // regression reports the actual missing trigger rather than a set diff.
+    const globs = workflowPathFilters();
     const declared = declaredFixedInputs();
+    for (const path of [
+      'src/straylight/types.ts',
+      'src/straylight/estate.ts',
+      'src/straylight/recall.ts',
+      'src/straylight/audit.ts',
+      'src/straylight/policy.ts',
+      'src/straylight/keyring.ts',
+      'src/straylight/signatures.ts',
+      'src/straylight/commitment.ts',
+    ]) {
+      // Still a declared input of the no-leak suite...
+      expect(declared.namedInputs, `${path} must remain a declared fixed input`).toContain(path);
+      // ...and now also a workflow trigger.
+      expect(isCovered(path, globs), `${path} must trigger the Phase 50A workflow`).toBe(true);
+    }
+  });
+
+  it('no accepted-gap / known-uncovered escape hatch exists in this suite', () => {
+    // Structural guard against the mechanism itself returning. The assertion
+    // above is only as strong as the absence of a tolerated-exception list, so
+    // reintroducing one under any of these names fails here.
+    const self = readFileSync(resolve(ROOT, 'tests/phase-50a/artifact-and-workflow-contract.test.ts'), 'utf8');
+    for (const banned of [
+      'KNOWN_UNCOVERED',
+      'ACCEPTED_UNCOVERED',
+      'ALLOWED_UNCOVERED',
+      'EXPECTED_UNCOVERED',
+      'TOLERATED_UNCOVERED',
+    ]) {
+      // The banned identifier may appear ONLY inside prose explaining its
+      // removal, never as a declaration.
+      const declarations = [
+        ...self.matchAll(new RegExp(`^\\s*(?:const|let|var)\\s+${banned}`, 'gm')),
+      ];
+      expect(declarations, `${banned} must not be declared`).toEqual([]);
+    }
+  });
+
+  it('MUTATION: a new uncovered input, a removed trigger, or an undeclared read each FAILS', () => {
+    const declared = declaredFixedInputs();
+    const globs = workflowPathFilters();
+    const allInputs = [...declared.treeRoots, ...declared.namedInputs];
+
+    // The baseline the real assertion enforces: EMPTY. Every mutation below is
+    // shown to move the result off `[]`, which is what makes the empty-set
+    // requirement load-bearing rather than incidentally true.
+    const baseline = uncoveredAmong(allInputs, globs);
+    expect(baseline).toEqual([]);
+
+    // (a) An undeclared by-name read is refused at read time. This is the
+    // mechanism that keeps the declaration complete: the accessor throws, so the
+    // suite cannot quietly acquire an input the workflow does not watch.
     expect(declared.namedInputs).not.toContain(UNDECLARED_PROBE);
     expect(() => simulateReadFixedInput(UNDECLARED_PROBE, declared.namedInputs)).toThrow(
       /not a declared fixed input/,
@@ -390,38 +443,55 @@ describe('Phase 50A patch — the proof workflow authenticates and triggers corr
       simulateReadFixedInput('src/straylight/index.ts', declared.namedInputs),
     ).not.toThrow();
 
-    // (b) Adding a fixed input the workflow does NOT cover changes the uncovered
-    // set, so the exact-equality comparison fails. This is the omission case the
-    // previous hardcoded test could not detect at all.
-    const globs = workflowPathFilters();
-    const baseline = uncoveredAmong(
-      [...declared.treeRoots, ...declared.namedInputs],
-      globs,
-    );
-    expect(baseline).toEqual([...KNOWN_UNCOVERED_INPUTS].sort());
-
+    // (b) A NEW fixed input outside every glob makes the uncovered set
+    // non-empty, so the assertion fails. This is the "new input is uncovered"
+    // mutation.
     expect(isCovered(UNCOVERED_PROBE, globs)).toBe(false);
-    const withNewInput = uncoveredAmong(
-      [...declared.treeRoots, ...declared.namedInputs, UNCOVERED_PROBE],
-      globs,
-    );
+    const withNewInput = uncoveredAmong([...allInputs, UNCOVERED_PROBE], globs);
     expect(withNewInput).not.toEqual(baseline);
-    expect(withNewInput).toContain(UNCOVERED_PROBE);
+    expect(withNewInput).toEqual([UNCOVERED_PROBE]);
 
-    // (b2) And OMITTING a declared input from the comparison also changes the
-    // set — so the check is sensitive to a shrinking declaration too, not only a
-    // growing one.
-    const omitted = [...declared.treeRoots, ...declared.namedInputs].filter(
-      (p) => p !== KNOWN_UNCOVERED_INPUTS[0],
-    );
-    expect(uncoveredAmong(omitted, globs)).not.toEqual(baseline);
+    // (c) REMOVING any required trigger path makes the input that needed it
+    // uncovered, so the assertion fails. Checked for EVERY declared input, one
+    // at a time — not just one representative path — so no trigger in the set is
+    // decorative. This is the "required trigger is removed" mutation.
+    for (const input of allInputs) {
+      // The glob that actually covers this input. Removing it must break
+      // coverage for that input specifically.
+      const covering = globs.filter((g) => isCovered(input, [g]));
+      expect(covering.length, `${input} must be covered by at least one glob`).toBeGreaterThan(0);
+      const without = globs.filter((g) => !covering.includes(g));
+      expect(
+        isCovered(input, without),
+        `removing ${covering.join(', ')} must leave ${input} uncovered`,
+      ).toBe(false);
+      expect(
+        uncoveredAmong(allInputs, without),
+        `removing the trigger(s) for ${input} must make the uncovered set non-empty`,
+      ).not.toEqual(baseline);
+    }
 
-    // (c) And REMOVING a real trigger path breaks coverage for the input that
-    // needed it — so the workflow side is load-bearing too, not just the
-    // declaration side.
-    const withoutDocTrigger = globs.filter((g) => g !== PROOF_DOC);
-    expect(isCovered(PROOF_DOC, globs)).toBe(true);
-    expect(isCovered(PROOF_DOC, withoutDocTrigger)).toBe(false);
+    // (d) The eight estate-domain triggers specifically: each is load-bearing,
+    // and removing it strands exactly that input. Named separately because these
+    // are the paths patch cycle 3 added — a future edit deleting one must fail
+    // here with that path named.
+    for (const path of [
+      'src/straylight/types.ts',
+      'src/straylight/estate.ts',
+      'src/straylight/recall.ts',
+      'src/straylight/audit.ts',
+      'src/straylight/policy.ts',
+      'src/straylight/keyring.ts',
+      'src/straylight/signatures.ts',
+      'src/straylight/commitment.ts',
+    ]) {
+      const without = globs.filter((g) => g !== path);
+      expect(without.length, `${path} must be an exact-path trigger`).toBe(globs.length - 1);
+      expect(isCovered(path, without), `${path} must be uncovered once its trigger is removed`).toBe(
+        false,
+      );
+      expect(uncoveredAmong(allInputs, without)).toEqual([path]);
+    }
   });
 
   it('runs the artifact/package verification instead of blessing untracked declarations', () => {

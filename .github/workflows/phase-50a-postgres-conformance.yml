@@ -25,13 +25,32 @@ on:
       - 'package.json'
       - 'package-lock.json'
       # Test INPUTS of this workflow's own suites. `no-leak-and-neutrality`
-      # reads these three files verbatim (the public-export guard reads
+      # reads these files verbatim (the public-export guard reads
       # src/straylight/index.ts; the leak-surface guard reads the proof
       # document and its runbook), so a change to any of them can invalidate
       # this workflow's conclusions and must therefore trigger it.
       - 'src/straylight/index.ts'
       - 'docs/PHASE-50A-PROVIDER-NEUTRAL-POSTGRESQL-CANONICAL-STORE-IMPLEMENTATION-AND-PROOF.md'
       - 'docs/runbooks/phase-50a-postgresql-backup-restore-and-rollback.md'
+      # The estate domain model. `no-leak-and-neutrality` reads each of these by
+      # name to prove Phase 50A did not touch the domain, so a change to any ONE
+      # of them alone can change that suite's verdict — and without a trigger
+      # here such a pull request would never start this workflow, making the
+      # required remote proof bypassable. Completing the fixed-input coverage is
+      # the whole point: `tests/phase-50a/artifact-and-workflow-contract.test.ts`
+      # derives the suite's authoritative input set and now requires the
+      # uncovered set to be EMPTY, so this list cannot silently fall behind.
+      #
+      # These are trigger INPUTS only. Every one is a forbidden path for the
+      # patch that added it here and is byte-unchanged.
+      - 'src/straylight/types.ts'
+      - 'src/straylight/estate.ts'
+      - 'src/straylight/recall.ts'
+      - 'src/straylight/audit.ts'
+      - 'src/straylight/policy.ts'
+      - 'src/straylight/keyring.ts'
+      - 'src/straylight/signatures.ts'
+      - 'src/straylight/commitment.ts'
   workflow_dispatch:
 
 # Least privilege: read the code and read the private package registry.

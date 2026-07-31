@@ -207,14 +207,25 @@ not extensions.
 
 ## 5. Idempotency and conflict (§13.1(g))
 
-Retry converges **only** on byte-identical canonical content. The comparison
-is over the canonical serialization, so field order or absent-vs-undefined can
-never make two different records look equal.
+Retry converges **only** on **complete immutable durable-row equality**: the
+immutable primary id, the promoted `estate_id`, the promoted `append_position`,
+the promoted `audit_hash`, the promoted `previous_audit_hash`, the normalized
+`previous_audit_hash_key`, and the complete canonical payload must **all** match.
+
+Byte-identical canonical payload is **not** a sufficient retry condition. A row
+carrying the same immutable id and an identical payload but a differing promoted
+column is a **conflict, not a convergence** — such a row can be invisible to the
+estate the operation is writing, so counting it as idempotent would report
+success while zero rows were visible to that estate. The payload comparison is
+itself over the canonical serialization, so field order or absent-vs-undefined
+can never make two different records look equal; §7 records the complete
+comparison basis and how it is kept from drifting.
 
 | Case | Outcome |
 |---|---|
-| Same immutable id, identical canonical payload, already in the loaded snapshot | Idempotent skip. No second position, no duplicate. Reported in `persisted.idempotent`. |
-| Same immutable id, identical payload, committed by another transaction between load and write | Idempotent, classified against the live row in `persist.ts`. |
+| Same immutable id, **every** durable column equal, already in the loaded snapshot | Idempotent skip. No second position, no duplicate. Reported in `persisted.idempotent`. |
+| Same immutable id, **every** durable column equal, committed by another transaction between load and write | Idempotent, classified against the **complete** live row in `persist.ts`. |
+| Same immutable id, identical canonical payload, **any** promoted column differing (e.g. a different promoted `estate_id`) | `PostgresIntegrityError` `immutable_id_conflict`; the transaction rolls back. **Never** idempotent. |
 | Same immutable id, **different** canonical payload | `PostgresIntegrityError` `immutable_id_conflict`; the transaction rolls back. |
 | Append position taken by a different id | `PostgresIntegrityError` `duplicate_append_position`. |
 
@@ -856,9 +867,13 @@ distinguished as **14 implementation/test paths plus 2 documents**.
 
 ### 13.6 Scope
 
-Patch-only changed paths: **6 total** — 4 implementation/test paths plus 2
-documents. All inside `allowed_paths`; zero forbidden-path changes, with
-forbidden winning on overlap.
+Patch-only changed paths: **10 total** — **8 implementation/test paths plus 2
+documents**. The
+`212e9ee769a31d69e0c0d0b508465b12d23a9a4d..b29f03af14b9386a1c989b63c6bb5a7a547b46ec`
+range is exactly one commit changing those 10 paths. All inside `allowed_paths`;
+zero forbidden-path changes, with forbidden winning on overlap.
+
+Implementation and test paths (8):
 
 - `src/straylight/storage/postgres/host.ts` — single-read `then` capture;
 - `src/straylight/storage/postgres/migrate.ts` — initialization/read-only split;
@@ -868,8 +883,9 @@ forbidden winning on overlap.
   `tests/phase-50a/postgres-migration-checksum.test.ts`,
   `tests/phase-50a/artifact-and-workflow-contract.test.ts`,
   `tests/phase-50a/no-leak-and-neutrality.test.ts` — the new regressions and the
-  authoritative fixed-input declaration;
-- this document and the backup/restore runbook.
+  authoritative fixed-input declaration.
+
+Documents (2): this document and the backup/restore runbook.
 
 Deliberately **unchanged**: the workflow, `package.json`, `package-lock.json`,
 migration SQL, every script, `src/straylight/storage/postgres/index.ts` (so the
@@ -881,3 +897,192 @@ not added to the barrel), `src/straylight/index.ts`, the estate domain model,
 dependency, package artifact, or error reason was added. Nothing in §10's residual
 unproven pre-production obligations is discharged by this patch, and it authorizes
 no acceptance, gate disposition, Phase 50B work, MVP-2 claim, audit, or merge.
+
+---
+
+## 14. Patch cycle 3 — closure of the four Codex audit concerns
+
+Appended (not rewritten) so every `file:line` reference above stays valid.
+
+Authority: Codex `PATCH` audit comment `5147131563`
+(digest `sha256:44c6c8c68aa5281b120ca15142cf1e2ffa10a1f94e0c90f8f47692d9d324236e`)
+at audited head `b29f03af14b9386a1c989b63c6bb5a7a547b46ec`, and the bounded
+patch packet comment `5147657063`
+(digest `sha256:2adb83f073133e3eb71c0434dc392178ba8505c3646c54c2e257a5f81d7eead6`),
+applied under implementer lease `lease-phase-50a-implementer-004`. Four concerns,
+nothing else. Findings the audit confirmed closed — ledger locking, complete-row
+idempotency, the package artifact contract, concurrency, restore, and
+provider-neutrality — are **not** reopened. No redesign, no asyncification, no
+migration-SQL change, no control-plane-workflow change, no public API or estate
+semantic change, no dependency, lockfile, script, or runbook change, no
+provider/production/sibling/Phase 50B work, no gate disposition, no MVP-2 claim.
+
+This is the **configured maximum** patch cycle (`maximum_patch_cycles: 3`).
+
+### 14.1 Concern 1 (high) — a throwing `then` getter committed the transaction
+
+Patch cycle 2 correctly reduced the `then` read to exactly one access, but
+`captureThen` **caught** that access's exception and returned `null` — the same
+value it returns for an ordinary non-thenable. `withEstateSession` therefore took
+the synchronous path: it closed the session, persisted the delta, and
+**COMMITTED**. Codex's exact-head probe observed one getter access,
+`committed: true`, one durable actor row, a closed escaped session, and no
+`unhandledRejection`. A callback could reach COMMIT precisely by making the
+store's inspection *fail*, and the regression at
+`postgres-callback-and-row-idempotency.test.ts:332` codified that commit as
+correct.
+
+Closed in [`../src/straylight/storage/postgres/host.ts`](../src/straylight/storage/postgres/host.ts).
+`captureThen` no longer returns `CapturedThenable | null` — a two-valued shape
+with no way to express "could not be determined", which is how the case came to
+be folded into success. It now returns a three-case discriminated union
+`ThenReadOutcome`:
+
+| Outcome | Meaning | Disposition |
+|---|---|---|
+| `not-thenable` | the property was read and is provably not callable | ordinary synchronous path: close, persist, COMMIT |
+| `thenable` | a callable `then` was captured | refuse; absorb the settlement through the captured function |
+| `unreadable` | the `then` **getter threw** on its one access | **refuse**; nothing to absorb (nothing was captured, so nothing was scheduled) |
+
+Only a value proven **non**-thenable reaches the commit path. The `unreadable`
+refusal fires at the same point as the thenable refusal — **before**
+`session.close()`, before `persistDelta`, and before `COMMIT` — invalidates the
+session via `abandon()`, and throws into the existing `catch`, which `ROLLBACK`s.
+Every callback mutation is rolled back with the transaction.
+
+The refusal is **bounded**: it raises the store's own
+`PostgresUnavailableError` / `async_callback_unsupported`, never the getter's
+error object. The getter's message survives only as reported detail (through
+`describe`), so an adversarial getter cannot substitute its own error class for
+the store's refusal and callers keep one reason to match on.
+
+Rationale for refusing rather than committing: a value whose thenability the
+store *failed to inspect* cannot be shown to be a synchronous result. It is the
+same ambiguity the `thenable` branch already refuses, read fail-closed. It costs
+nothing legitimate — a synchronous callback returning an ordinary value has no
+throwing `then` getter.
+
+Regressions in
+[`../tests/phase-50a/postgres-callback-and-row-idempotency.test.ts`](../tests/phase-50a/postgres-callback-and-row-idempotency.test.ts).
+The test that codified the commit is **replaced**, not supplemented, and proves:
+a bounded refusal of the store's class and reason (and *not* the getter's error
+object, with its message present as detail); **exactly one** getter access;
+**zero** durable rows read back through a fresh connection; and no
+`unhandledRejection`. A companion test proves the escaped session is **unusable**
+afterwards for both writes and reads (`session_closed`). A third proves the
+refusal holds when the callback mutated nothing, so it is a property of the
+return value rather than of pending writes.
+
+Callable thenables are **preserved unchanged**: the existing regressions for one
+property read, invocation with the original receiver, absorbed settlement
+(immediate, delayed, native Promise, multiple settlement, synchronous throw), and
+post-`await` `session_closed` all still pass untouched. A new boundary test
+covers a **non-throwing** getter returning a non-function: the property was read
+successfully and is provably not callable, so that value still commits — which is
+what keeps the fail-closed correction from swallowing legitimate returns that
+merely own a `then` property.
+
+### 14.2 Concern 2 (medium) — the eight estate-domain inputs now trigger the workflow
+
+The eight estate-domain files the no-leak suite reads by name were
+authoritatively *detected* as fixed inputs but absent from the workflow's
+`pull_request.paths`. A pull request changing any **one** of them alone could
+change the no-leak suite's verdict without ever starting this workflow, and live
+repository state has no branch protection, no ruleset, and no other pre-merge
+workflow that would run the suite instead — so plain `npm test` was not an
+enforceable substitute.
+
+Closed in
+[`../.github/workflows/phase-50a-postgres-conformance.yml`](../.github/workflows/phase-50a-postgres-conformance.yml)
+by adding all eight exact paths to `pull_request.paths`:
+`src/straylight/types.ts`, `src/straylight/estate.ts`,
+`src/straylight/recall.ts`, `src/straylight/audit.ts`,
+`src/straylight/policy.ts`, `src/straylight/keyring.ts`,
+`src/straylight/signatures.ts`, `src/straylight/commitment.ts`.
+
+They are **trigger inputs only**. Every one remains a forbidden path and is
+**byte-unchanged** by this patch. No other trigger was removed or altered, and no
+control-plane workflow was touched.
+
+### 14.3 Concern 3 (medium) — the accepted-gap list is gone; the uncovered set must be empty
+
+`KNOWN_UNCOVERED_INPUTS` changed the assertion from *zero uncovered inputs* to
+*exactly this accepted set*. Disclosure is not enforcement: the recorded gap made
+the required remote proof bypassable.
+
+Closed in
+[`../tests/phase-50a/artifact-and-workflow-contract.test.ts`](../tests/phase-50a/artifact-and-workflow-contract.test.ts).
+The constant is **removed**. The complete fixed-input set is still derived from
+the no-leak suite's own marked declaration blocks — nothing is restated — and the
+uncovered set is now required to equal `[]`. An empty required set is the only
+shape that cannot be quietly widened: there is no list to append an exception to.
+
+Four properties, each asserted:
+
+- **Empty uncovered set**, plus an anti-vacuity floor on the derived set size, so
+  an extractor that silently matched nothing cannot pass for the wrong reason;
+  and each input is additionally checked individually, so the aggregate cannot
+  pass while a specific trigger is missing.
+- **A new uncovered input fails** — the uncovered set becomes non-empty.
+- **Any removed required trigger fails** — checked for **every** declared input
+  one at a time, not one representative path, so no trigger in the set is
+  decorative; and separately for each of the eight, which reports *which* path
+  was stranded rather than a set diff.
+- **An undeclared by-name read is refused** at read time by the no-leak suite's
+  own accessor, so the declaration cannot quietly fall behind what the suite
+  reads.
+
+A structural guard additionally fails if any accepted-gap constant is
+reintroduced under `KNOWN_`/`ACCEPTED_`/`ALLOWED_`/`EXPECTED_`/`TOLERATED_UNCOVERED`,
+closing the mechanism rather than only this instance of it.
+
+### 14.4 Concern 4 (low) — two proof-document corrections
+
+**§5 retry equality.** The section said retry converges on byte-identical
+canonical content and classified a same-id identical-payload live-row collision
+as idempotent, contradicting the closed §7 implementation contract. Corrected to
+require **complete immutable durable-row equality** — immutable id, promoted
+`estate_id`, promoted `append_position`, promoted `audit_hash`, promoted
+`previous_audit_hash`, normalized `previous_audit_hash_key`, and canonical
+payload — and to state explicitly that payload equality alone is **not** a safe
+retry condition. The case table gains an explicit row for the same-payload
+differing-promoted-column collision, marked *never idempotent*.
+
+**§13.6 path count.** The section reported patch cycle 2 as 6 paths (4
+implementation/test plus 2 documents). The
+`212e9ee769a31d69e0c0d0b508465b12d23a9a4d..b29f03af14b9386a1c989b63c6bb5a7a547b46ec`
+range is exactly one commit changing **10** paths. Corrected to **10 total — 8
+implementation/test paths plus 2 documents**, with the two groups listed
+separately. The patch-cycle-1 count elsewhere (16 = 14 plus 2) was already
+correct and is unchanged.
+
+### 14.5 Scope
+
+Patch-only changed paths: **5 total** — 4 implementation/test paths plus 1
+document. All inside `allowed_paths`; zero forbidden-path changes, with forbidden
+winning on overlap.
+
+Implementation and test paths (4):
+
+- `src/straylight/storage/postgres/host.ts` — `ThenReadOutcome`; fail-closed
+  `unreadable` refusal before close/persist/COMMIT;
+- `tests/phase-50a/postgres-callback-and-row-idempotency.test.ts` — the
+  throwing-getter regressions replacing the commit-codifying test;
+- `.github/workflows/phase-50a-postgres-conformance.yml` — the eight
+  estate-domain trigger paths;
+- `tests/phase-50a/artifact-and-workflow-contract.test.ts` — accepted-gap list
+  removed; empty-uncovered-set requirement and its mutation proofs.
+
+Document (1): this document.
+
+Deliberately **unchanged**: the eight estate-domain files (trigger inputs only),
+`package.json`, `package-lock.json`, migration SQL, every script, every runbook,
+`src/straylight/storage/postgres/index.ts`, `src/straylight/index.ts`, every
+control-plane workflow, `.npmrc`, and the TypeScript configuration.
+
+`StorageAdapter` remains synchronous (no `Promise` in the seam); no public export,
+dependency, package artifact, or error reason was added — the `unreadable`
+refusal reuses the existing `async_callback_unsupported` reason. Nothing in §10's
+residual unproven pre-production obligations is discharged by this patch, and it
+authorizes no acceptance, gate disposition, Phase 50B work, MVP-2 claim, audit,
+or merge.
