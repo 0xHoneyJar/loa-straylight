@@ -952,9 +952,16 @@ Every callback mutation is rolled back with the transaction.
 
 The refusal is **bounded**: it raises the store's own
 `PostgresUnavailableError` / `async_callback_unsupported`, never the getter's
-error object. The getter's message survives only as reported detail (through
-`describe`), so an adversarial getter cannot substitute its own error class for
-the store's refusal and callers keep one reason to match on.
+error object.
+
+> **Superseded by §15.1.** This cycle *also* reported the getter's message as
+> bounded detail (through `describe`). Codex's rejection audit
+> (comment `5151647075`, concern 1) established that doing so both **leaked**
+> caller-supplied error text through the store's public error and — for a value
+> whose own conversion-to-string throws — let the **original object escape** in
+> place of the bounded refusal. The rejection-remediation slice removes that
+> reporting entirely; see §15.1. Nothing of the inspection error crosses the
+> boundary now.
 
 Rationale for refusing rather than committing: a value whose thenability the
 store *failed to inspect* cannot be shown to be a synchronous result. It is the
@@ -966,7 +973,9 @@ Regressions in
 [`../tests/phase-50a/postgres-callback-and-row-idempotency.test.ts`](../tests/phase-50a/postgres-callback-and-row-idempotency.test.ts).
 The test that codified the commit is **replaced**, not supplemented, and proves:
 a bounded refusal of the store's class and reason (and *not* the getter's error
-object, with its message present as detail); **exactly one** getter access;
+object — this cycle's version additionally asserted the message was present as
+detail, which §15.1 removes and replaces with a redaction assertion);
+**exactly one** getter access;
 **zero** durable rows read back through a fresh connection; and no
 `unhandledRejection`. A companion test proves the escaped session is **unusable**
 afterwards for both writes and reads (`session_closed`). A third proves the
@@ -1086,3 +1095,252 @@ refusal reuses the existing `async_callback_unsupported` reason. Nothing in §10
 residual unproven pre-production obligations is discharged by this patch, and it
 authorizes no acceptance, gate disposition, Phase 50B work, MVP-2 claim, audit,
 or merge.
+
+---
+
+## 15. Rejection-remediation slice (fresh initial slice after the patch-cycle-3 REJECT)
+
+Patch cycle 3 was the configured maximum (`maximum_patch_cycles: 3`) and Codex
+**rejected** exact SHA `1faf15849e616fe0bef7e9eeadeeb07047292c6b` on PR #123
+(audit comment `5151647075`, digest
+`sha256:51c3c016003e5649af0d3bdcf09fef3d2d21a07b0ea40dc70408379670f8026f`). The
+operator disposed of that rejection at lane #122 sequence 22 (comment
+`5152166078`) by returning the lane to coordination, and authorized **one fresh
+rejection-remediation slice** with a fresh branch and a fresh pull request
+(task packet comment `5152522613`, digest
+`sha256:a8d9dbd4f7ad2937dd8d689ab2c6fa3412feddb0aab9ec29614e888ade1a4c02`,
+applied at sequence 23).
+
+**This is not patch cycle 4.** The lane retains historical `patch_cycle: 3`; this
+is an *initial* packet at that same cycle. PR #123 remains rejected, unmerged,
+and is **never** merge evidence; the rejected branch is untouched (no force-push,
+no rebase, no amendment). The rejected SHA is used **only** as an inspectable
+implementation substrate: this slice's head is a direct child of it, so an
+auditor can review both the complete range from the original base and the
+remediation-only delta.
+
+Scope: the inherited allowed/forbidden envelope of the corrected initial packet
+(comment `5131800761`), and a remediation-only delta of **exactly five paths**
+relative to the rejected SHA. Every other path is **byte-identical** to
+`1faf158`. Four defects, no redesign of anything Codex confirmed closed.
+
+### 15.1 R1 (high) — the bounded callback error boundary
+
+`host.ts:199`/`:503`. The `unreadable` refusal interpolated
+`describe(outcome.error)` into the public `PostgresUnavailableError`. Two
+distinct defects followed:
+
+1. **Leak.** An ordinary `Error`'s message — caller-supplied text, and whatever
+   the caller put in it — was published through the store's own error surface.
+2. **Escape.** `describe` calls `String(err)` for a non-`Error`, so a value whose
+   conversion-to-string *itself throws* made `describe` throw at the refusal
+   site. `classify()` then called `describe` again on that exception and the
+   **original object reached the caller** in place of the bounded refusal —
+   Codex's exact-head observation recorded `caughtIsGetterException: true`,
+   `caughtIsBoundedError: false`, alongside correct rollback and invalidation.
+
+Closed by carrying **nothing** out of the failed read. `ThenReadOutcome`'s
+`unreadable` variant now has **no payload**: `captureThen`'s `catch` discards the
+exception rather than binding it, so there is no error at the refusal site to
+quote and nothing to stringify. The refusal message is a **fixed string**. The
+fact that the single read failed is the entire decision-relevant content; there
+is no legitimate consumer of the exception itself.
+
+What is unchanged: exactly one `then` access; refusal **before**
+`session.close()`, `persistDelta`, and `COMMIT`; `abandon()` invalidation of the
+escaped session; full `ROLLBACK` of every callback mutation; no
+`unhandledRejection`; and the single `async_callback_unsupported` reason callers
+match on. **No new error reason and no change to the public reason-code surface.**
+
+Regressions (`postgres-callback-and-row-idempotency.test.ts`): the stale
+expectation that the getter's message *survives* is **replaced** by a redaction
+assertion (`assertBoundedGetterRefusal`) covering message, `detail`, `stack`,
+`cause`, own properties, and object identity. New tests prove: a getter
+exception whose **stringification throws** still yields the bounded error and is
+never stringified (`toString`/`Symbol.toPrimitive` call count is zero); message,
+stack, and a nested `cause` are all absent from the public error; non-`Error`
+payloads (string, number, object) leak nothing; and the refusal precedes close,
+persistence, and COMMIT, proven by its observable consequences.
+
+**Mutation evidence.** Restoring the rejected shape (carry the error, interpolate
+`describe(outcome.error)`) fails **4** tests, including the stringification-escape
+case.
+
+### 15.2 R2 (high) — complete durable-row equality in the loaded-prefix classifier
+
+`session.ts:348`. `classifyExistingAppend` compared **canonical payload alone**.
+It ran before any position was claimed and had no notion of the position the
+append would occupy, so a row in the **loaded prefix** carrying the same
+immutable id and payload was counted idempotent regardless of its promoted
+`append_position`. Codex's dense-prefix observation — a filler at position 1 and
+the target id/payload at position 2 — returned `committed: true` with
+`{inserted: 0, idempotent: 1}`, contradicting the §5 complete-durable-row
+equality contract. (`persist.ts` already compared the complete row against the
+**live** database row; the two classifiers disagreed about what makes two rows
+the same row.)
+
+Closed by comparing the **complete durable row** in the session classifier too:
+`durableRowOf` builds the same column set `persist.ts` binds to its INSERT —
+promoted `estate_id`, promoted `append_position`, and for audit events
+`audit_hash`, `previous_audit_hash`, and the normalized
+`previous_audit_hash_key` — plus the canonical payload (which carries the
+immutable identity). `firstDurableMismatch` compares the **union** of both key
+sets, so a column present on one side only is a difference rather than an
+unchecked field, and `NULL` is never conflated with `''`. Convergence requires
+**no** mismatch; anything else is `immutable_id_conflict` and the whole
+transaction rolls back.
+
+**The append position a write offers.** The store's dense-position invariant
+means the row at position *k* is the *k*-th append an estate ever received, so
+the *k*-th append a session offers for an estate is a claim about placement:
+"this record is the *k*-th". `offerPosition` supplies that ordinal from a
+per-estate counter kept **separate** from the fresh-row counters (which are
+seeded from the loaded prefix and answer a different question: where the next
+*fresh* row is stored). The ordinal advances on every classified append,
+converging or fresh — skipping it for a convergence would renumber every later
+offer and turn one partial replay into a cascade of false matches. Density is
+unaffected: `claimPosition` remains the sole authority for where a fresh row
+actually lands.
+
+This is what distinguishes a **faithful retry** from a **partial or reordered
+replay**. A faithful retry re-offers the same records in the same order, so its
+*k*-th offer meets the durable row at position *k* and converges. Codex's case
+offers the target first against a row at position 2, and is refused.
+
+Regressions: the exact dense-prefix case (refused as `immutable_id_conflict`
+naming `append_position`, with **zero partial durability** — both planted rows
+unchanged and no audit event, assertion, or receipt written); a faithful dense
+replay still converging, so the correction is not a blanket refusal; audit-event
+promoted **chain** columns differing being a conflict; and a **structural**
+guard that the session classifier and `persist.ts` compare the same column set —
+necessary because `persist.ts` is outside this slice's authorized paths and is
+byte-unchanged, so the agreement cannot be enforced by shared code.
+
+**Mutation evidence.** Restoring the payload-only comparison fails **2** tests:
+the dense-prefix regression *and* the structural shared-basis guard. (The first
+version of that guard matched only one `if (...)` spelling and missed the
+mutation; it now bans any direct payload-to-payload comparison under any
+spelling and inspects the extracted body of `classifyExistingAppend` itself.)
+
+### 15.3 R3 (medium) — a mutation-complete workflow-contract proof
+
+`artifact-and-workflow-contract.test.ts:67`/`:326`/`:402`. The declared inputs
+were covered and the eight triggers present, but the anti-drift contract was not
+enforced. Three mutations survived:
+
+| Mutation | Rejected behaviour |
+|---|---|
+| delete `src/straylight/storage/postgres` from the authoritative declaration | all 33 focused tests green |
+| weaken the extractor with `slice(1)` | all 19 contract tests green |
+| a **renamed** accepted-gap set applied during extraction, absorbing a real uncovered input | all 33 tests green |
+
+The root cause is that `uncovered == []` is monotone in the **wrong direction**:
+a *smaller* declaration satisfies it more easily. "Everything declared is
+covered" says nothing about what must be declared. And a banned-identifier list
+is defeated by choosing another identifier.
+
+Closed with three independent mechanisms:
+
+- **A required declaration floor** (`REQUIRED_TREE_ROOTS`,
+  `REQUIRED_NAMED_INPUTS`) asserted from this suite's own list, not from the
+  extractor. It is a **lower bound**: satisfiable only by declaring more, never
+  less. Deleting a declared input now fails, naming the missing path.
+- **Extractor fidelity**, checked against an **independent** count of
+  single-quoted paths taken from the raw file text, plus first/last-entry
+  survival (`slice(1)` and `slice(0,-1)` each drop one end), plus the
+  requirement that a renamed marker **throws** rather than returning a quietly
+  empty set. Any truncation or pre-comparison filter disagrees with the file.
+- **A behavioural accepted-gap guard** that plants a genuinely uncovered input
+  and requires the comparison to **report** it — indifferent to what any filter
+  is called or where it lives. The identifier-shaped structural check is
+  retained and widened (now also `IGNORED`/`SKIP`/`EXEMPT`/`WAIVED`/`DEBT`/
+  `EXCLUDE`/`EXCEPTION`, any casing) as a **supplement**, not the whole defence.
+
+Also added: an explicit non-vacuity test (an empty input set trivially satisfies
+the empty-uncovered assertion, and no catch-all glob may be the reason it
+passes), and a removed-trigger check stated over the required floor so it cannot
+weaken alongside the declaration.
+
+**Mutation evidence.** Against the hardened suite: the declaration deletion fails
+**1** test naming the exact path (was 0); the `slice(1)` extractor weakening
+fails **4** (was 0); the renamed `COVERAGE_DEBT` set fails **2**. Critically, the
+same filter renamed to the innocuous `pathNormalizer` — which **evades**
+identifier detection entirely — is still caught by the fidelity check (13 vs 14
+declared inputs). That is the difference between closing the mechanism and
+closing one spelling of it.
+
+### 15.4 R4 (medium) — a real TypeScript exhaustiveness barrier
+
+`host.ts:169`/`:401`. The three `ThenReadOutcome` variants were dispatched
+through two independent `if` statements, with every remaining variant implicitly
+treated as not-thenable. A fourth variant therefore **passed** `npm run
+typecheck` and could fall through to `session.close()`, `persistDelta`, and
+`COMMIT`. The implementation report's claim of a compile-time barrier was
+unsupported by the source.
+
+Closed by dispatching through a total `switch` whose `default` calls
+`assertNever(outcome)`, a function whose parameter is `never`. Only
+`not-thenable` — a value **proven** non-thenable — leaves the switch toward the
+commit path; the other arms throw. Adding a variant makes the `assertNever`
+argument a type error and **fails typecheck**. The runtime `throw` inside
+`assertNever` is unreachable while the switch is exhaustive and exists so a value
+arriving from untyped JavaScript still fails closed.
+
+**Mutation evidence, machine-checked.** The proof is not a code reading: an
+ungated test copies the source tree to a uniquely-named probe directory,
+mutates it, and runs the real compiler with the project's own strictness flags.
+Adding `{ kind: 'r4-probe-unhandled-variant' }` **fails** typecheck with
+`not assignable to parameter of type 'never'`, naming the variant. A **positive
+control** replaces the switch with the rejected two-`if` shape and shows the same
+fourth variant then **compiles cleanly** — proving the barrier is what fails,
+not something incidental. A baseline test typechecks the unmutated copy first, so
+a harness fault cannot masquerade as a barrier. The probe directory is removed in
+`finally` and nothing is left in the tree.
+
+### 15.5 Preserved behaviour
+
+Not reopened or redesigned: the synchronous `StorageAdapter` seam (no `Promise`
+in the signature); the async PostgreSQL transaction host boundary;
+commit-before-success; rollback and session invalidation; callable-thenable
+receiver capture and settlement absorption (immediate, delayed, native Promise,
+multiple settlement, synchronous throw); `persist.ts`'s live-row complete-row
+conflict checks; migration checksum enforcement; database append-only
+constraints; audit-chain verification; same-estate serialization and cross-estate
+progress; two-host export/restore; provider neutrality; package reproducibility;
+the exact workflow trigger set; and every no-leak guarantee.
+
+### 15.6 Scope
+
+Remediation-only changed paths relative to `1faf158`: **5 total** — 4
+implementation/test paths plus 1 document.
+
+- `src/straylight/storage/postgres/host.ts` — payload-free `unreadable`; fixed
+  refusal message; total `switch` + `assertNever` barrier (R1, R4);
+- `src/straylight/storage/postgres/session.ts` — complete-durable-row
+  classification with the offered append ordinal (R2);
+- `tests/phase-50a/postgres-callback-and-row-idempotency.test.ts` — redaction
+  regressions, dense-prefix regression, shared-basis guard, compiler-proof
+  suite (R1, R2, R4);
+- `tests/phase-50a/artifact-and-workflow-contract.test.ts` — declaration floor,
+  extractor fidelity, behavioural accepted-gap guard, non-vacuity (R3);
+- this document.
+
+Deliberately **byte-unchanged**: `persist.ts`, `rows.ts`, `load.ts`, every other
+`storage/postgres` file, `no-leak-and-neutrality.test.ts`, all other Phase 50A
+suites, the eight estate-domain files, `package.json`, `package-lock.json`,
+migration SQL, every script, every runbook, the compose file, **every workflow**
+(including `.github/workflows/phase-50a-postgres-conformance.yml`), `.straylight/`,
+every ADR, and the TypeScript configuration. No dependency, lockfile, public
+API, package-contract, sibling-repository, or domain-semantic change. No new
+error reason.
+
+### 15.7 What this slice does NOT establish
+
+It closes four proven defects and preserves the rest. It authorizes and claims
+**no** acceptance, **no** readiness, **no** gate disposition, **no** Phase 50B
+work, **no** MVP-2 completion, and **no** merge. Every residual unproven
+pre-production obligation in §10 stands undischarged: durability, failover,
+network isolation, tenancy, availability, version policy, and incident recovery
+remain later obligations, and nothing here involves a provider, a production
+resource, a credential, or a living estate. The audit of this slice is Codex's;
+the implementer does not audit its own work.

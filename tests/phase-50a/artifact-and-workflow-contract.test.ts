@@ -25,6 +25,8 @@ const ROOT = resolve(HERE, '../..');
 const WORKFLOW = resolve(ROOT, '.github/workflows/phase-50a-postgres-conformance.yml');
 const PACKAGE_JSON = resolve(ROOT, 'package.json');
 const NO_LEAK = resolve(ROOT, 'tests/phase-50a/no-leak-and-neutrality.test.ts');
+/** This suite's own source, for the structural self-guards. */
+const SELF = resolve(ROOT, 'tests/phase-50a/artifact-and-workflow-contract.test.ts');
 const PROOF_DOC =
   'docs/PHASE-50A-PROVIDER-NEUTRAL-POSTGRESQL-CANONICAL-STORE-IMPLEMENTATION-AND-PROOF.md';
 const RUNBOOK = 'docs/runbooks/phase-50a-postgresql-backup-restore-and-rollback.md';
@@ -50,6 +52,51 @@ const RUNBOOK = 'docs/runbooks/phase-50a-postgresql-backup-restore-and-rollback.
 const UNDECLARED_PROBE = 'src/straylight/anti-drift-undeclared-probe.ts';
 /** A path outside every workflow glob — the "uncovered input" mutation. */
 const UNCOVERED_PROBE = 'src/straylight/host/anti-drift-uncovered-probe.ts';
+
+/**
+ * Rejection-remediation R3 — the REQUIRED declaration floor.
+ *
+ * The rejected suite derived the declared-input set from the no-leak suite and
+ * required `uncovered == []`. That is monotone in the WRONG direction: a
+ * SMALLER declaration satisfies it more easily, so deleting a declared input
+ * (Codex: removing `src/straylight/storage/postgres`) left all 33 focused tests
+ * green. "Everything declared is covered" says nothing about what must be
+ * declared.
+ *
+ * This is the floor. Every path here MUST be a declared input of the no-leak
+ * suite AND a workflow trigger. It is a lower bound, not an allowance: it can
+ * only be satisfied by declaring more, never by declaring less, and it is
+ * asserted independently of whatever the extractor happens to return.
+ *
+ * These are the inputs whose content can change the no-leak suite's verdict:
+ * the Phase 50A tree roots it walks, and the by-name files it reads.
+ */
+const REQUIRED_TREE_ROOTS = [
+  'src/straylight/storage/postgres',
+  'migrations/postgres',
+  'scripts/phase-50a',
+  'tests/phase-50a',
+  'docker-compose.phase-50a.yml',
+  '.github/workflows/phase-50a-postgres-conformance.yml',
+  PROOF_DOC,
+  RUNBOOK,
+] as const;
+
+/** The eight estate-domain files plus the public-surface and adapter inputs. */
+const REQUIRED_NAMED_INPUTS = [
+  'src/straylight/index.ts',
+  'src/straylight/types.ts',
+  'src/straylight/estate.ts',
+  'src/straylight/recall.ts',
+  'src/straylight/audit.ts',
+  'src/straylight/policy.ts',
+  'src/straylight/keyring.ts',
+  'src/straylight/signatures.ts',
+  'src/straylight/commitment.ts',
+  'src/straylight/storage/types.ts',
+  'src/straylight/storage/in-memory.ts',
+  'src/straylight/storage/jsonl.ts',
+] as const;
 
 function readWorkflow(): string {
   return readFileSync(WORKFLOW, 'utf8');
@@ -491,6 +538,226 @@ describe('Phase 50A patch — the proof workflow authenticates and triggers corr
         false,
       );
       expect(uncoveredAmong(allInputs, without)).toEqual([path]);
+    }
+  });
+
+  // ── rejection-remediation R3 — the proof must be mutation-complete ──────
+  //
+  // The rejected suite derived the declared set and required the uncovered set
+  // to be empty. Three mutations survived it (Codex, concern 3):
+  //
+  //   (a) DELETING `src/straylight/storage/postgres` from the authoritative
+  //       declaration left all 33 focused tests green — `uncovered == []` is
+  //       satisfied more easily by a SMALLER declaration.
+  //   (b) WEAKENING the extractor with `slice(1)` left all 19 contract tests
+  //       green — a truncated set still had full coverage.
+  //   (c) A RENAMED accepted-gap set applied during extraction absorbed a real
+  //       uncovered declared input while all 33 tests passed — the banned-name
+  //       list only checked five specific identifiers, and only as declarations
+  //       in this file.
+  //
+  // The corrections below are a required FLOOR (what must be declared, so
+  // deletion fails), extractor FIDELITY checks against the file's own literal
+  // content (so truncation and filtering fail), and a BEHAVIOURAL accepted-gap
+  // guard that tests the comparison's response to a planted uncovered input
+  // rather than trusting identifier spellings.
+
+  it('R3: the REQUIRED declaration floor is declared and covered (deletion fails here)', () => {
+    // A LOWER BOUND on the declaration, asserted from this file's own required
+    // list rather than from whatever the extractor returns. Deleting an input
+    // from the no-leak suite now fails here, naming the missing path — the
+    // mutation that previously left every test green.
+    const declared = declaredFixedInputs();
+    const globs = workflowPathFilters();
+
+    for (const root of REQUIRED_TREE_ROOTS) {
+      expect(
+        declared.treeRoots,
+        `${root} must remain a declared no-leak tree root (removing it is the mutation this floor catches)`,
+      ).toContain(root);
+      expect(isCovered(root, globs), `${root} must trigger the workflow`).toBe(true);
+    }
+    for (const named of REQUIRED_NAMED_INPUTS) {
+      expect(
+        declared.namedInputs,
+        `${named} must remain a declared no-leak by-name input`,
+      ).toContain(named);
+      expect(isCovered(named, globs), `${named} must trigger the workflow`).toBe(true);
+    }
+    // The floor is a MINIMUM, so the real declaration may be larger — but never
+    // smaller. Stated as an explicit relation so the intent cannot be misread
+    // as an exact-set check that a future addition would break.
+    expect(declared.treeRoots.length).toBeGreaterThanOrEqual(REQUIRED_TREE_ROOTS.length);
+    expect(declared.namedInputs.length).toBeGreaterThanOrEqual(REQUIRED_NAMED_INPUTS.length);
+  });
+
+  it('R3: the extractor is FAITHFUL to the declaration blocks (truncation or filtering fails)', () => {
+    // The rejected suite trusted whatever `declaredFixedInputs()` returned. A
+    // `slice(1)` inside it — or any filter applied on the way out — silently
+    // shrank the compared set and left everything green.
+    //
+    // Fidelity is checked against an INDEPENDENT count taken from the raw file
+    // text: every single-quoted path inside each marked block, counted here
+    // without reusing the extractor. A weakened extractor disagrees with the
+    // file and fails.
+    const text = readNoLeak();
+    const declared = declaredFixedInputs();
+
+    const rawCount = (name: string): number => {
+      const begin = `// straylight:${name}:begin`;
+      const end = `// straylight:${name}:end`;
+      const from = text.indexOf(begin);
+      const to = text.indexOf(end);
+      expect(from, `${name} block must exist`).toBeGreaterThan(-1);
+      expect(to, `${name} block must be terminated`).toBeGreaterThan(from);
+      const body = text.slice(from + begin.length, to);
+      return [...body.matchAll(/'[^']+'/g)].length;
+    };
+
+    expect(
+      declared.treeRoots.length,
+      'the extractor must return EVERY declared tree root (no slice, no filter)',
+    ).toBe(rawCount('no-leak-tree-roots'));
+    expect(
+      declared.namedInputs.length,
+      'the extractor must return EVERY declared by-name input (no slice, no filter)',
+    ).toBe(rawCount('no-leak-named-inputs'));
+
+    // The FIRST and LAST entries must both survive: `slice(1)` and `slice(0,-1)`
+    // are the two cheapest truncations and each drops exactly one end.
+    const firstOf = (name: string): string => {
+      const begin = `// straylight:${name}:begin`;
+      const body = text.slice(text.indexOf(begin) + begin.length, text.indexOf(`// straylight:${name}:end`));
+      const all = [...body.matchAll(/'([^']+)'/g)].map((m) => m[1]!);
+      return all[0]!;
+    };
+    const lastOf = (name: string): string => {
+      const begin = `// straylight:${name}:begin`;
+      const body = text.slice(text.indexOf(begin) + begin.length, text.indexOf(`// straylight:${name}:end`));
+      const all = [...body.matchAll(/'([^']+)'/g)].map((m) => m[1]!);
+      return all[all.length - 1]!;
+    };
+    expect(declared.treeRoots).toContain(firstOf('no-leak-tree-roots'));
+    expect(declared.treeRoots).toContain(lastOf('no-leak-tree-roots'));
+    expect(declared.namedInputs).toContain(firstOf('no-leak-named-inputs'));
+    expect(declared.namedInputs).toContain(lastOf('no-leak-named-inputs'));
+
+    // The extractor must be the AUTHORITATIVE reader: it must fail loudly on a
+    // renamed marker rather than returning a quietly empty set, because an
+    // empty set would make the uncovered comparison vacuously satisfied.
+    expect(() => extractBlock(text, 'no-such-block-name')).toThrow(/not found/);
+    expect(() => extractBlock('', 'no-leak-tree-roots')).toThrow(/not found/);
+  });
+
+  it('R3: the uncovered-set comparison is NON-VACUOUS (an empty declaration fails)', () => {
+    // `uncovered == []` is trivially true when the declared set is empty, which
+    // is what made both the deletion and the truncation mutations survive. The
+    // comparison must therefore be paired with a proven-non-trivial input set,
+    // and the pairing itself must be checked.
+    const declared = declaredFixedInputs();
+    const globs = workflowPathFilters();
+    const allInputs = [...declared.treeRoots, ...declared.namedInputs];
+
+    // An EMPTY input set produces an empty uncovered set — the vacuous pass.
+    expect(uncoveredAmong([], globs)).toEqual([]);
+    // Which is why the real assertion must also require a substantive set. The
+    // floor above fixes the minimum; this states the invariant plainly.
+    expect(allInputs.length).toBeGreaterThanOrEqual(
+      REQUIRED_TREE_ROOTS.length + REQUIRED_NAMED_INPUTS.length,
+    );
+    // And a glob set that covers everything by accident must not be the reason
+    // the comparison passes: a catch-all glob is not present.
+    expect(globs).not.toContain('**');
+    expect(globs).not.toContain('*');
+    expect(globs.some((g) => g === '**/*')).toBe(false);
+  });
+
+  it('R3: an accepted-gap mechanism under ANY name is caught BEHAVIOURALLY', () => {
+    // The rejected guard banned five identifier spellings, declared in this
+    // file. A renamed set applied inside the extraction path defeated it.
+    //
+    // The behavioural check does not care what a filter is called or where it
+    // lives: it plants a genuinely uncovered input into the comparison and
+    // requires the comparison to REPORT it. Any mechanism that absorbs
+    // exceptions — a list, a set, a predicate, a rename — makes this fail,
+    // because an absorbed input would not be reported.
+    const declared = declaredFixedInputs();
+    const globs = workflowPathFilters();
+    const allInputs = [...declared.treeRoots, ...declared.namedInputs];
+
+    // The planted input is genuinely uncovered...
+    expect(isCovered(UNCOVERED_PROBE, globs)).toBe(false);
+    // ...and the comparison must SURFACE it rather than tolerate it.
+    const withProbe = uncoveredAmong([...allInputs, UNCOVERED_PROBE], globs);
+    expect(
+      withProbe,
+      'an uncovered input must be reported, not absorbed by any exception mechanism',
+    ).toEqual([UNCOVERED_PROBE]);
+
+    // The same for each required input in turn: strip its covering glob and the
+    // comparison must name exactly that input. A tolerated-exception mechanism
+    // anywhere in the path would swallow at least one of these.
+    for (const input of [...REQUIRED_TREE_ROOTS, ...REQUIRED_NAMED_INPUTS]) {
+      const covering = globs.filter((g) => isCovered(input, [g]));
+      expect(covering.length, `${input} must be covered`).toBeGreaterThan(0);
+      const without = globs.filter((g) => !covering.includes(g));
+      expect(
+        uncoveredAmong([input], without),
+        `stripping coverage for ${input} must report it as uncovered`,
+      ).toEqual([input]);
+    }
+
+    // Structural backstop, kept from the previous cycle and WIDENED: no
+    // exception-shaped constant may be declared under any casing or wording.
+    // This is now a supplement to the behavioural check above, not the whole
+    // defence — which is what made a rename sufficient to defeat it.
+    const self = readFileSync(SELF, 'utf8');
+    const suspicious = [
+      ...self.matchAll(
+        /^\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=/gm,
+      ),
+    ]
+      .map((m) => m[1]!)
+      .filter((name) =>
+        /(?:KNOWN|ACCEPTED|ALLOWED|EXPECTED|TOLERATED|IGNORED|SKIP|EXEMPT|WAIVED|DEBT|EXCLUDE|EXCEPTION)/i.test(
+          name,
+        ),
+      );
+    expect(
+      suspicious,
+      'no accepted-gap / exception-shaped constant may be declared in this suite',
+    ).toEqual([]);
+  });
+
+  it('R3: the workflow trigger set has no decorative entries and no removed step', () => {
+    // The "removed trigger path" mutation, stated over the REQUIRED floor so it
+    // cannot weaken alongside the declaration. Each required input must lose
+    // coverage when its glob goes.
+    const globs = workflowPathFilters();
+    for (const path of [...REQUIRED_TREE_ROOTS, ...REQUIRED_NAMED_INPUTS]) {
+      const covering = globs.filter((g) => isCovered(path, [g]));
+      const without = globs.filter((g) => !covering.includes(g));
+      expect(
+        isCovered(path, without),
+        `${path} must be uncovered once its trigger(s) ${covering.join(', ')} are removed`,
+      ).toBe(false);
+    }
+
+    // And the substantive proof steps must all still be present, checked here
+    // as well as below so a removed step fails inside the R3 contract too.
+    const text = readWorkflow();
+    for (const step of [
+      'npm ci',
+      'npm run build',
+      'npm run typecheck',
+      'npm test',
+      'npm run control-plane:validate',
+      'npm run control-plane:test',
+      'npm run phase-50a:test',
+      'npm run phase-50a:proof',
+      'npm run phase-50a:verify-artifact',
+    ]) {
+      expect(text, `workflow must run: ${step}`).toContain(step);
     }
   });
 

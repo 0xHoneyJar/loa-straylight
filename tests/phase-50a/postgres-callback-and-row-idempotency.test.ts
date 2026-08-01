@@ -28,6 +28,11 @@
 // so the value was treated as a synchronous result and COMMITTED. Both are in
 // the Promise-like suite below.
 
+import { spawnSync } from 'node:child_process';
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { EstateStore, InMemoryStorage, type StorageAdapter } from '../../src/straylight/index.js';
@@ -55,6 +60,9 @@ import {
 const NOW = '2026-05-05T12:00:00Z';
 const ESTATE_ID = loadEstate().estate_id;
 const OTHER_ESTATE_ID = 'estate:wrong-promoted-column';
+
+/** Repository root, for the structural shared-column-set guard (R2). */
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
 phase50aGateReport('postgres-callback-and-row-idempotency');
 
@@ -382,9 +390,13 @@ maybe('Phase 50A patch — a Promise-like callback is refused before any durable
     );
     expect(caught).toMatchObject({ reason: 'async_callback_unsupported' });
     expect(caught).not.toBe(getterError);
-    // The getter's message survives as bounded DETAIL, so an operator can see
-    // why the value was undecidable.
-    expect(String((caught as Error).message)).toContain('getter throws immediately');
+    // (a2) REDACTION. The getter's exception does not cross the public error
+    // boundary at all: not its message, not its stack, not its cause, not its
+    // identity. The previous expectation here REQUIRED the message to survive
+    // as "bounded detail", which is precisely the leak this remediation closes
+    // — caller-supplied error text was published through the store's own error.
+    // See `assertBoundedGetterRefusal` for the full assertion.
+    assertBoundedGetterRefusal(caught, getterError, 'getter throws immediately');
 
     // (b) EXACTLY ONE getter access. The refusal path must not re-read the
     // property — a second access is the patch-cycle-2 defect, and here it would
@@ -398,6 +410,182 @@ maybe('Phase 50A patch — a Promise-like callback is refused before any durable
 
     // (d) No unhandled rejection. Nothing was captured, so nothing was ever
     // scheduled to settle — the absence must be real, not incidental.
+    expect(unhandled).toEqual([]);
+  });
+
+  // ── rejection-remediation R1 — the bounded public error boundary ────────
+  //
+  // The rejected implementation formatted the getter's exception into the
+  // public `PostgresUnavailableError` via `describe()`. Two defects followed:
+  //
+  //   (1) LEAK — an ordinary Error's message (caller-supplied text, and with
+  //       it anything the caller chose to put there) was published through the
+  //       store's own error surface.
+  //   (2) ESCAPE — `describe()` calls `String(err)` for a non-Error, so a value
+  //       whose conversion-to-string itself THROWS made `describe()` throw at
+  //       the refusal site. `classify()` then called `describe()` again on that
+  //       exception, and the ORIGINAL object reached the caller in place of the
+  //       bounded refusal (Codex: caughtIsGetterException=true,
+  //       caughtIsBoundedError=false).
+  //
+  // The correction carries nothing out of the failed read at all. These tests
+  // pin BOTH the behavioural guarantees (single read, rollback, invalidation,
+  // no unhandled rejection) and the redaction.
+
+  it('R1: a getter exception whose STRINGIFICATION throws still yields the bounded error', async () => {
+    // The exact escape shape. `String(value)` throws for this object, so any
+    // implementation that formats the caught exception fails INSIDE its own
+    // refusal path — and the original object escapes instead of the bounded
+    // error. Nothing may be stringified, so nothing can throw.
+    let accesses = 0;
+    let toStringCalls = 0;
+    const unstringifiable = {
+      get message(): string {
+        throw new Error('message getter also throws');
+      },
+      toString(): string {
+        toStringCalls += 1;
+        throw new Error('toString throws');
+      },
+      [Symbol.toPrimitive](): string {
+        toStringCalls += 1;
+        throw new Error('toPrimitive throws');
+      },
+    };
+    const hostile = {
+      get then(): never {
+        accesses += 1;
+        throw unstringifiable;
+      },
+    };
+
+    let caught: unknown;
+    try {
+      await db.host.withEstateSession(ESTATE_ID, (storage) => {
+        storage.upsertActor(loadActor());
+        return hostile;
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    // The BOUNDED error, not the unstringifiable object.
+    expect(caught, 'the original exception must not escape').not.toBe(unstringifiable);
+    expect(caught).toBeInstanceOf(PostgresUnavailableError);
+    expect(caught).toMatchObject({ reason: 'async_callback_unsupported' });
+    // The store never attempted to convert the value to a string.
+    expect(toStringCalls, 'the refusal must not stringify the caught value').toBe(0);
+    expect(accesses).toBe(1);
+
+    // Behavioural guarantees unchanged: rollback, nothing durable, no
+    // unhandled rejection.
+    await drainMicrotasks();
+    expect(await durableCounts(db)).toEqual(ZERO_ROWS);
+    expect(unhandled).toEqual([]);
+  });
+
+  it('R1: the getter error’s message, stack, and cause are all absent from the public error', async () => {
+    const probeText = 'CALLBACK-INTERNAL-DETAIL-c0ffee';
+    const inner = new Error('inner cause detail');
+    const getterError = new Error(probeText, { cause: inner });
+    let accesses = 0;
+
+    let caught: unknown;
+    try {
+      await db.host.withEstateSession(ESTATE_ID, (storage) => {
+        storage.upsertActor(loadActor());
+        return {
+          get then(): never {
+            accesses += 1;
+            throw getterError;
+          },
+        };
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    assertBoundedGetterRefusal(caught, getterError, probeText);
+    // The nested cause's text must not appear either.
+    const err = caught as Error;
+    expect(`${err.message}${err.stack ?? ''}`).not.toContain('inner cause detail');
+    expect(accesses).toBe(1);
+
+    await drainMicrotasks();
+    expect(await durableCounts(db)).toEqual(ZERO_ROWS);
+    expect(unhandled).toEqual([]);
+  });
+
+  it('R1: a getter throwing a non-Error (string, symbol-bearing object) is refused without leaking it', async () => {
+    // `describe()` fell back to `String(err)` for non-Errors, so a primitive
+    // payload was published verbatim. Nothing is reported now, for any shape.
+    for (const payload of ['RAW-STRING-LEAK-abc123', 12345, { marker: 'OBJ-LEAK-xyz789' }]) {
+      const fresh = await openScratchDatabase(sourceHost(), 'r1-nonerror');
+      try {
+        let caught: unknown;
+        try {
+          await fresh.host.withEstateSession(ESTATE_ID, (storage) => {
+            storage.upsertActor(loadActor());
+            return {
+              get then(): never {
+                throw payload;
+              },
+            };
+          });
+        } catch (err) {
+          caught = err;
+        }
+        expect(caught).toBeInstanceOf(PostgresUnavailableError);
+        expect(caught).toMatchObject({ reason: 'async_callback_unsupported' });
+        expect(caught).not.toBe(payload);
+        const text = `${(caught as Error).message}${(caught as Error).stack ?? ''}`;
+        for (const fragment of ['RAW-STRING-LEAK-abc123', 'OBJ-LEAK-xyz789', '12345']) {
+          expect(text).not.toContain(fragment);
+        }
+        expect(await durableCounts(fresh)).toEqual(ZERO_ROWS);
+      } finally {
+        await fresh.dispose();
+      }
+    }
+    await drainMicrotasks();
+    expect(unhandled).toEqual([]);
+  });
+
+  it('R1: the refusal happens BEFORE close, persistence, and COMMIT — proven by ordering', async () => {
+    // The refusal point is a behavioural claim, not a code-reading claim: if it
+    // happened after `session.close()` the escaped session's failure mode would
+    // differ, and if it happened after `persistDelta` a row would be durable.
+    // Assert the observable consequences of the ordering.
+    const escaped: { storage?: StorageAdapter } = {};
+    let caught: unknown;
+    try {
+      await db.host.withEstateSession(ESTATE_ID, (storage) => {
+        escaped.storage = storage;
+        storage.upsertActor(loadActor());
+        storage.upsertEstate(loadEstate());
+        return {
+          get then(): never {
+            throw new Error('ordering probe');
+          },
+        };
+      });
+    } catch (err) {
+      caught = err;
+    }
+
+    expect(caught).toMatchObject({ reason: 'async_callback_unsupported' });
+    // Nothing persisted: the refusal preceded persistDelta and COMMIT.
+    await drainMicrotasks();
+    expect(await durableCounts(db)).toEqual(ZERO_ROWS);
+    // The session was INVALIDATED (abandon), so it reports the closed reason
+    // rather than having produced a delta through `close()`.
+    let readErr: unknown;
+    try {
+      escaped.storage?.getActor(loadActor().actor_id);
+    } catch (err) {
+      readErr = err;
+    }
+    expect(readErr).toMatchObject({ reason: 'session_closed' });
     expect(unhandled).toEqual([]);
   });
 
@@ -984,6 +1172,280 @@ maybe('Phase 50A patch — immutable-record idempotency compares the complete du
     }
   });
 
+  // ── rejection-remediation R2 — the loaded-prefix classifier ─────────────
+  //
+  // The rejected implementation's `classifyExistingAppend` compared ONLY
+  // `canonicalPayload`. It ran before any position was claimed and had no
+  // notion of the position the append would occupy, so a row in the LOADED
+  // PREFIX carrying the same immutable id and the same payload was counted
+  // idempotent regardless of its promoted `append_position`. Codex's exact
+  // observation: a dense prefix with a filler at position 1 and the target
+  // id/payload at position 2 returned `committed: true` with
+  // `{inserted: 0, idempotent: 1}` — convergence claimed on a row that is not
+  // the row the caller offered, contradicting the complete-durable-row equality
+  // contract the proof document states (§5).
+  //
+  // The correction compares the COMPLETE durable row, including the append
+  // position the offer claims. `persist.ts` already did this against the LIVE
+  // database row; the two classifiers now agree on what makes two rows the same
+  // row, and the structural test below pins that agreement.
+
+  it('R2: DENSE-PREFIX position mismatch is a conflict, not idempotency (exact Codex case)', async () => {
+    // Two distinct admissions. The FILLER occupies position 1; the TARGET's
+    // id/payload is planted at position 2. The prefix is DENSE, so the
+    // load-time guard passes and the classifier is genuinely reached — this is
+    // what distinguishes the defect from the already-proven prefix-movement
+    // case.
+    const target = captureAdmitRecords('r2 dense prefix target');
+    const filler = captureAdmitRecords('r2 dense prefix filler');
+    expect(target.transition.transition_id).not.toBe(filler.transition.transition_id);
+
+    const probe = await openScratchDatabase(sourceHost(), 'r2-dense-prefix');
+    try {
+      await probe.host.withClient(async (client) => {
+        await client.query(
+          `INSERT INTO estate_transitions (transition_id, estate_id, append_position, payload)
+           VALUES ($1, $2, 1, $3::jsonb)`,
+          [filler.transition.transition_id, ESTATE_ID, canonicalPayload(filler.transition)],
+        );
+        await client.query(
+          `INSERT INTO estate_transitions (transition_id, estate_id, append_position, payload)
+           VALUES ($1, $2, 2, $3::jsonb)`,
+          [target.transition.transition_id, ESTATE_ID, canonicalPayload(target.transition)],
+        );
+      });
+
+      // Offering the TARGET first makes it the 1st append of this session while
+      // the durable row sits at position 2. Under the defect this reported
+      // committed=true, {inserted:0, idempotent:1}.
+      let caught: unknown;
+      let outcome: unknown;
+      try {
+        outcome = await probe.host.withEstateSession(ESTATE_ID, (storage) => {
+          storage.appendTransition(target.transition);
+          return 'offered';
+        });
+      } catch (err) {
+        caught = err;
+      }
+
+      expect(outcome, 'the mismatched offer must NOT be reported as committed').toBeUndefined();
+      expect(caught).toBeInstanceOf(PostgresIntegrityError);
+      expect(caught).toMatchObject({ reason: 'immutable_id_conflict' });
+      // The refusal names the PROMOTED column that differs — the payload is
+      // byte-identical here, so a payload-only comparison could not have found
+      // anything to report.
+      expect(String((caught as Error).message)).toContain('append_position');
+
+      // ZERO partial durability: both planted rows unchanged, nothing added,
+      // and nothing else from the refused session persisted.
+      const after = await probe.host.withClient(async (client) => {
+        const rows = await client.query<{ transition_id: string; p: string }>(
+          `SELECT transition_id, append_position::text AS p
+             FROM estate_transitions ORDER BY append_position ASC`,
+        );
+        const others = await client.query<{ audits: string; assertions: string; receipts: string }>(
+          `SELECT (SELECT count(*)::text FROM audit_events)        AS audits,
+                  (SELECT count(*)::text FROM estate_assertions)   AS assertions,
+                  (SELECT count(*)::text FROM transition_receipts) AS receipts`,
+        );
+        return { rows: rows.rows, others: others.rows[0] };
+      });
+      expect(after.rows).toEqual([
+        { transition_id: filler.transition.transition_id, p: '1' },
+        { transition_id: target.transition.transition_id, p: '2' },
+      ]);
+      expect(after.others).toEqual({ audits: '0', assertions: '0', receipts: '0' });
+    } finally {
+      await probe.dispose();
+    }
+  });
+
+  it('R2: a FAITHFUL replay of a dense prefix still converges (the correction is not a blanket refusal)', async () => {
+    // The companion boundary. Re-offering the SAME records in the SAME order
+    // meets each durable row at the position it claims, so every append
+    // converges. Without this, "compare the position too" would break every
+    // legitimate retry — which is exactly what a too-strict reading does.
+    const first = captureAdmitRecords('r2 faithful replay one');
+    const probe = await openScratchDatabase(sourceHost(), 'r2-faithful');
+    try {
+      const a = await probe.host.withEstateSession(ESTATE_ID, (storage) => {
+        replayAdmitRecords(storage, first);
+      });
+      expect(a.committed).toBe(true);
+      expect(a.persisted.inserted).toBeGreaterThan(0);
+
+      const b = await probe.host.withEstateSession(ESTATE_ID, (storage) => {
+        replayAdmitRecords(storage, first);
+      });
+      expect(b.committed).toBe(true);
+      expect(b.persisted.inserted).toBe(0);
+      expect(b.persisted.idempotent).toBe(a.persisted.inserted);
+
+      // Still exactly one durable row of each append-only kind.
+      const counts = await probe.host.withClient(async (client) => {
+        const r = await client.query<{ t: string; au: string; tr: string }>(
+          `SELECT (SELECT count(*)::text FROM estate_transitions)  AS t,
+                  (SELECT count(*)::text FROM audit_events)        AS au,
+                  (SELECT count(*)::text FROM transition_receipts) AS tr`,
+        );
+        return r.rows[0];
+      });
+      expect(counts).toEqual({ t: '1', au: '1', tr: '1' });
+    } finally {
+      await probe.dispose();
+    }
+  });
+
+  it('R2: the session classifier and persist.ts compare the SAME durable column set', async () => {
+    // A STRUCTURAL guard, because the two classifiers cannot share code: only
+    // `session.ts` is in this remediation's authorized scope, and `persist.ts`
+    // is byte-unchanged. The defect was precisely that the two disagreed about
+    // what makes two rows the same row — the live one compared the complete row
+    // while the in-session one compared the payload alone. This test fails if
+    // either side's column set changes without the other.
+    const sessionSrc = readFileSync(
+      resolve(REPO_ROOT, 'src/straylight/storage/postgres/session.ts'),
+      'utf8',
+    );
+    const persistSrc = readFileSync(
+      resolve(REPO_ROOT, 'src/straylight/storage/postgres/persist.ts'),
+      'utf8',
+    );
+
+    // Every promoted column persist.ts binds for the audit-event INSERT (its
+    // widest row) must appear in the session's comparison basis.
+    for (const column of [
+      'estate_id',
+      'append_position',
+      'audit_hash',
+      'previous_audit_hash',
+      'previous_audit_hash_key',
+      'payload',
+    ]) {
+      expect(persistSrc, `persist.ts must bind ${column}`).toContain(`${column}:`);
+      expect(sessionSrc, `session.ts must compare ${column}`).toContain(column);
+    }
+
+    // The session classifier must NOT reach its decision by comparing the two
+    // canonical payloads DIRECTLY, under any spelling. Banning one `if (...)`
+    // shape is not enough — the rejected comparison can be rewritten as a
+    // ternary, a variable, or an early return. What is checked is that the two
+    // payloads are never compared to each other anywhere in the file.
+    expect(
+      sessionSrc,
+      'the classifier must not decide on a direct payload-to-payload comparison',
+    ).not.toMatch(
+      /canonicalPayload\([^)]*\)\s*(?:===|!==|==|!=)\s*canonicalPayload\(/,
+    );
+
+    // The classification must be DERIVED from the complete-row comparison. The
+    // body of `classifyExistingAppend` is extracted and inspected, so a helper
+    // that merely exists elsewhere in the file cannot satisfy this.
+    const body = extractFunctionBody(sessionSrc, 'classifyExistingAppend');
+    expect(body, 'classifyExistingAppend must build the existing durable row').toMatch(
+      /durableRowOf\(\s*row\.estate_id\s*,\s*row\.append_position\s*,\s*row\.record\s*\)/,
+    );
+    expect(body, 'classifyExistingAppend must build the offered durable row').toMatch(
+      /durableRowOf\(\s*estate_id\s*,\s*offeredPosition\s*,\s*incoming\s*\)/,
+    );
+    expect(body, 'the decision must come from the complete-row mismatch').toMatch(
+      /firstDurableMismatch\(/,
+    );
+    // The idempotent branch must be gated on "no mismatch", not on anything
+    // weaker.
+    expect(body).toMatch(/mismatch\s*===\s*null/);
+    // Every caller must supply a real offered position, not a constant. Four
+    // append-only writers exist, and each must pass an `offerPosition(...)`
+    // call — a hardcoded literal would make the position check vacuous.
+    const offers = [...sessionSrc.matchAll(/this\.offerPosition\(\s*this\.offered\w+\s*,/g)];
+    expect(offers, 'every append-only writer must offer a counted position').toHaveLength(4);
+    // And the comparison must include the position column itself.
+    const rowBuilder = extractFunctionBody(sessionSrc, 'durableRowOf');
+    for (const column of ['estate_id', 'append_position', 'payload']) {
+      expect(rowBuilder, `durableRowOf must promote ${column}`).toContain(column);
+    }
+    expect(rowBuilder, 'durableRowOf must promote the audit chain columns').toMatch(
+      /previous_audit_hash_key/,
+    );
+
+    // Behavioural half of the same claim: the two classifiers agree that a
+    // same-payload row under a DIFFERENT estate is a conflict. (The live
+    // classifier's path — the planted row is invisible to this estate's
+    // snapshot, so the collision surfaces at INSERT time.)
+    const captured = captureAdmitRecords('r2 shared basis');
+    const probe = await openScratchDatabase(sourceHost(), 'r2-shared-basis');
+    try {
+      await probe.host.withClient(async (client) => {
+        await client.query(
+          `INSERT INTO estate_transitions (transition_id, estate_id, append_position, payload)
+           VALUES ($1, $2, 1, $3::jsonb)`,
+          [captured.transition.transition_id, OTHER_ESTATE_ID, canonicalPayload(captured.transition)],
+        );
+      });
+      await expect(
+        probe.host.withEstateSession(ESTATE_ID, (storage) => {
+          replayAdmitRecords(storage, captured);
+        }),
+      ).rejects.toMatchObject({ reason: 'immutable_id_conflict' });
+    } finally {
+      await probe.dispose();
+    }
+  });
+
+  it('R2: an audit event whose PROMOTED CHAIN columns differ is a conflict, not idempotency', async () => {
+    // The audit table is the widest durable row: identity, placement, and the
+    // chain columns. A same-id, same-payload row whose normalized parent key
+    // differs is a different durable row. Planted under a different estate so
+    // the collision reaches the classifier rather than the load-time guard.
+    const captured = captureAdmitRecords('r2 chain columns');
+    const event = captured.auditEvents[0];
+    expect(event, 'the capture must contain an audit event').toBeDefined();
+
+    const probe = await openScratchDatabase(sourceHost(), 'r2-chain-cols');
+    try {
+      await probe.host.withClient(async (client) => {
+        await client.query(
+          `INSERT INTO audit_events
+             (audit_event_id, estate_id, append_position, audit_hash,
+              previous_audit_hash, previous_audit_hash_key, payload)
+           VALUES ($1, $2, 1, $3, $4, $5, $6::jsonb)`,
+          [
+            event!.audit_event_id,
+            OTHER_ESTATE_ID,
+            event!.audit_hash,
+            null,
+            '',
+            canonicalPayload(event),
+          ],
+        );
+      });
+
+      let caught: unknown;
+      try {
+        await probe.host.withEstateSession(ESTATE_ID, (storage) => {
+          replayAdmitRecords(storage, captured);
+        });
+      } catch (err) {
+        caught = err;
+      }
+      expect(caught).toBeInstanceOf(PostgresIntegrityError);
+      expect(caught).toMatchObject({ reason: 'immutable_id_conflict' });
+
+      // Nothing from the refused session is durable.
+      const after = await probe.host.withClient(async (client) => {
+        const r = await client.query<{ audits: string; transitions: string }>(
+          `SELECT (SELECT count(*)::text FROM audit_events)       AS audits,
+                  (SELECT count(*)::text FROM estate_transitions) AS transitions`,
+        );
+        return r.rows[0];
+      });
+      expect(after).toEqual({ audits: '1', transitions: '0' });
+    } finally {
+      await probe.dispose();
+    }
+  });
+
   it('an existing row with the same id but a DIFFERENT payload is still refused (unchanged behaviour)', async () => {
     const { captured, transition } = await seedOneAdmission();
     const probe = await openScratchDatabase(sourceHost(), 'probe-payload');
@@ -1046,6 +1508,268 @@ maybe('Phase 50A patch — immutable-record idempotency compares the complete du
     }
   });
 });
+
+// ── rejection-remediation R4 — the exhaustiveness barrier ──────────────
+//
+// The rejected implementation dispatched `ThenReadOutcome` through two
+// independent `if` statements and treated every remaining variant as
+// "not-thenable". Adding a fourth variant therefore passed `npm run typecheck`
+// and could fall through to `session.close()`, `persistDelta`, and COMMIT — so
+// the implementation report's claim of a compile-time barrier was unsupported.
+//
+// This suite is UNGATED (no database) and proves the barrier MECHANICALLY: it
+// copies the source tree to a temporary directory, adds a fourth variant, and
+// runs the real compiler. A documented intention would not survive a
+// refactor; a failing typecheck does.
+
+describe('Phase 50A remediation R4 — the callback-inspection union has a REAL typecheck barrier', () => {
+  /**
+   * Typecheck a mutated copy of the repository's source tree.
+   *
+   * The copy is made outside the repository (`mkdtempSync` under the OS temp
+   * directory) so no mutation can ever be observed by another suite, by the
+   * package contract checks, or by git. `tsc` runs with the project's own
+   * strictness flags — a barrier that only holds under different settings would
+   * not be the barrier `npm run typecheck` enforces.
+   */
+  function typecheckWithMutatedHost(mutate: (source: string) => string): {
+    ok: boolean;
+    output: string;
+  } {
+    // The copy lives in a uniquely-named directory INSIDE the repository, and
+    // is removed in `finally`. Inside is required, not incidental: ordinary
+    // Node module resolution walks upward to find `node_modules`, so a copy
+    // under the OS temp directory cannot resolve `pg` or the private
+    // `@0xhoneyjar/loa-hounfour` dependency and every mutation would appear to
+    // "fail typecheck" for the wrong reason. `mkdtempSync` guarantees the name
+    // is unique, the directory is git-ignored by its prefix being untracked and
+    // removed, and the `no-leak` tree-root scan does not see it because it
+    // exists only for the duration of one test.
+    const dir = mkdtempSync(join(REPO_ROOT, '.r4-typecheck-probe-'));
+    try {
+      cpSync(resolve(REPO_ROOT, 'src'), join(dir, 'src'), { recursive: true });
+      const hostPath = join(dir, 'src/straylight/storage/postgres/host.ts');
+      const original = readFileSync(hostPath, 'utf8');
+      const mutated = mutate(original);
+      expect(mutated, 'the mutation must actually change the source').not.toBe(original);
+      writeFileSync(hostPath, mutated);
+
+      // Same compiler options as `npm run typecheck`, minus the test/script
+      // includes (only `src` is copied).
+      writeFileSync(
+        join(dir, 'tsconfig.json'),
+        JSON.stringify({
+          compilerOptions: {
+            target: 'ES2022',
+            module: 'ESNext',
+            moduleResolution: 'Bundler',
+            lib: ['ES2022'],
+            types: ['node'],
+            strict: true,
+            noImplicitOverride: true,
+            noUncheckedIndexedAccess: true,
+            exactOptionalPropertyTypes: false,
+            noFallthroughCasesInSwitch: true,
+            noImplicitReturns: true,
+            isolatedModules: true,
+            esModuleInterop: true,
+            resolveJsonModule: true,
+            skipLibCheck: true,
+            noEmit: true,
+            // Bare specifiers (`pg`, the private `@0xhoneyjar/loa-hounfour`)
+            // resolve by ordinary upward `node_modules` lookup from the probe
+            // directory, which is why it lives inside the repository. The
+            // baseline test above proves that resolution genuinely works —
+            // without it every mutation would "fail typecheck" for the wrong
+            // reason and the barrier would be unproven.
+            baseUrl: '.',
+            paths: { '@straylight/*': ['src/straylight/*'] },
+          },
+          include: ['src/**/*.ts'],
+        }),
+      );
+
+      const run = spawnSync(
+        process.execPath,
+        [resolve(REPO_ROOT, 'node_modules/typescript/bin/tsc'), '-p', join(dir, 'tsconfig.json')],
+        { encoding: 'utf8', cwd: dir },
+      );
+      return {
+        ok: run.status === 0,
+        output: `${run.stdout ?? ''}${run.stderr ?? ''}`,
+      };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  /** Sanity: the UNMUTATED tree typechecks, so a failure below means something. */
+  it('the unmutated source typechecks (the harness is not failing for its own reasons)', () => {
+    const result = typecheckWithMutatedHost((source) =>
+      // A no-op-but-different mutation: a comment. Proves the copy + compiler
+      // harness is sound before any real mutation is trusted.
+      `${source}\n// r4 harness sanity probe\n`,
+    );
+    expect(result.ok, `baseline typecheck must succeed:\n${result.output}`).toBe(true);
+  }, 120_000);
+
+  it('R4: adding an UNHANDLED fourth variant FAILS typecheck', () => {
+    const result = typecheckWithMutatedHost((source) => {
+      const anchor = "  | { kind: 'unreadable' };";
+      expect(source, 'the union must be declared in its expected shape').toContain(anchor);
+      return source.replace(
+        anchor,
+        "  | { kind: 'unreadable' }\n  | { kind: 'r4-probe-unhandled-variant' };",
+      );
+    });
+    expect(
+      result.ok,
+      'a fourth ThenReadOutcome variant must FAIL typecheck; it compiled instead',
+    ).toBe(false);
+    // And it must fail AT THE BARRIER, naming the never-assignment — not for an
+    // incidental unrelated reason.
+    expect(result.output).toMatch(/not assignable to parameter of type 'never'/);
+    expect(result.output).toContain('r4-probe-unhandled-variant');
+  }, 120_000);
+
+  it('R4: the barrier is what fails — removing the assertNever default makes the same mutation COMPILE', () => {
+    // The positive control that makes the previous test meaningful. If the
+    // fourth variant failed for some reason other than the exhaustiveness
+    // barrier, it would still fail with the barrier removed. It must not.
+    const result = typecheckWithMutatedHost((source) => {
+      const withVariant = source.replace(
+        "  | { kind: 'unreadable' };",
+        "  | { kind: 'unreadable' }\n  | { kind: 'r4-probe-unhandled-variant' };",
+      );
+      // Replace the total switch dispatch with the REJECTED two-if shape.
+      const start = withVariant.indexOf('      switch (outcome.kind) {');
+      const end = withVariant.indexOf('      const delta = session.close();');
+      expect(start, 'the switch dispatch must be present').toBeGreaterThan(-1);
+      expect(end).toBeGreaterThan(start);
+      const rejectedShape =
+        "      if (outcome.kind === 'thenable') {\n" +
+        '        session.abandon();\n' +
+        '        session = undefined;\n' +
+        '        absorbSettlement(outcome.captured);\n' +
+        "        throw new PostgresUnavailableError('async_callback_unsupported', 'thenable');\n" +
+        '      }\n' +
+        "      if (outcome.kind === 'unreadable') {\n" +
+        '        session.abandon();\n' +
+        '        session = undefined;\n' +
+        "        throw new PostgresUnavailableError('async_callback_unsupported', 'unreadable');\n" +
+        '      }\n\n';
+      return withVariant.slice(0, start) + rejectedShape + withVariant.slice(end);
+    });
+    expect(
+      result.ok,
+      'the REJECTED two-if shape must accept a fourth variant — that is the defect R4 closes:\n' +
+        result.output,
+    ).toBe(true);
+  }, 120_000);
+
+  it('R4: no callback-inspection variant can reach the commit path without an explicit arm', () => {
+    // Structural companion to the compiler proof: the dispatch must be a total
+    // `switch` guarded by `assertNever`, and `assertNever`'s parameter must be
+    // `never` (an `unknown` parameter would compile with any variant and be no
+    // barrier at all).
+    const source = readFileSync(
+      resolve(REPO_ROOT, 'src/straylight/storage/postgres/host.ts'),
+      'utf8',
+    );
+    expect(source).toMatch(/switch\s*\(\s*outcome\.kind\s*\)/);
+    expect(source).toMatch(/default:\s*(?:\/\/[^\n]*\n\s*)*return assertNever\(outcome\)/);
+    expect(source).toMatch(/function assertNever\(\s*value:\s*never\s*\)\s*:\s*never/);
+    // The union's three arms are each handled explicitly.
+    for (const arm of ["case 'thenable'", "case 'unreadable'", "case 'not-thenable'"]) {
+      expect(source, `${arm} must be handled explicitly`).toContain(arm);
+    }
+    // And only the proven-non-thenable arm continues; the others throw.
+    const dispatch = source.slice(
+      source.indexOf('switch (outcome.kind) {'),
+      source.indexOf('const delta = session.close();'),
+    );
+    expect(dispatch).toContain("case 'not-thenable':\n          break;");
+    expect((dispatch.match(/throw new PostgresUnavailableError\(/g) ?? []).length).toBe(2);
+  });
+});
+
+// ── structural helpers ─────────────────────────────────────────────────
+
+/**
+ * The body of one named function/method, by brace matching from its signature.
+ *
+ * Structural assertions must inspect the code that actually MAKES a decision,
+ * not merely the file that contains a helper of the right name. Brace matching
+ * (rather than a line window) means a body cannot slip out of the inspected
+ * region by growing.
+ */
+function extractFunctionBody(source: string, name: string): string {
+  // Match the DECLARATION, not a call site: a top-level `function name(` or a
+  // class member (`private name<T>(`, `name(`) at the start of a line. Anchoring
+  // to line start excludes `this.name(` and `= name(` uses, which would
+  // otherwise make the extraction inspect the wrong region entirely.
+  const signature = new RegExp(
+    `^\\s*(?:export\\s+)?(?:function\\s+${name}\\b|` +
+      `(?:private\\s+|public\\s+|protected\\s+|readonly\\s+|static\\s+)*${name}\\s*(?:<[^>]*>)?\\s*\\()`,
+    'm',
+  );
+  const found = signature.exec(source);
+  if (found === null) throw new Error(`function ${name} not declared (it must not be renamed)`);
+  const at = found.index;
+  const open = source.indexOf('{', at);
+  if (open === -1) throw new Error(`function ${name} has no body`);
+  let depth = 0;
+  for (let i = open; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) return source.slice(open, i + 1);
+    }
+  }
+  throw new Error(`function ${name} body is unterminated`);
+}
+
+// ── R1 redaction assertion ─────────────────────────────────────────────
+
+/**
+ * The complete bounded-error contract for a refused `then` read.
+ *
+ * The refusal must be the store's OWN error, and NOTHING of the caller's
+ * exception may cross the boundary: not the object, not its message, not its
+ * stack, not its cause, and not any nested `cause` chain. Asserted as one
+ * helper because every getter-refusal test owes the same guarantee, and a
+ * per-test spot check is how the previous cycle came to assert the opposite
+ * (that the getter's message was preserved).
+ */
+function assertBoundedGetterRefusal(
+  caught: unknown,
+  original: unknown,
+  secret: string,
+): void {
+  expect(caught).toBeInstanceOf(PostgresUnavailableError);
+  expect(caught).toMatchObject({ reason: 'async_callback_unsupported' });
+  // Not the original object, and not merely a copy of it.
+  expect(caught).not.toBe(original);
+  const err = caught as Error & { cause?: unknown; detail?: string };
+  // No `cause` chain smuggling the original through.
+  expect(err.cause, 'the refusal must not carry the original error as `cause`').toBeUndefined();
+  // The secret text appears NOWHERE in the public surface: message, detail,
+  // stack, or any enumerable own property.
+  const surfaces = [
+    err.message,
+    err.detail ?? '',
+    err.stack ?? '',
+    JSON.stringify(Object.getOwnPropertyNames(err).map((k) => String((err as never)[k]))),
+  ];
+  for (const surface of surfaces) {
+    expect(surface, 'the getter error must not leak through the public boundary').not.toContain(
+      secret,
+    );
+  }
+  // And the refusal states the fixed reason a caller matches on.
+  expect(err.message).toContain('async_callback_unsupported');
+}
 
 // ── row shapes ─────────────────────────────────────────────────────────
 

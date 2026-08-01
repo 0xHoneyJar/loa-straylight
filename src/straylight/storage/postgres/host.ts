@@ -167,37 +167,61 @@ export class PostgresEstateHost {
       // is deliberately no third disposition: an inspection that fails is a
       // refusal, never a synchronous success.
       const outcome = captureThen(value);
-      if (outcome.kind === 'thenable') {
-        session.abandon();
-        session = undefined;
-        absorbSettlement(outcome.captured);
-        throw new PostgresUnavailableError(
-          'async_callback_unsupported',
-          'withEstateSession requires a SYNCHRONOUS callback; the callback returned a ' +
-            'Promise-like value, so the session was invalidated and the transaction ' +
-            'rolled back without persisting anything',
-        );
-      }
-      if (outcome.kind === 'unreadable') {
-        // The `then` getter threw on its only access, so whether this value is
-        // Promise-like is UNDECIDABLE. Refuse on the same path and at the same
-        // point as a thenable: invalidate the session first, then throw into
-        // the catch below, which ROLLBACKs. Nothing is absorbed because nothing
-        // was captured or scheduled.
-        //
-        // The getter's own error is REPORTED as bounded detail, never
-        // propagated: `describe` reduces it to a message string, so an
-        // adversarial getter cannot substitute its own error class for the
-        // store's refusal, and callers keep a single reason to match on.
-        session.abandon();
-        session = undefined;
-        throw new PostgresUnavailableError(
-          'async_callback_unsupported',
-          'withEstateSession could not determine whether the callback\'s return value ' +
-            'was Promise-like: reading its `then` property threw, so the value was ' +
-            'refused as undecidable. The session was invalidated and the transaction ' +
-            `rolled back without persisting anything. Getter error: ${describe(outcome.error)}`,
-        );
+      // TOTAL dispatch over `ThenReadOutcome`. A `switch` with an
+      // `assertNever` default rather than a sequence of `if`s: the default
+      // arm's parameter is `never`, so a FOURTH variant added to the union
+      // stops compiling here (`npm run typecheck` fails) instead of silently
+      // falling through to `session.close()`, `persistDelta`, and COMMIT the
+      // way an unmatched `if` chain would. Only `not-thenable` — a value
+      // PROVEN non-thenable — leaves this switch and reaches the commit path;
+      // every other arm throws.
+      switch (outcome.kind) {
+        case 'thenable': {
+          session.abandon();
+          session = undefined;
+          absorbSettlement(outcome.captured);
+          throw new PostgresUnavailableError(
+            'async_callback_unsupported',
+            'withEstateSession requires a SYNCHRONOUS callback; the callback returned a ' +
+              'Promise-like value, so the session was invalidated and the transaction ' +
+              'rolled back without persisting anything',
+          );
+        }
+        case 'unreadable': {
+          // The `then` getter threw on its only access, so whether this value
+          // is Promise-like is UNDECIDABLE. Refuse on the same path and at the
+          // same point as a thenable: invalidate the session first, then throw
+          // into the catch below, which ROLLBACKs. Nothing is absorbed because
+          // nothing was captured or scheduled.
+          //
+          // NOTHING of the getter's own exception crosses this boundary. The
+          // refusal message is a FIXED string: no message, no stack, no cause,
+          // no identity, and no stringification of the caller's value appears
+          // in it — `captureThen` does not even carry the exception out of its
+          // catch, so there is nothing here to leak. The previous shape
+          // interpolated `describe(outcome.error)`, which (a) published an
+          // adversarial getter's message through the store's public error and
+          // (b) let a value whose own conversion-to-string throws escape this
+          // frame entirely, so the ORIGINAL object reached the caller in place
+          // of the bounded refusal. A single bounded reason is the whole
+          // contract callers match on.
+          session.abandon();
+          session = undefined;
+          throw new PostgresUnavailableError(
+            'async_callback_unsupported',
+            'withEstateSession could not determine whether the callback\'s return value ' +
+              'was Promise-like: reading its `then` property threw, so the value was ' +
+              'refused as undecidable. The session was invalidated and the transaction ' +
+              'rolled back without persisting anything. The inspection error is ' +
+              'deliberately not reported: it originates in caller-supplied code and is ' +
+              'not part of this store\'s error surface.',
+          );
+        }
+        case 'not-thenable':
+          break;
+        default:
+          // Unreachable today; a compile-time barrier tomorrow.
+          return assertNever(outcome);
       }
 
       const delta = session.close();
@@ -397,11 +421,24 @@ interface CapturedThenable {
  * A discriminated union rather than `CapturedThenable | null`: the previous
  * two-valued shape had no way to express "unreadable", which is precisely how
  * the getter-throws case came to be silently folded into success.
+ *
+ * `unreadable` deliberately carries NO payload. It used to carry the getter's
+ * exception so the refusal could quote it, which put caller-supplied error
+ * content — message, and potentially stack and cause — inside the store's
+ * public error, and made the refusal path depend on stringifying a hostile
+ * value (an operation that can itself throw and escape). The FACT that the
+ * single read failed is the entire decision-relevant content; there is no
+ * legitimate consumer of the exception itself, so it is not propagated out of
+ * `captureThen` at all. What is not carried cannot leak.
+ *
+ * Every arm is dispatched through a `switch` with an `assertNever` default
+ * (see `withEstateSession`), so adding a variant here is a TYPECHECK FAILURE
+ * at that dispatch rather than a silent fall-through toward COMMIT.
  */
 type ThenReadOutcome =
   | { kind: 'not-thenable' }
   | { kind: 'thenable'; captured: CapturedThenable }
-  | { kind: 'unreadable'; error: unknown };
+  | { kind: 'unreadable' };
 
 /**
  * Is this value Promise-like, and if so, what is its `then`? Returns
@@ -428,6 +465,11 @@ type ThenReadOutcome =
  * synchronous callback returning an ordinary value has no throwing `then`
  * getter.
  *
+ * The getter's exception is DISCARDED, not returned: `unreadable` carries no
+ * payload, so no part of a caller-supplied error (message, stack, cause,
+ * identity) can reach the store's public error, and the refusal path never
+ * stringifies a hostile value — an operation that can itself throw and escape.
+ *
  * Note that `receiver` is retained separately: `then` must be invoked with the
  * original value as its `this`, because a native Promise's `then` is a
  * prototype method that reads internal slots from its receiver. Calling a
@@ -441,14 +483,21 @@ function captureThen(value: unknown): ThenReadOutcome {
   let then: unknown;
   try {
     then = (receiver as { then?: unknown }).then;
-  } catch (err) {
+  } catch {
     // The `then` GETTER threw on its FIRST and ONLY access. Nothing was
     // captured and nothing was scheduled, so there is no settlement to absorb
     // — but thenability is now UNDECIDABLE and the value must be refused, not
-    // committed. The error is carried back for the refusal's detail only; it is
-    // never rethrown as-is, so a hostile getter cannot choose the error class
-    // the caller sees.
-    return { kind: 'unreadable', error: err };
+    // committed.
+    //
+    // The exception is DISCARDED here, not returned. Binding it would carry
+    // caller-supplied content (message, stack, cause, identity) to the refusal
+    // site, where quoting it published that content through the store's public
+    // error — and where merely converting it to a string could throw again and
+    // escape the frame, delivering the ORIGINAL object to the caller instead of
+    // the bounded refusal. Not capturing it removes both possibilities
+    // structurally: the caller learns that the single read failed, which is the
+    // whole decision, and learns nothing else.
+    return { kind: 'unreadable' };
   }
   if (typeof then !== 'function') return { kind: 'not-thenable' };
   return { kind: 'thenable', captured: { receiver, then: then as CapturedThenable['then'] } };
@@ -498,6 +547,52 @@ function absorbSettlement(captured: CapturedThenable): void {
     // A thenable whose `then` throws synchronously never scheduled anything,
     // so there is nothing left to absorb. The refusal stands.
   }
+}
+
+/**
+ * Compile-time totality barrier.
+ *
+ * Its parameter is `never`, so it type-checks ONLY where the compiler has
+ * proven no case remains. Adding a variant to a union dispatched through a
+ * `switch` whose `default` calls this function makes that call a type error
+ * (`Argument of type '{ kind: "..." }' is not assignable to parameter of type
+ * 'never'`), which fails `npm run typecheck`.
+ *
+ * This is a REAL barrier rather than a documented intention. The previous
+ * shape — two independent `if` statements, with every unmatched variant
+ * implicitly treated as "not thenable" — compiled cleanly with a fourth
+ * variant present and let it fall through to `session.close()`,
+ * `persistDelta`, and COMMIT. A callback-inspection union must never have a
+ * silent arm on the path to a durable write.
+ *
+ * The runtime `throw` is unreachable while the switch is exhaustive; it exists
+ * so a value arriving from untyped JavaScript still fails closed rather than
+ * returning `undefined` into a control-flow decision.
+ */
+function assertNever(value: never): never {
+  throw new PostgresUnavailableError(
+    'async_callback_unsupported',
+    'withEstateSession reached an unhandled callback-inspection outcome; refusing ' +
+      `rather than continuing toward COMMIT (kind: ${describeKind(value)})`,
+  );
+}
+
+/**
+ * The `kind` discriminant of an unhandled outcome, for the unreachable arm's
+ * message. Reads exactly one own property and never stringifies the value
+ * itself, so this diagnostic cannot become the leak the refusal above closes.
+ */
+function describeKind(value: unknown): string {
+  try {
+    if (typeof value === 'object' && value !== null && 'kind' in value) {
+      const kind = (value as { kind?: unknown }).kind;
+      if (typeof kind === 'string') return kind;
+    }
+  } catch {
+    // Even the discriminant read is guarded: a diagnostic must never be the
+    // reason a refusal fails to be thrown.
+  }
+  return '<unknown>';
 }
 
 function describe(err: unknown): string {
