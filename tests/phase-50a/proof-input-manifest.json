@@ -1,0 +1,61 @@
+{
+  "$schema_note": "Phase 50A R3 — the FIXED, CHECKED-IN manifest of the proof's input roots. This file is DATA, not code: it is the SINGLE declaration of every repository path whose content can change the Phase 50A no-leak / neutrality suite's verdict. The suite READS ITS INPUTS FROM HERE rather than restating them, so there is one declaration and nothing to extract from source. The coverage proof compares this manifest against a BOUNDED STRUCTURAL PARSE of the workflow's own trigger declaration; neither side is derived from the other. There is NO exception mechanism of any kind — not a renamed one, not an empty one. The required set of uncovered manifest inputs is EMPTY.",
+  "version": 1,
+  "roots": [
+    {
+      "path": "src/straylight",
+      "kind": "tree",
+      "why": "The whole Straylight source tree. A BROAD root rather than a named-file enumeration: it also covers files that do not exist yet, so it cannot be defeated by adding, renaming, or deleting a declaration. Subsumes the estate domain model, the public barrel, the storage adapters, and the PostgreSQL store."
+    },
+    {
+      "path": "migrations/postgres",
+      "kind": "tree",
+      "why": "The canonical schema. The neutrality suite asserts the migrations reference no provider-managed role, database, or extension, so their content changes its verdict."
+    },
+    {
+      "path": "scripts/phase-50a",
+      "kind": "tree",
+      "why": "The proof harness and the artifact/pruning scripts the suites read and execute."
+    },
+    {
+      "path": "tests/phase-50a",
+      "kind": "tree",
+      "why": "The proof suites themselves, INCLUDING this manifest and every file that consumes it. Self-coverage is required: a change to the coverage model must not be able to merge without running the proof."
+    },
+    {
+      "path": "docs/PHASE-50A-PROVIDER-NEUTRAL-POSTGRESQL-CANONICAL-STORE-IMPLEMENTATION-AND-PROOF.md",
+      "kind": "file",
+      "why": "The proof document. It is one of the two places permitted to cite the historical provider name, so the leak-surface scan reads it and its content changes that verdict."
+    },
+    {
+      "path": "docs/runbooks",
+      "kind": "tree",
+      "why": "The operational runbook. The other place permitted to cite the historical provider name, for the same reason."
+    },
+    {
+      "path": "docker-compose.phase-50a.yml",
+      "kind": "file",
+      "why": "The two-host non-production harness. Declares the fixed local-only credentials the leak scan permits only inside the harness files."
+    },
+    {
+      "path": "tests/storage-conformance.test.ts",
+      "kind": "file",
+      "why": "The shared StorageAdapter conformance scenarios the Phase 50A suites run against the PostgreSQL-backed session. Its content decides what conformance means, so it is a proof input; the proof also asserts it is byte-unchanged."
+    },
+    {
+      "path": ".github/workflows/phase-50a-postgres-conformance.yml",
+      "kind": "file",
+      "why": "The workflow itself. It is BOTH a scanned input of the leak/neutrality suite and the artifact the coverage proof parses, so a change to it must start the workflow that validates it."
+    },
+    {
+      "path": "package.json",
+      "kind": "file",
+      "why": "The build, prune, and proof entry points the artifact contract asserts."
+    },
+    {
+      "path": "package-lock.json",
+      "kind": "file",
+      "why": "Dependency resolution. `npm ci` and the package-reproducibility clauses depend on it exactly."
+    }
+  ]
+}

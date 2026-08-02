@@ -24,6 +24,13 @@ export type PostgresIntegrityReason =
   | 'append_prefix_mutated'
   | 'duplicate_append_position'
   | 'immutable_id_conflict'
+  // A record was offered to a session bound to a DIFFERENT estate. The host
+  // locks exactly one estate and loads exactly that estate's snapshot, so the
+  // session's bound estate is the store's estate authority — a record cannot
+  // vouch for its own estate. A cross-estate write is refused with this distinct
+  // reason, the transaction rolls back, and nothing from the attempted operation
+  // is durable. It is never classified idempotent (R2).
+  | 'estate_authority_violation'
   | 'malformed_row'
   // The migration ledger records a version as applied but does not bind it to
   // the shipped migration content: no checksum at all, or a checksum that

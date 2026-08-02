@@ -12,10 +12,28 @@ name: Phase 50A PostgreSQL Conformance
 # Scope note: this is a NEW, self-contained workflow. It does not modify — and
 # holds no permission over — the Straylight control-plane workflows.
 
+# ── R3: the trigger set MIRRORS the checked-in proof-input manifest ──────
+#
+# `tests/phase-50a/proof-input-manifest.json` is the single declaration of every
+# path whose content can change this workflow's suites' verdicts. The filters
+# below cover exactly those roots, and
+# `tests/phase-50a/proof-input-coverage.test.ts` proves it by comparing the
+# manifest against a BOUNDED STRUCTURAL PARSE of this file's own bytes. The
+# required set of uncovered manifest roots is EMPTY, and there is no exception
+# mechanism of any kind.
+#
+# The roots are BROAD (`src/straylight/**`, not a file list) on purpose: a broad
+# filter also covers files that do not exist yet, so coverage cannot be defeated
+# by adding, renaming, or deleting a declaration. `tests/phase-50a/**` covers the
+# manifest itself and every proof file that consumes it, so a change to the
+# coverage model cannot merge without running this workflow.
+#
+# Adding a proof input means adding a root to the MANIFEST and a matching filter
+# here. Neither side is derived from the other; the test compares them.
 on:
   pull_request:
     paths:
-      - 'src/straylight/storage/**'
+      - 'src/straylight/**'
       - 'migrations/postgres/**'
       - 'scripts/phase-50a/**'
       - 'tests/phase-50a/**'
@@ -24,34 +42,17 @@ on:
       - '.github/workflows/phase-50a-postgres-conformance.yml'
       - 'package.json'
       - 'package-lock.json'
-      # Test INPUTS of this workflow's own suites. `no-leak-and-neutrality`
-      # reads these files verbatim (the public-export guard reads
-      # src/straylight/index.ts; the leak-surface guard reads the proof
-      # document and its runbook), so a change to any of them can invalidate
-      # this workflow's conclusions and must therefore trigger it.
-      - 'src/straylight/index.ts'
       - 'docs/PHASE-50A-PROVIDER-NEUTRAL-POSTGRESQL-CANONICAL-STORE-IMPLEMENTATION-AND-PROOF.md'
-      - 'docs/runbooks/phase-50a-postgresql-backup-restore-and-rollback.md'
-      # The estate domain model. `no-leak-and-neutrality` reads each of these by
-      # name to prove Phase 50A did not touch the domain, so a change to any ONE
-      # of them alone can change that suite's verdict — and without a trigger
-      # here such a pull request would never start this workflow, making the
-      # required remote proof bypassable. Completing the fixed-input coverage is
-      # the whole point: `tests/phase-50a/artifact-and-workflow-contract.test.ts`
-      # derives the suite's authoritative input set and now requires the
-      # uncovered set to be EMPTY, so this list cannot silently fall behind.
-      #
-      # These are trigger INPUTS only. Every one is a forbidden path for the
-      # patch that added it here and is byte-unchanged.
-      - 'src/straylight/types.ts'
-      - 'src/straylight/estate.ts'
-      - 'src/straylight/recall.ts'
-      - 'src/straylight/audit.ts'
-      - 'src/straylight/policy.ts'
-      - 'src/straylight/keyring.ts'
-      - 'src/straylight/signatures.ts'
-      - 'src/straylight/commitment.ts'
+      - 'docs/runbooks/**'
+  # A BOUNDED manual exact-head path: the only input is the 40-hex commit SHA to
+  # check out and assert. Nothing else is parameterizable, so a dispatch cannot
+  # redirect the proof at a different repository, ref, or configuration.
   workflow_dispatch:
+    inputs:
+      head_sha:
+        description: 'Exact 40-hex commit SHA to check out and assert (required)'
+        required: true
+        type: string
 
 # Least privilege: read the code and read the private package registry.
 # No contents:write, no issues:write, no pull-requests:write, no packages:write.
@@ -109,10 +110,75 @@ jobs:
           --health-retries 30
 
     steps:
-      - name: Checkout
+      # ── EXACT-HEAD GIT IDENTITY (R3) ────────────────────────────────────
+      #
+      # The audit of the previous attempt found that `actions/checkout` had
+      # fetched `refs/pull/<n>/merge` and executed GitHub's SYNTHETIC MERGE
+      # COMMIT, not the audited head. The two trees were byte-identical, so the
+      # run was valid evidence of RUNTIME CONTENT — but it was not exact-head
+      # Git identity evidence, which the packet required.
+      #
+      # The three steps below close that:
+      #
+      #   1. DERIVE the target SHA — the `workflow_dispatch` input on a manual
+      #      run, `github.event.pull_request.head.sha` on a pull-request run (the
+      #      ACTUAL PR head, never the synthetic merge SHA) — and validate it
+      #      against ^[0-9a-f]{40}$, failing closed on anything else.
+      #   2. CHECK OUT that exact SHA as the `ref`.
+      #   3. ASSERT `git rev-parse HEAD` equals it, before any substantive step.
+      #
+      # Nothing substantive runs before step 3 succeeds: no install, no build, no
+      # typecheck, no test, no suite, no proof, no artifact verification.
+      - name: Derive and validate the exact target head SHA
+        id: target
+        env:
+          # Read through the environment, never interpolated into the script
+          # body: a `${{ }}` expansion inside `run:` is executed as shell text.
+          DISPATCH_SHA: ${{ inputs.head_sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          case "$EVENT_NAME" in
+            workflow_dispatch) target="$DISPATCH_SHA" ;;
+            pull_request)      target="$PR_HEAD_SHA" ;;
+            *)
+              echo "phase-50a: unsupported event '$EVENT_NAME'; refusing to run" >&2
+              exit 1
+              ;;
+          esac
+          if [ -z "$target" ]; then
+            echo "phase-50a: no target head SHA available for event '$EVENT_NAME'" >&2
+            exit 1
+          fi
+          if ! printf '%s' "$target" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "phase-50a: target head SHA '$target' is not a 40-hex commit id" >&2
+            exit 1
+          fi
+          echo "phase-50a: exact target head SHA = $target"
+          echo "sha=$target" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the EXACT target head SHA
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
+          # The exact commit, NOT refs/pull/<n>/merge. A synthetic merge commit is
+          # not exact-head identity evidence even when its tree is identical.
+          ref: ${{ steps.target.outputs.sha }}
           submodules: recursive
+
+      - name: Assert git rev-parse HEAD equals the exact target head SHA
+        env:
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          set -euo pipefail
+          actual="$(git rev-parse HEAD)"
+          echo "phase-50a: expected HEAD = $TARGET_SHA"
+          echo "phase-50a: git rev-parse HEAD = $actual"
+          if [ "$actual" != "$TARGET_SHA" ]; then
+            echo "phase-50a: HEAD does not equal the exact target head SHA; refusing to run" >&2
+            exit 1
+          fi
+          echo "phase-50a: EXACT-HEAD IDENTITY CONFIRMED at $actual"
 
       # `registry-url` + `scope` make setup-node write a runner-local .npmrc
       # that points the @0xhoneyjar scope at GitHub Packages and reads its

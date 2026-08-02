@@ -22,6 +22,42 @@
 // Append positions are assigned here so the session can hold the invariant
 // locally, but they continue the loaded prefix and are re-verified against
 // the database by the host before persisting.
+//
+// ── R2: SESSION-ESTATE BINDING AND ORDER-INDEPENDENT CLASSIFICATION ─────
+//
+// Every session is constructed BOUND to exactly one estate id — the estate the
+// async host locked and whose snapshot it loaded. That binding is the store's
+// ESTATE AUTHORITY: every append-only write must FIRST declare the bound estate,
+// and a record naming any other estate is refused as an integrity violation
+// (`estate_authority_violation`) that rolls the transaction back. It is never
+// classified idempotent and never committed.
+//
+// This closes the hole the durable REJECT found: records owned by one estate,
+// replayed through a session opened and locked for a DIFFERENT estate, committed
+// with `inserted: 0` and `idempotent: 3`, because promoted estate equality was
+// checked against the RECORD's self-report rather than against the session's
+// authority. A record cannot vouch for its own estate; the session can.
+//
+// Classification of an existing id is now a PURE FUNCTION of the offered record,
+// the session's bound estate, and the stored rows. No counter participates, so it
+// is independent of callback ordering, of session-local ordering, and of how many
+// earlier appends this session made. The rejected `offerPosition` / `offered*`
+// ordinals are GONE: they restarted at 1 every transaction and could not
+// establish a historical durable position, and comparing one against a stored
+// position falsely refused byte-identical replays of independently committed
+// operations.
+//
+// The two concerns the rejected code conflated are now separate:
+//
+//   CALLER-CONTROLLED IMMUTABLE EQUALITY  `callerControlledRow` /
+//       `firstCallerControlledMismatch` in `rows.ts` — ONE shared declaration,
+//       consumed identically here and by the live-row classifier in `persist.ts`.
+//       `append_position` is deliberately NOT part of it.
+//
+//   STORE-ASSIGNED PLACEMENT INTEGRITY    `storedPlacementViolation` in
+//       `rows.ts`, checked against the estate's dense-prefix invariant and the
+//       shipped database constraints. Only a FRESH id receives the next
+//       store-assigned position; a converging existing id consumes none.
 
 import type {
   Actor,
@@ -38,10 +74,17 @@ import type {
 import type { StorageAdapter } from '../types.js';
 import { PostgresIntegrityError, PostgresUnavailableError } from './errors.js';
 import type { CanonicalDelta, CanonicalState, Positioned } from './canonical-state.js';
-import { canonicalPayload, previousHashKey } from './rows.js';
+import { callerControlledRow, firstCallerControlledMismatch, storedPlacementViolation } from './rows.js';
 
 export class PostgresAdapterSession implements StorageAdapter {
   private readonly state: CanonicalState;
+
+  /**
+   * The ONE estate this session may write to: the estate the host locked and
+   * whose snapshot it loaded. Estate authority is the SESSION's, not the
+   * record's — see the module header.
+   */
+  private readonly boundEstateId: ID;
 
   // Loaded-prefix boundaries. Everything at or beyond these indices was
   // appended by THIS session and is what the delta carries.
@@ -57,23 +100,14 @@ export class PostgresAdapterSession implements StorageAdapter {
   private readonly touchedKeyrings = new Set<ID>();
   private readonly touchedAssertions = new Set<ID>();
 
-  // Per-estate next append position, seeded from the loaded snapshot.
+  // Per-estate next append position, seeded from the loaded snapshot. This is
+  // the STORE-ASSIGNED placement counter: only a FRESH immutable id consumes
+  // from it (loaded dense maximum for the estate plus one). A converging
+  // existing id consumes NO position and creates no duplicate.
   private readonly nextTransitionPos = new Map<ID, number>();
   private readonly nextTransitionReceiptPos = new Map<ID, number>();
   private readonly nextRecallReceiptPos = new Map<ID, number>();
   private readonly nextAuditPos = new Map<ID, number>();
-
-  // Per-estate APPEND ORDINAL of the offers this session has made, counted
-  // from 1 and INDEPENDENT of where a fresh row lands. This is the position a
-  // given append CLAIMS to occupy (see `offerPosition`), and it is what the
-  // complete-durable-row comparison checks against the existing row's promoted
-  // `append_position`. Kept separate from the counters above because those are
-  // seeded from the loaded prefix (loaded max + 1) and answer a different
-  // question: where the NEXT FRESH row is stored.
-  private readonly offeredTransitionPos = new Map<ID, number>();
-  private readonly offeredTransitionReceiptPos = new Map<ID, number>();
-  private readonly offeredRecallReceiptPos = new Map<ID, number>();
-  private readonly offeredAuditPos = new Map<ID, number>();
 
   // Append writes recognized as already-durable-and-identical. Reported in
   // the delta so a retry's idempotency is an OBSERVABLE fact, not a silent
@@ -82,8 +116,22 @@ export class PostgresAdapterSession implements StorageAdapter {
 
   private closed = false;
 
-  constructor(state: CanonicalState) {
+  /**
+   * @param state       the snapshot the host loaded for `boundEstateId`.
+   * @param boundEstateId the estate the host LOCKED and loaded. Every
+   *        append-only write must declare exactly this estate; any other estate
+   *        is refused. Required — there is no unbound session.
+   */
+  constructor(state: CanonicalState, boundEstateId: ID) {
+    if (typeof boundEstateId !== 'string' || boundEstateId.length === 0) {
+      throw new PostgresIntegrityError(
+        'estate_authority_violation',
+        'a session must be constructed bound to the estate the host locked and loaded; ' +
+          'an unbound session has no estate authority and could not refuse a cross-estate write',
+      );
+    }
     this.state = state;
+    this.boundEstateId = boundEstateId;
     this.loadedTransitions = state.transitions.length;
     this.loadedTransitionReceipts = state.transitionReceipts.length;
     this.loadedRecallReceipts = state.recallReceipts.length;
@@ -92,6 +140,11 @@ export class PostgresAdapterSession implements StorageAdapter {
     seedPositions(state.transitionReceipts, this.nextTransitionReceiptPos);
     seedPositions(state.recallReceipts, this.nextRecallReceiptPos);
     seedPositions(state.auditEvents, this.nextAuditPos);
+  }
+
+  /** The estate this session is bound to. Read-only; host/probe diagnostics. */
+  get estateId(): ID {
+    return this.boundEstateId;
   }
 
   // ── actors ────────────────────────────────────────────────────────────
@@ -149,6 +202,7 @@ export class PostgresAdapterSession implements StorageAdapter {
   // ── transitions (append-only) ─────────────────────────────────────────
   appendTransition(t: EstateTransition): void {
     this.assertOpen();
+    this.requireBoundEstate('estate_transitions', t.transition_id, t.estate_id);
     if (
       this.classifyExistingAppend(
         'estate_transitions',
@@ -156,15 +210,13 @@ export class PostgresAdapterSession implements StorageAdapter {
         (r) => r.transition_id,
         t.transition_id,
         t,
-        t.estate_id,
-        this.offerPosition(this.offeredTransitionPos, t.estate_id),
       ) === 'idempotent'
     ) {
       return;
     }
     this.state.transitions.push({
-      estate_id: t.estate_id,
-      append_position: this.claimPosition(this.nextTransitionPos, t.estate_id),
+      estate_id: this.boundEstateId,
+      append_position: this.claimPosition(this.nextTransitionPos, this.boundEstateId),
       record: t,
     });
   }
@@ -176,6 +228,7 @@ export class PostgresAdapterSession implements StorageAdapter {
   // ── recall receipts (append-only) ─────────────────────────────────────
   upsertRecallReceipt(r: RecallReceipt): void {
     this.assertOpen();
+    this.requireBoundEstate('recall_receipts', r.receipt_id, r.estate_id);
     if (
       this.classifyExistingAppend(
         'recall_receipts',
@@ -183,15 +236,13 @@ export class PostgresAdapterSession implements StorageAdapter {
         (row) => row.receipt_id,
         r.receipt_id,
         r,
-        r.estate_id,
-        this.offerPosition(this.offeredRecallReceiptPos, r.estate_id),
       ) === 'idempotent'
     ) {
       return;
     }
     this.state.recallReceipts.push({
-      estate_id: r.estate_id,
-      append_position: this.claimPosition(this.nextRecallReceiptPos, r.estate_id),
+      estate_id: this.boundEstateId,
+      append_position: this.claimPosition(this.nextRecallReceiptPos, this.boundEstateId),
       record: r,
     });
   }
@@ -210,6 +261,7 @@ export class PostgresAdapterSession implements StorageAdapter {
   // ── transition receipts (append-only) ─────────────────────────────────
   upsertTransitionReceipt(r: TransitionReceipt): void {
     this.assertOpen();
+    this.requireBoundEstate('transition_receipts', r.receipt_id, r.estate_id);
     if (
       this.classifyExistingAppend(
         'transition_receipts',
@@ -217,15 +269,13 @@ export class PostgresAdapterSession implements StorageAdapter {
         (row) => row.receipt_id,
         r.receipt_id,
         r,
-        r.estate_id,
-        this.offerPosition(this.offeredTransitionReceiptPos, r.estate_id),
       ) === 'idempotent'
     ) {
       return;
     }
     this.state.transitionReceipts.push({
-      estate_id: r.estate_id,
-      append_position: this.claimPosition(this.nextTransitionReceiptPos, r.estate_id),
+      estate_id: this.boundEstateId,
+      append_position: this.claimPosition(this.nextTransitionReceiptPos, this.boundEstateId),
       record: r,
     });
   }
@@ -245,6 +295,7 @@ export class PostgresAdapterSession implements StorageAdapter {
   // ── audit events (append-only, hash-chained per estate) ───────────────
   appendAuditEvent(e: AuditEvent): void {
     this.assertOpen();
+    this.requireBoundEstate('audit_events', e.audit_event_id, e.estate_id);
     // An identical retry re-derives the same content-addressed
     // `audit_event_id` AND the same `previous_audit_hash`, because the hash is
     // computed from the tail the retry read. That event is already durable at
@@ -258,8 +309,6 @@ export class PostgresAdapterSession implements StorageAdapter {
         (row) => row.audit_event_id,
         e.audit_event_id,
         e,
-        e.estate_id,
-        this.offerPosition(this.offeredAuditPos, e.estate_id),
       ) === 'idempotent'
     ) {
       return;
@@ -267,17 +316,17 @@ export class PostgresAdapterSession implements StorageAdapter {
     // A genuine append must attach to THIS estate's current tail. A caller
     // that hands us a link pointing elsewhere is not silently accepted —
     // that would be exactly the silent-repair P-3 forbids.
-    const tail = this.getAuditTail(e.estate_id);
+    const tail = this.getAuditTail(this.boundEstateId);
     if (e.previous_audit_hash !== tail) {
       throw new PostgresIntegrityError(
         'audit_chain_broken',
         `audit event ${e.audit_event_id} declares previous_audit_hash ` +
-          `${String(e.previous_audit_hash)} but estate ${e.estate_id} tail is ${String(tail)}`,
+          `${String(e.previous_audit_hash)} but estate ${this.boundEstateId} tail is ${String(tail)}`,
       );
     }
     this.state.auditEvents.push({
-      estate_id: e.estate_id,
-      append_position: this.claimPosition(this.nextAuditPos, e.estate_id),
+      estate_id: this.boundEstateId,
+      append_position: this.claimPosition(this.nextAuditPos, this.boundEstateId),
       record: e,
     });
   }
@@ -344,78 +393,87 @@ export class PostgresAdapterSession implements StorageAdapter {
   }
 
   /**
-   * The append POSITION this call offers for `estate_id`, consumed from this
-   * session's per-estate append ordinal.
+   * SESSION-ESTATE BINDING — the first check of every append-only write.
    *
-   * The store's dense-position invariant (`assertLoadedIntegrity`) means the
-   * row at position k is the k-th append that estate ever received. So the
-   * k-th append a session offers for an estate is a claim about placement: "this
-   * record is the k-th". That claim is exactly what makes `append_position`
-   * comparable for a write whose record carries no position of its own, and it
-   * is the promoted column the previous payload-only comparison was blind to.
+   * The host locks exactly one estate and loads exactly that estate's snapshot,
+   * so this session may write to exactly that estate. A record naming any other
+   * estate is an integrity violation: it is refused with a distinct bounded
+   * reason, the transaction rolls back, and NOTHING from the attempted operation
+   * becomes durable. It is never classified idempotent and never committed.
    *
-   * A faithful retry re-offers the same records in the same order, so its k-th
-   * offer meets the durable row at position k and converges. A partial or
-   * reordered replay — Codex's dense-prefix case, where the target id/payload
-   * sits at position 2 but is offered first — meets a row at a DIFFERENT
-   * position and is refused as conflicting immutable reuse.
+   * Estate authority is the SESSION's, not the record's. The rejected
+   * implementation checked promoted estate equality against the record itself,
+   * which let records owned by one estate be replayed through a session opened
+   * and locked for a different estate and commit as convergences — a record
+   * cannot vouch for its own estate.
    *
-   * The ordinal advances on EVERY classified append, converging or fresh:
-   * skipping it for a convergence would renumber every later offer in the
-   * session and turn one partial replay into a cascade of false matches.
-   * `claimPosition` remains the authority for what a FRESH row is actually
-   * stored at (loaded max + 1), so density is unaffected by this counter.
+   * This also makes a cross-estate id reuse impossible to mistake for
+   * convergence: a record whose id already exists under another estate never
+   * reaches classification at all, because the offered record must name THIS
+   * estate, and the snapshot contains only this estate's rows.
    */
-  private offerPosition(counters: Map<ID, number>, estate_id: ID): number {
-    const next = counters.get(estate_id) ?? 1;
-    counters.set(estate_id, next + 1);
-    return next;
+  private requireBoundEstate(table: string, id: ID, recordEstateId: ID): void {
+    if (recordEstateId !== this.boundEstateId) {
+      throw new PostgresIntegrityError(
+        'estate_authority_violation',
+        `${table}: record ${id} declares estate ${String(recordEstateId)} but this session is ` +
+          `bound to estate ${this.boundEstateId}, which the host locked and loaded; ` +
+          'a cross-estate write is refused and the transaction rolls back',
+      );
+    }
   }
 
   /**
    * Classify an append whose immutable id may already be present in this
    * session's view.
    *
-   *   'fresh'      the id is unseen — append it.
-   *   'idempotent' the id is present as the SAME COMPLETE DURABLE ROW as the
-   *                one this write would produce. The row is already durable
-   *                exactly as offered, so the write converges on it: no second
-   *                position is taken and no duplicate is created
-   *                (ADR-049Q §13.1(g)).
+   *   'fresh'      the id is unseen — append it, and only then does it receive
+   *                the next store-assigned position.
+   *   'idempotent' the id is present as the SAME DURABLE WRITE: every
+   *                CALLER-CONTROLLED immutable field matches, and the stored
+   *                row's placement is consistent with the store's own
+   *                invariants. The write converges on it — no second position is
+   *                taken and no duplicate is created (ADR-049Q §13.1(g)).
    *
    * Any other presence of the id raises `immutable_id_conflict`: the immutable
-   * id is being reused for a DIFFERENT durable row, which is an integrity
+   * id is being reused for a DIFFERENT durable write, which is an integrity
    * violation, never an update (P-3).
    *
-   * COMPLETE-ROW EQUALITY, not payload equality. This is the recorded lesson
-   * of this method. Comparing only `canonicalPayload` made a row idempotent
-   * whenever its id and payload matched, while the classifier was BLIND to the
-   * promoted columns the row is actually stored under — most importantly the
-   * `append_position` this call would have claimed. A dense prefix holding the
-   * target id/payload at position 2 (a filler occupying position 1) therefore
-   * reported `committed: true` with `{inserted: 0, idempotent: 1}` for a write
-   * whose own position would have been different: convergence was claimed on a
-   * row that is not the row the caller offered.
+   * ORDER INDEPENDENCE. This is a PURE FUNCTION of the offered record, the
+   * session's bound estate, and the stored rows. No counter participates, so the
+   * result is independent of callback ordering, of session-local ordering, and of
+   * how many earlier appends this session made. That is the correction: the
+   * rejected version compared the stored `append_position` against a
+   * session-local offer ordinal that restarted at 1 in every transaction, so a
+   * byte-identical replay of an independently committed operation B (durable at
+   * position 2, offered first and therefore claiming 1) was FALSELY refused as
+   * `immutable_id_conflict`. A counter that restarts per session cannot establish
+   * a historical durable position, and the adapter's append methods supply no
+   * caller position at all.
    *
-   * The comparison basis is `durableRowOf` — the same complete-row set
-   * `persist.ts` compares against the live database row (immutable identity,
-   * promoted estate identity, promoted append position, and for audit events
-   * the audit hash, the previous audit hash, and the normalized
-   * previous-parent key, plus the canonical payload). The two classifiers now
-   * agree on WHAT makes two rows the same row; the only difference is which
-   * rows they can see. `tests/phase-50a/postgres-callback-and-row-idempotency.test.ts`
-   * pins that agreement structurally so the two cannot drift apart.
+   * TWO SEPARATE CHECKS, from ONE shared declaration:
    *
-   * `offeredPosition` is the position this append WOULD claim — computed
-   * without consuming it (`peekPosition`), because a converging retry must not
-   * burn a position. It is part of the comparison rather than an afterthought:
-   * a same-payload row at a different position is a different durable row.
+   *   (1) CALLER-CONTROLLED EQUALITY — `callerControlledRow` and
+   *       `firstCallerControlledMismatch` from `rows.ts`, the SINGLE declaration
+   *       that `persist.ts`'s live-row classifier also consumes. Canonical
+   *       payload (which carries the record's own id), record estate, and for
+   *       audit events the chain fields including the normalized parent key.
+   *       `append_position` is NOT in it, because it is not caller-supplied.
+   *       The offered side's estate is the SESSION's bound estate (authority);
+   *       the stored side's is the row's promoted estate column.
    *
-   * This covers the case where the retried record is in the LOADED PREFIX
-   * (the ordinary retry) as well as one appended earlier in the same session.
-   * The complementary case — a row committed by another transaction between
-   * this session's load and its write — is classified against the live row in
-   * `persist.ts`, because only the database can see it.
+   *   (2) STORED PLACEMENT INTEGRITY — `storedPlacementViolation` from
+   *       `rows.ts`, validating the matched row's own position against the
+   *       estate's dense-prefix invariant and the shipped constraints
+   *       (`CHECK (append_position >= 1)`, `UNIQUE (estate_id,
+   *       append_position)`). A matched row the store cannot vouch for is
+   *       REFUSED rather than served as a convergence target.
+   *
+   * This covers the case where the retried record is in the LOADED PREFIX (the
+   * ordinary retry) as well as one appended earlier in the same session. The
+   * complementary case — a row committed by another transaction between this
+   * session's load and its write — is invisible to the snapshot and is classified
+   * against the LIVE row in `persist.ts`, by the same shared declaration.
    */
   private classifyExistingAppend<T>(
     table: string,
@@ -423,94 +481,45 @@ export class PostgresAdapterSession implements StorageAdapter {
     idOf: (record: T) => ID,
     id: ID,
     incoming: T,
-    estate_id: ID,
-    offeredPosition: number,
   ): 'fresh' | 'idempotent' {
+    // The offered write's caller-controlled identity, under the SESSION's estate
+    // authority. Computed once, outside the scan, so it cannot vary with where
+    // in the row list a match is found.
+    const offered = callerControlledRow(this.boundEstateId, incoming);
+    // Every stored position of this table for the bound estate, for the
+    // dense-prefix half of the placement check.
+    const scopedPositions: number[] = [];
+    for (const row of rows) {
+      if (row.estate_id === this.boundEstateId) scopedPositions.push(row.append_position);
+    }
     for (const row of rows) {
       if (idOf(row.record) !== id) continue;
-      const existing = durableRowOf(row.estate_id, row.append_position, row.record);
-      const offered = durableRowOf(estate_id, offeredPosition, incoming);
-      const mismatch = firstDurableMismatch(existing, offered);
-      if (mismatch === null) {
-        this.idempotentSkips += 1;
-        return 'idempotent';
+      const existing = callerControlledRow(row.estate_id, row.record);
+      const mismatch = firstCallerControlledMismatch(existing, offered);
+      if (mismatch !== null) {
+        throw new PostgresIntegrityError(
+          'immutable_id_conflict',
+          `${table}: immutable id ${id} is already present as a different durable write ` +
+            `(${mismatch.column}: existing ${mismatch.existing} != incoming ${mismatch.incoming})`,
+        );
       }
-      throw new PostgresIntegrityError(
-        'immutable_id_conflict',
-        `${table}: immutable id ${id} is already present as a different durable row ` +
-          `(${mismatch.column}: existing ${mismatch.existing} != incoming ${mismatch.incoming})`,
-      );
+      // The caller-controlled fields agree. Before certifying convergence, the
+      // STORE must vouch for where that row sits — placement is the store's, and
+      // a row whose stored placement violates the store's own invariants may not
+      // be served as a convergence target.
+      const placement = storedPlacementViolation(scopedPositions, row.append_position);
+      if (placement !== null) {
+        throw new PostgresIntegrityError(
+          'append_prefix_mutated',
+          `${table}: immutable id ${id} matches a stored row whose placement is unsound ` +
+            `for estate ${this.boundEstateId}: ${placement}`,
+        );
+      }
+      this.idempotentSkips += 1;
+      return 'idempotent';
     }
     return 'fresh';
   }
-}
-
-/**
- * The complete durable row one append-only record occupies, keyed by column.
- *
- * Deliberately the SAME column set `persist.ts#durableColumns` binds to its
- * INSERT — identity is carried inside `payload` (the canonical serialization
- * contains the record's own id field), the placement columns are promoted
- * explicitly, and audit events additionally promote their chain columns. Two
- * records are the same durable row exactly when every entry matches.
- *
- * `previous_audit_hash` and `previous_audit_hash_key` are BOTH included: they
- * are distinct enforcement columns in the schema (the nullable parent link and
- * its normalized, uniqueness-bearing key), and `''` must never be conflated
- * with `NULL`.
- */
-type DurableRow = Readonly<Record<string, string | number | null>>;
-
-function durableRowOf(estate_id: ID, append_position: number, record: unknown): DurableRow {
-  const row: Record<string, string | number | null> = {
-    estate_id,
-    append_position,
-    payload: canonicalPayload(record),
-  };
-  // Audit events promote their chain linkage. Detected structurally rather
-  // than by table name so the comparison cannot be weakened by a caller
-  // passing a different label.
-  if (isChainLinked(record)) {
-    row['audit_hash'] = record.audit_hash;
-    row['previous_audit_hash'] = record.previous_audit_hash ?? null;
-    row['previous_audit_hash_key'] = previousHashKey(record);
-  }
-  return row;
-}
-
-/** Does this record carry the promoted audit-chain columns? */
-function isChainLinked(record: unknown): record is AuditEvent {
-  return (
-    typeof record === 'object' &&
-    record !== null &&
-    typeof (record as { audit_hash?: unknown }).audit_hash === 'string'
-  );
-}
-
-/**
- * The first column on which two durable rows differ, or `null` when they are
- * the same row. Compares the UNION of both key sets, so a column present in
- * one and absent in the other is a difference rather than an unchecked field.
- */
-function firstDurableMismatch(
-  existing: DurableRow,
-  offered: DurableRow,
-): { column: string; existing: string; incoming: string } | null {
-  const columns = [...new Set([...Object.keys(existing), ...Object.keys(offered)])].sort();
-  for (const column of columns) {
-    const a = existing[column];
-    const b = offered[column];
-    if (a !== b) {
-      return { column, existing: describeCell(a), incoming: describeCell(b) };
-    }
-  }
-  return null;
-}
-
-function describeCell(value: string | number | null | undefined): string {
-  if (value === null) return 'NULL';
-  if (value === undefined) return '<absent>';
-  return String(value);
 }
 
 function seedPositions<T>(rows: Positioned<T>[], counters: Map<ID, number>): void {

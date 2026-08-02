@@ -160,10 +160,16 @@ function assertDensePositions<T>(
  */
 export function assertChainIntact(state: CanonicalState, estate_id: ID): void {
   const scoped = state.auditEvents.filter((r) => r.estate_id === estate_id);
-  const probe = new PostgresAdapterSession({
-    ...emptyCanonicalState(),
-    auditEvents: scoped,
-  });
+  // The probe is a READ-ONLY verification session over this estate's chain, so
+  // it is bound to the estate whose chain is being verified (R2: every session
+  // is bound to exactly one estate).
+  const probe = new PostgresAdapterSession(
+    {
+      ...emptyCanonicalState(),
+      auditEvents: scoped,
+    },
+    estate_id,
+  );
   const verdict = new AuditLog(probe).verifyChain(estate_id);
   probe.abandon();
   if (!verdict.ok) {

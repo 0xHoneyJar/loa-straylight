@@ -207,31 +207,70 @@ not extensions.
 
 ## 5. Idempotency and conflict (§13.1(g))
 
-Retry converges **only** on **complete immutable durable-row equality**: the
-immutable primary id, the promoted `estate_id`, the promoted `append_position`,
-the promoted `audit_hash`, the promoted `previous_audit_hash`, the normalized
-`previous_audit_hash_key`, and the complete canonical payload must **all** match.
+> **Superseded and corrected by §16.** This section previously described retry
+> convergence as *complete durable-row equality including the promoted
+> `append_position`*. That model was found unsound at the root and is replaced.
+> The text below states the **current** model; §16 records what changed and why.
 
-Byte-identical canonical payload is **not** a sufficient retry condition. A row
-carrying the same immutable id and an identical payload but a differing promoted
-column is a **conflict, not a convergence** — such a row can be invisible to the
-estate the operation is writing, so counting it as idempotent would report
-success while zero rows were visible to that estate. The payload comparison is
-itself over the canonical serialization, so field order or absent-vs-undefined
-can never make two different records look equal; §7 records the complete
-comparison basis and how it is kept from drifting.
+Two append-only writes are **the same durable write** exactly when the immutable
+primary id matches **and every caller-controlled immutable field matches**:
+
+* the **canonical payload** — which carries the record's own id, so identity is
+  inside the comparison rather than beside it;
+* the record's own **`estate_id`**, compared against the **session's bound
+  estate** (the estate the host locked and loaded) rather than against the
+  record's own self-report;
+* for audit events, the caller-supplied chain fields **`audit_hash`** and
+  **`previous_audit_hash`**, together with the normalized
+  **`previous_audit_hash_key`** — `''` is never conflated with `NULL`, because
+  the two are distinct enforcement columns in the schema.
+
+**`append_position` is not part of that comparison.**
+`StorageAdapter.appendTransition`, `upsertTransitionReceipt`,
+`upsertRecallReceipt` and `appendAuditEvent` supply **no append position**, so no
+caller-supplied append position exists and none may be invented. Placement is
+**store-assigned** and validated **separately**, against the store's own
+invariants: the per-estate dense-prefix invariant (`assertLoadedIntegrity` /
+`assertDensePositions`, re-asserted before persist by `assertPrefixUnchanged`)
+plus the shipped constraints `CHECK (append_position >= 1)`,
+`UNIQUE (estate_id, append_position)`,
+`UNIQUE (estate_id, previous_audit_hash_key)`, and the audit genesis `CHECK`.
+
+Byte-identical canonical payload alone is still **not** a sufficient retry
+condition. A row with the same id and payload but a differing promoted
+`estate_id` or chain link is a **conflict, not a convergence** — such a row can
+be invisible to the estate being written, so counting it as idempotent would
+report success while zero rows were visible to that estate. The payload
+comparison is over the canonical serialization, so field order or
+absent-vs-undefined can never make two different records look equal.
+
+**Classification is order-independent.** With no counter participating, the
+outcome is a pure function of the offered record, the session's bound estate, and
+the stored rows — independent of callback ordering, session-local ordering, and
+how many earlier appends the session made.
 
 | Case | Outcome |
 |---|---|
-| Same immutable id, **every** durable column equal, already in the loaded snapshot | Idempotent skip. No second position, no duplicate. Reported in `persisted.idempotent`. |
-| Same immutable id, **every** durable column equal, committed by another transaction between load and write | Idempotent, classified against the **complete** live row in `persist.ts`. |
-| Same immutable id, identical canonical payload, **any** promoted column differing (e.g. a different promoted `estate_id`) | `PostgresIntegrityError` `immutable_id_conflict`; the transaction rolls back. **Never** idempotent. |
-| Same immutable id, **different** canonical payload | `PostgresIntegrityError` `immutable_id_conflict`; the transaction rolls back. |
+| Same immutable id, **every caller-controlled field** equal, already in the loaded snapshot, stored placement sound | Idempotent convergence. **No** second position, no duplicate. Reported in `persisted.idempotent`. |
+| Same id, every caller-controlled field equal, committed by another transaction between load and write | Idempotent, classified against the **live** row in `persist.ts` by the **same shared declaration**, inside its savepoint. |
+| **Partial** operation retry — a subset of an earlier history's records re-offered | Converges on **exactly the records offered**. Historical records need **not** be re-offered; per-record convergence is the adapter contract. |
+| **Reordered** or **duplicated** offers of byte-identical records | Converge identically, regardless of offer order or repetition. |
+| Same id, **any caller-controlled field** differing (payload, estate, `audit_hash`, `previous_audit_hash`, normalized key) | `PostgresIntegrityError` `immutable_id_conflict`; the transaction rolls back. **Never** idempotent, never repaired. |
+| A record naming an estate **other than the session's bound estate** | `PostgresIntegrityError` **`estate_authority_violation`**; the transaction rolls back. Never idempotent, never committed. |
+| A record whose id exists **only under another estate** | `immutable_id_conflict`. **Never** convergence. |
+| A matched row whose **stored placement** violates the dense-prefix invariant | `PostgresIntegrityError` `append_prefix_mutated`; refused rather than served as a convergence target. |
+| A **sparse** or gapped per-estate history | Refused at **load**; the estate is quarantined rather than served. |
+| A **fresh** immutable id | Receives exactly the next store-assigned position (loaded dense maximum + 1). A converging id consumes **none**. |
 | Append position taken by a different id | `PostgresIntegrityError` `duplicate_append_position`. |
 
 Append-only inserts carry **no `ON CONFLICT` clause**, so a collision raises
 and is then classified explicitly. A blanket `DO NOTHING` would absorb the
 genuine-conflict case identically to the retry case.
+
+**Zero partial durability is absolute.** For any refusal the transaction rolls
+back and no row from the attempted operation survives; success is reported only
+after `COMMIT`. Convergences remain observable in `persisted.idempotent` rather
+than looking like a callback that did nothing.
 
 **A retry is not a re-execution.** Replaying the same records is a retry.
 Re-executing an operation against advanced state derives the same
@@ -1344,3 +1383,288 @@ network isolation, tenancy, availability, version policy, and incident recovery
 remain later obligations, and nothing here involves a provider, a production
 resource, a credential, or a living estate. The audit of this slice is Codex's;
 the implementer does not audit its own work.
+
+---
+
+## 16. R2/R3 architecture-correction slice (fresh initial slice after the sequence-27 REJECT)
+
+Authority: operator decision `evt-phase-50a-operator-decision-028` on lane #122
+(comment 5154053719), which dispositioned the durable Codex REJECT at sequence 27
+(audit comment 5153795730) and authorized preparation of **exactly one** fresh
+architecture-correction slice on a **fresh branch** with a **fresh pull request**,
+holding R1 and R4 closed and declaring patch cycle 4 unauthorized. Task packet
+comment 5154289557, digest
+`sha256:743181ec4dc1e153b7ede3fca6da93433e5e9a8c10d41aadee5c0277c8d41629`.
+
+Branch point: rejected SHA `f1b5f0f3924eb4c8624c8b2efb1f3072fbfa92f4`, used
+**only** as inspectable substrate and branch point. PR #124, branch
+`phase-50a-rejection-remediation`, and every earlier rejected branch or SHA are
+**not** reopened, amended, extended, retargeted, or cited as merge evidence.
+
+The REJECT reopened two findings as **unsound abstractions**, not as restatable
+defects. This slice **replaces** both with closed designs.
+
+### 16.1 R2 — the offered-ordinal abstraction is deleted
+
+**What was unsound.** The rejected implementation added a session/callback-local
+*offered append ordinal* (`offerPosition`, plus per-table `offered*Pos` maps) and
+compared the stored `append_position` against it. That is unsound at the root:
+
+* `StorageAdapter.appendTransition`, `upsertTransitionReceipt`,
+  `upsertRecallReceipt` and `appendAuditEvent` supply **no append position**, so
+  no caller-supplied append position exists and none may be invented;
+* the ordinal **restarts at 1 in every transaction**, so it cannot establish a
+  historical durable position.
+
+Two concrete failures followed. A byte-identical replay of an independently
+committed operation — durable at position 2, offered first, so claiming ordinal 1
+— was **falsely refused** as `immutable_id_conflict` with
+`append_position: existing 2 != incoming 1`, contradicting the documented retry
+contract. Conversely, records owned by one estate, replayed through a session
+opened and locked for a **different** estate, **committed** with
+`{inserted: 0, idempotent: 3}`, because promoted estate equality was checked
+against the **record's own self-report** rather than against the session's
+authority.
+
+**What replaced it.** `offerPosition` and every `offered*` counter are **deleted**
+(a test asserts the code contains no such ordinal under any spelling). The two
+concerns the rejected code conflated are now separate, and the separation is
+declared **once**:
+
+**(1) Caller-controlled immutable equality**, declared once in
+`src/straylight/storage/postgres/rows.ts` as `CALLER_CONTROLLED_COLUMNS`,
+`callerControlledRow()` and `firstCallerControlledMismatch()`. The set is exactly
+`payload`, `estate_id`, `audit_hash`, `previous_audit_hash`,
+`previous_audit_hash_key` — and **`append_position` is absent by contract**, which
+a test pins directly. **Both** classifiers consume that one declaration: the
+in-snapshot classifier in `session.ts` and the live-row classifier in
+`persist.ts`. Neither declares its own basis; a test proves neither re-declares
+`durableRowOf` or `firstDurableMismatch`. `persist.ts` still **binds** every
+durable column it `INSERT`s — including `append_position` — and
+`assertColumnsMatchStatement` still proves the bind set equals the statement's
+column list, so a column cannot escape the write.
+
+**(2) Session-estate binding.** `PostgresAdapterSession` is constructed **bound**
+to the estate the host locked and loaded (`new PostgresAdapterSession(state,
+estate_id)`; an unbound session is refused in the constructor). Every append-only
+write **first** requires `record.estate_id` to equal the bound estate; any other
+estate is refused with the distinct reason **`estate_authority_violation`**, the
+transaction rolls back, and nothing is durable — never idempotent, never
+committed. Estate authority is the **session's**, not the record's: a record
+cannot vouch for its own estate. The three internal probe-session construction
+sites (`load.ts#assertChainIntact`, `portability.ts#verifyChains`,
+`host.ts#assertDurableChainIntact`) are each bound to the estate they verify.
+
+The constructor is **internal**: `PostgresAdapterSession` is not re-exported from
+`src/straylight/index.ts`, has no package subpath, and its declarations are pruned
+from the package. Binding an estate to it is therefore **not** a public-contract
+change. `StorageAdapter`, `EstateStore`, `AuditLog` and the recall API remain
+byte-unchanged and synchronous — proven by blob comparison (§16.5).
+
+**(3) Store-assigned placement integrity.** `storedPlacementViolation()` in
+`rows.ts` validates a matched row's **stored** position against the store's own
+invariants — the per-estate dense 1..n prefix, plus
+`CHECK (append_position >= 1)` and `UNIQUE (estate_id, append_position)` — and
+refuses (`append_prefix_mutated`) rather than serving an unsound row as a
+convergence target. Both classifiers apply it: `session.ts` against the loaded
+snapshot, `persist.ts` against the estate's **live** positions
+(`SELECT_*_POSITIONS`). Only a **fresh** immutable id consumes the next
+store-assigned position (loaded dense maximum + 1); a converging existing id
+consumes **none**.
+
+**Order independence** follows: with no counter participating, classification is a
+pure function of the offered record, the session's bound estate, and the stored
+rows. `tests/phase-50a/postgres-r2-outcome-matrix.test.ts` proves it **mechanically
+over all 24 permutations** of a four-offer retry — identical classification counts,
+identical persisted counts, and identical durable rows and positions after every
+one — rather than arguing it in prose. It also pins, by name and per append-only
+table: full retry convergence with zero duplicates and zero new positions; partial
+retry convergence on exactly the subset offered, with no requirement to re-offer
+history; reordered and duplicated offers; cross-estate refusal; a
+different-estate id never treated as convergence; each caller-controlled field
+mismatch individually; sparse-history refusal at load; fresh-id placement; and
+zero partial durability under a forced mid-operation failure.
+
+New error reason: **`estate_authority_violation`** (`errors.ts`). It is an
+integrity reason: the durable content is not corrupt, but the write is refused as
+a boundary violation and nothing becomes durable.
+
+### 16.2 R2 — independent mutation matrix
+
+`tests/phase-50a/postgres-r2-mutation-matrix.test.ts`. Each mutation is applied to
+a **disposable copy** of the tree, one named test runs against that copy, and the
+mutation is reverted by discarding the copy; the repository file is then re-read
+and proven unmutated. A **baseline** case proves the harness passes unmutated, and
+every case asserts the inner run actually executed tests (a `-t` pattern matching
+nothing would otherwise look like a pass).
+
+| # | Mutation | Named test that FAILS | Reverted |
+|---|---|---|---|
+| M1 | Reintroduce a session-local append ordinal and compare it as a caller-controlled field | `a PARTIAL operation retry converges on exactly the records it offers` | yes |
+| M2 | Drop the session-estate binding check | `a record naming another estate is REFUSED` | yes |
+| M3 | Add `append_position` to the shared caller-controlled declaration | `the caller-controlled comparison is declared ONCE and shared` | yes |
+| M4 | Omit stored-placement validation in the **in-snapshot** classifier | `the caller-controlled comparison is declared ONCE and shared` | yes |
+| M5 | Omit stored-placement validation in the **live-row** classifier | `the caller-controlled comparison is declared ONCE and shared` | yes |
+| M6 | Take estate authority from the **record** instead of the **session** | `the caller-controlled comparison is declared ONCE and shared` | yes |
+
+### 16.3 R3 — the heuristic proof is replaced by a closed coverage model
+
+**What was unsound.** The rejected model declared the proof's input set inside the
+no-leak suite's own source (marked comment blocks) and **extracted** it from there
+to compare against the workflow's `pull_request.paths`. Three independent
+mutations survived: deleting a declared input (a **smaller** declaration satisfies
+`uncovered == []` more easily), truncating the extractor, and — decisively —
+**replacing the extractor so it synthesized** a path the workflow no longer
+declared. The proof could launder a missing required trigger through the extractor
+it was validating. It also carried a `KNOWN_UNCOVERED_INPUTS`-style accepted gap in
+an earlier cycle.
+
+**What replaced it.** There is **no extractor**, and **no exception mechanism of
+any kind** — not a renamed one, not an empty one.
+
+* **The manifest is checked-in DATA**: `tests/phase-50a/proof-input-manifest.json`,
+  the single declaration of every path whose content can change the proof's
+  verdict. Its roots are deliberately **broad** — `src/straylight` (whole tree),
+  `migrations/postgres`, `scripts/phase-50a`, `tests/phase-50a`, `docs/runbooks`,
+  plus the proof document, the compose file, the workflow,
+  `tests/storage-conformance.test.ts`, `package.json` and `package-lock.json` — so
+  they also cover files that **do not exist yet** and cannot be defeated by
+  adding, renaming, or deleting a declaration. Every root records **why** it is an
+  input.
+* **The suite reads its inputs FROM the manifest.**
+  `tests/phase-50a/no-leak-and-neutrality.test.ts` no longer restates any path: it
+  scans `manifestTrackedFiles()` and reads by-name inputs through
+  `readManifestInput()`, which **refuses** an undeclared path. Its domain-model
+  scan is **derived** from the broad `src/straylight` root, so a new domain file is
+  in scope automatically.
+* **The workflow side is a BOUNDED SEMANTIC PARSE** of the workflow's own raw
+  bytes: `scripts/phase-50a/workflow-trigger-parser.mjs` recovers
+  `on.pull_request.paths` and `on.workflow_dispatch` **structurally** (by
+  indentation and key nesting), not by the rejected fixed-offset text slice. It
+  imports **nothing at all** — no filesystem, no child process, no network — so it
+  cannot consult the artifact it validates. Every recovered path is returned with
+  the **byte offset** it was read from, and the proof **verifies that provenance**:
+  a synthesized path cannot produce matching bytes.
+* **The comparison is manifest-against-parsed-workflow.** Neither side is derived
+  from the other. The required set of uncovered manifest roots is **`[]`** — the
+  only shape that cannot be widened by appending an exception.
+* **Fail-closed throughout.** The manifest reader throws on a manifest that is
+  missing, empty, unreadable, malformed, wrongly versioned, rootless, or that
+  names a bad path, an unknown kind, a missing rationale, a duplicate, or a root
+  resolving to **no tracked file**. The parser fails closed on an absent or
+  unparseable trigger block, an unexpected dedent, a nested key where a scalar was
+  required, an unterminated quote, a malformed list item, a flow sequence, a
+  duplicate key, tab indentation, an empty document, and an oversized one — and a
+  failure carries **no** path set at all, so no caller can obtain a narrower
+  comparison.
+* **Self-trigger.** The manifest, its consumer, the parser, both coverage suites,
+  the no-leak suite, and the workflow are each **manifest-covered and trigger
+  inputs**, asserted mechanically against the parsed trigger set. A change to the
+  coverage model cannot merge without running the proof.
+
+`tests/phase-50a/artifact-and-workflow-contract.test.ts` no longer carries any
+coverage comparison; the extractor, its marked blocks, and the probe constants are
+removed. What remains there is that suite's own subject: the generated-artifact and
+package contract, and the workflow's authentication posture, credential handling,
+exact-head assertion, and substantive-step completeness.
+
+### 16.4 R3 — independent probe/mutation matrix
+
+`tests/phase-50a/proof-input-coverage-mutations.test.ts`, same disposable-copy
+discipline, same baseline and non-vacuity guards. Each copy is initialized as its
+own git repository and staged, so the manifest consumer's `git ls-files` resolution
+sees the **copy's** mutated content.
+
+| # | Mutation | Named test that FAILS | Reverted |
+|---|---|---|---|
+| P1 | Replace the parser so it **synthesizes** a path the workflow no longer declares (the mutation that defeated the rejected suite) | `PROVENANCE: every parsed path is a real substring of the workflow bytes` | yes |
+| P2 | **Delete** a declared manifest input (`migrations/postgres`) | `the migrations reference no provider-managed role, database, or extension` | yes |
+| P3 | Apply a **truncation** during declaration reading (`roots.slice(1)`) | `SELF-TRIGGER: the manifest and every proof file that consumes it are trigger inputs` | yes |
+| P4 | **Rename** the declaration key (`roots` → `paths`) | `the manifest is non-empty and every declared root resolves to at least one real tracked file` | yes |
+| P5 | Make the declaration **vacuous** (empty root list) | `the set of manifest roots NOT covered by the parsed workflow triggers is EMPTY` | yes |
+| P6 | Declare a root with **no real files** | `the manifest is non-empty and every declared root resolves to at least one real tracked file` | yes |
+| P7 | **Narrow** a declared root while real files remain under it (`src/straylight` → `src/straylight/storage/postgres`) | `the estate domain model is untouched by Phase 50A` | yes |
+| P8 | Remove **each** workflow trigger path individually — all 12, one at a time | `the set of manifest roots NOT covered by the parsed workflow triggers is EMPTY` (or the file-level claim) | yes |
+| P9 | Remove **`workflow_dispatch`** | `recovers on.pull_request.paths and on.workflow_dispatch from the CHECKED-IN workflow` | yes |
+
+The parser additionally carries **16 negative tests** of its own (indentation,
+interleaved comments, block termination, nested keys, quoting variants, malformed
+list items, duplicate keys, tabs, empty and non-text input), and the manifest
+reader **14** fail-closed cases.
+
+### 16.5 Remote proof — exact-head Git identity
+
+The audit found that run 30715184062 reported PR head
+`f1b5f0f3924eb4c8624c8b2efb1f3072fbfa92f4` in Actions metadata while
+`actions/checkout` had fetched `refs/pull/124/merge` and executed
+`830b838270e0ea7806d2526260048ea2e2d90c1b`. Both trees were independently equal at
+`36c0c47937f2a4f776fed928fffefc732b4bc380`, so that run was valid evidence of
+**runtime content** — but **not** exact-head Git identity, which the packet
+required. A synthetic merge commit is not identity evidence even when its tree is
+byte-identical.
+
+The workflow now:
+
+1. **derives** the target SHA — the `workflow_dispatch` `head_sha` input on a
+   manual run, `github.event.pull_request.head.sha` (the **actual PR head**, never
+   the synthetic merge SHA) on a pull-request run — and **validates** it against
+   `^[0-9a-f]{40}$`, failing closed on an absent, empty, or malformed value and on
+   an unsupported event;
+2. **checks out that exact SHA** as `actions/checkout`'s `ref`;
+3. **asserts** `git rev-parse HEAD` equals it in a dedicated early step, printing
+   both values and failing closed on any mismatch.
+
+Nothing substantive runs before step 3 succeeds — no install, build, typecheck,
+test, suite, proof, or artifact verification. A test compares file positions of the
+`run:` command lines against the assertion step to enforce that ordering, and
+another proves the `workflow_dispatch` path is **bounded** to exactly the one SHA
+input, so a dispatch cannot redirect the proof at another repository, ref, or
+configuration. Both SHA values reach their scripts through the **environment**,
+never interpolated into shell text.
+
+### 16.6 Scope of this slice
+
+Changed, and all inside the packet's seven allowed paths:
+
+* `src/straylight/storage/postgres/` — `rows.ts` (the shared caller-controlled
+  declaration and the placement validator), `session.ts` (estate binding,
+  order-independent classification, ordinal deleted), `persist.ts` (consumes the
+  shared declaration; live placement validation), `queries.ts` (per-estate
+  position lookups), `errors.ts` (the new reason), `host.ts`, `load.ts`,
+  `portability.ts` (bound probe sessions);
+* `scripts/phase-50a/` — the manifest consumer, the bounded parser, and their
+  hand-written `.d.mts` declarations;
+* `tests/phase-50a/` — the manifest data, both R2 suites, both R3 suites, and
+  updates to the idempotency, no-leak, and artifact-contract suites;
+* `.github/workflows/phase-50a-postgres-conformance.yml` — manifest-mirroring
+  triggers and the exact-head identity steps;
+* this document.
+
+Deliberately **byte-unchanged** (blob-level comparison against the branch point,
+covering all 626 other inherited paths): `migrations/postgres/`,
+`docker-compose.phase-50a.yml`, `docs/runbooks/`,
+`tests/storage-conformance.test.ts`, `src/straylight/storage/types.ts`,
+`src/straylight/index.ts`, the estate-domain files
+(`types.ts`, `estate.ts`, `recall.ts`, `audit.ts`, `policy.ts`, `keyring.ts`,
+`signatures.ts`, `commitment.ts`), `src/straylight/storage/in-memory.ts`,
+`src/straylight/storage/jsonl.ts`, `.straylight/`, every ADR, every other
+workflow, `fixtures/`, the TypeScript configuration, `vitest.config.ts`,
+`package.json`, and `package-lock.json`. No dependency, lockfile, public API,
+package-contract, migration-semantic, sibling-repository, or domain-semantic
+change.
+
+R1 (bounded callback-thenability refusal that publishes nothing of the caller's
+exception) and R4 (the `assertNever` totality barrier over `ThenReadOutcome`)
+remain **closed**, with their pinning tests present and green — including R4's real
+compiler mutation and its positive control.
+
+### 16.7 What this slice does NOT establish
+
+It replaces two unsound abstractions with closed designs and preserves everything
+else. It authorizes and claims **no** acceptance, **no** readiness, **no** gate
+disposition, **no** Phase 50B work, **no** MVP-2 completion, and **no** merge.
+Every residual unproven pre-production obligation in §10 stands undischarged:
+durability, failover, network isolation, tenancy, availability, version policy, and
+incident recovery remain later obligations. Nothing here involves a provider, a
+production resource, a credential, or a living estate. The audit of this slice is
+Codex's; the implementer does not audit its own work.

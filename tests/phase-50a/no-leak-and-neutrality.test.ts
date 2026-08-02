@@ -5,103 +5,44 @@
 // the other Phase 50A suites they run under plain `npm test` too. A leak guard
 // that only ran when Docker was up would be no guard at all.
 //
-// Scope: every path Phase 50A added or touched. The check reads the files from
-// disk rather than trusting a manifest, so a new file under a covered directory
-// is automatically in scope.
-
-import { readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-import { describe, expect, it } from 'vitest';
-
-const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = resolve(HERE, '../..');
-
-// ── the authoritative fixed-input declaration (patch cycle 2, finding 3) ─
+// ── R3: THE INPUT SET COMES FROM THE MANIFEST ───────────────────────────
 //
 // This suite's conclusions depend on the content of specific repository paths.
 // If one of them changes, this suite's verdict can change with it — so the
-// workflow that runs the suite must be triggered by all of them, and drift
-// between "what the suite reads" and "what the workflow watches" is a real
-// hole (the defect recorded as patch-cycle-1 finding 6).
+// workflow that runs the suite must be triggered by all of them.
 //
-// The two marked blocks below are THE authoritative declaration of that input
-// set. They are load-bearing, not documentation:
+// The input set is declared ONCE, as checked-in DATA, in
+// `tests/phase-50a/proof-input-manifest.json`, and this suite READS ITS INPUTS
+// FROM that manifest. It restates nothing, so there is one declaration and
+// nothing to extract from this source.
 //
-//   * the tree roots are what `phase50aFiles()` actually walks;
-//   * every by-name text read in this file goes through `readFixedInput`,
-//     which REFUSES a path that is not declared;
-//   * `artifact-and-workflow-contract.test.ts` extracts these blocks by their
-//     markers and compares the declared set against the workflow's
-//     `pull_request.paths` coverage, with a mutation proving an undeclared or
-//     uncovered new input fails.
+// This REPLACES the rejected model, in which the declaration lived in marked
+// comment blocks inside this file and a second suite EXTRACTED those blocks to
+// compare against the workflow. Three independent mutations survived that:
+// deleting a declared input (a smaller declaration satisfies `uncovered == []`
+// more easily), truncating the extractor, and — decisively — replacing the
+// extractor so it SYNTHESIZED a path the workflow no longer declared. No proof
+// may derive its authority from the extractor it validates, so there is no
+// extractor: the manifest is data, the workflow side is a bounded structural
+// parse of the workflow's own bytes, and neither is derived from the other.
 //
-// The markers are parsed by that test. Keep them exactly as they are, keep one
-// single-quoted path per line, and add a new fixed input HERE — nowhere else.
+// The roots are deliberately BROAD (`src/straylight`, not a file list): a broad
+// root also covers files that do not exist yet, so it cannot be defeated by
+// adding, renaming, or deleting a declaration. Adding a Phase 50A input means
+// adding a root to the MANIFEST — nowhere else.
 
-/**
- * Tree roots walked wholesale. Everything Phase 50A introduced or modified; a
- * new file under one of these is automatically in scope, which is why they are
- * roots rather than a file list.
- */
-// straylight:no-leak-tree-roots:begin
-const SCANNED_TREE_ROOTS = [
-  'src/straylight/storage/postgres',
-  'migrations/postgres',
-  'scripts/phase-50a',
-  'tests/phase-50a',
-  'docker-compose.phase-50a.yml',
-  '.github/workflows/phase-50a-postgres-conformance.yml',
-  'docs/PHASE-50A-PROVIDER-NEUTRAL-POSTGRESQL-CANONICAL-STORE-IMPLEMENTATION-AND-PROOF.md',
-  'docs/runbooks/phase-50a-postgresql-backup-restore-and-rollback.md',
-] as const;
-// straylight:no-leak-tree-roots:end
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-/**
- * Files read BY NAME, individually, outside any tree root. Each is read through
- * `readFixedInput`, so this list is exactly the set of by-name text inputs —
- * an undeclared read throws rather than silently widening the input set.
- *
- * `src/straylight/index.ts` is the public-surface guard's input. The rest are
- * the estate domain model, read to prove Phase 50A did not touch it.
- */
-// straylight:no-leak-named-inputs:begin
-const NAMED_TEXT_INPUTS = [
-  'src/straylight/index.ts',
-  'src/straylight/types.ts',
-  'src/straylight/estate.ts',
-  'src/straylight/recall.ts',
-  'src/straylight/audit.ts',
-  'src/straylight/policy.ts',
-  'src/straylight/keyring.ts',
-  'src/straylight/signatures.ts',
-  'src/straylight/commitment.ts',
-  'src/straylight/storage/types.ts',
-  'src/straylight/storage/in-memory.ts',
-  'src/straylight/storage/jsonl.ts',
-  'scripts/phase-50a/hosts.js',
-] as const;
-// straylight:no-leak-named-inputs:end
+import { describe, expect, it } from 'vitest';
 
-/** Everything Phase 50A introduced or modified, as repository-relative paths. */
-const PHASE_50A_PATHS = SCANNED_TREE_ROOTS;
-
-/**
- * Read one declared by-name input. A path that is not in `NAMED_TEXT_INPUTS`
- * is REFUSED: that is what makes the declaration complete by construction
- * rather than by inspection, so a future read cannot quietly add an input the
- * workflow does not watch.
- */
-function readFixedInput(path: string): string {
-  if (!(NAMED_TEXT_INPUTS as readonly string[]).includes(path)) {
-    throw new Error(
-      `no-leak: ${path} is not a declared fixed input. Add it to NAMED_TEXT_INPUTS ` +
-        '(and give it workflow path coverage) rather than reading it directly.',
-    );
-  }
-  return readFileSync(resolve(ROOT, path), 'utf8');
-}
+import {
+  MANIFEST_PATH,
+  REPO_ROOT as ROOT,
+  manifestTrackedFiles,
+  readManifest,
+  readManifestInput,
+} from '../../scripts/phase-50a/proof-input-manifest.mjs';
 
 /**
  * The single deliberate exception to the credential scan: the non-production
@@ -136,43 +77,36 @@ interface TreeFile {
   text: string;
 }
 
-function walk(abs: string): string[] {
-  if (!safeStat(abs)) return [];
-  if (statSync(abs).isFile()) return [abs];
-  const out: string[] = [];
-  for (const entry of readdirSync(abs)) {
-    out.push(...walk(join(abs, entry)));
-  }
-  return out;
-}
-
-function safeStat(abs: string): boolean {
-  try {
-    statSync(abs);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
+/**
+ * The files this suite scans: every GIT-TRACKED file the MANIFEST covers.
+ *
+ * Read from the manifest, not restated. Tracked rather than on-disk, so an
+ * untracked scratch file can neither widen nor narrow the scanned set — the proof
+ * is about committed content. `manifestTrackedFiles` throws on a manifest that is
+ * missing, empty, unreadable, malformed, or names a root with no real tracked
+ * file, so this cannot silently scan nothing.
+ */
 function phase50aFiles(): TreeFile[] {
-  const out: TreeFile[] = [];
-  for (const entry of PHASE_50A_PATHS) {
-    for (const abs of walk(resolve(ROOT, entry))) {
-      out.push({ path: relative(ROOT, abs), text: readFileSync(abs, 'utf8') });
-    }
-  }
-  return out;
+  return manifestTrackedFiles().map((path) => ({
+    path,
+    text: readFileSync(resolve(ROOT, path), 'utf8'),
+  }));
 }
 
-describe('Phase 50A no-leak — the file set under scan is non-empty and complete', () => {
-  it('every declared Phase 50A path exists and contributes files', () => {
-    // Guard the guard: a typo'd path would silently scan nothing.
-    for (const entry of PHASE_50A_PATHS) {
-      const files = walk(resolve(ROOT, entry));
-      expect(files.length, `${entry} must exist and contain at least one file`).toBeGreaterThan(0);
-    }
-    expect(phase50aFiles().length).toBeGreaterThan(15);
+describe('Phase 50A no-leak — the scanned set comes from the manifest and is non-empty', () => {
+  it('the manifest is readable, non-vacuous, and every declared root contributes tracked files', () => {
+    // Guard the guard: a typo'd root, an empty manifest, or a root that resolves
+    // to nothing would silently scan too little. `manifestTrackedFiles` fails
+    // closed on each, so reaching a non-trivial file set IS the assertion.
+    const manifest = readManifest();
+    expect(manifest.roots.length, 'the manifest must declare roots').toBeGreaterThan(5);
+    const files = phase50aFiles();
+    expect(files.length, 'the manifest must resolve to a substantial tracked set').toBeGreaterThan(
+      40,
+    );
+    // The manifest covers ITSELF, so a change to the coverage model is in scope of
+    // the very scan it configures.
+    expect(files.map((f) => f.path)).toContain(MANIFEST_PATH);
   });
 });
 
@@ -372,15 +306,39 @@ describe('Phase 50A neutrality — no provider-specific concept in the implement
     // defines. If any of these files had changed, the packet says STOP AND
     // ESCALATE rather than proceed — so this test is the mechanical form of
     // that stop condition.
-    // Every domain file this reads is a declared fixed input (see
-    // NAMED_TEXT_INPUTS): the whole declared set minus the public-surface guard's
-    // own input and the harness module, which are asserted elsewhere.
-    const domainFiles = NAMED_TEXT_INPUTS.filter(
-      (p) => p !== 'src/straylight/index.ts' && p !== 'scripts/phase-50a/hosts.js',
+    //
+    // The set is DERIVED from the manifest, not restated: every tracked file
+    // directly under `src/straylight/` other than the PostgreSQL store subtree is
+    // domain code. Deriving it from the broad root means a NEW domain file is in
+    // scope automatically — which a named list could not achieve, and which is
+    // exactly why the manifest declares broad roots.
+    const domainFiles = manifestTrackedFiles().filter(
+      (p) =>
+        p.startsWith('src/straylight/') &&
+        !p.startsWith('src/straylight/storage/postgres/') &&
+        p.endsWith('.ts'),
     );
-    expect(domainFiles.length).toBeGreaterThan(10);
+    expect(domainFiles.length, 'the domain set must be substantial').toBeGreaterThan(10);
+    // The specific files the packet's stop condition names must be among them, so
+    // a derivation that silently produced a narrower set fails here.
+    for (const required of [
+      'src/straylight/index.ts',
+      'src/straylight/types.ts',
+      'src/straylight/estate.ts',
+      'src/straylight/recall.ts',
+      'src/straylight/audit.ts',
+      'src/straylight/policy.ts',
+      'src/straylight/keyring.ts',
+      'src/straylight/signatures.ts',
+      'src/straylight/commitment.ts',
+      'src/straylight/storage/types.ts',
+      'src/straylight/storage/in-memory.ts',
+      'src/straylight/storage/jsonl.ts',
+    ]) {
+      expect(domainFiles, `${required} must be a manifest-covered domain input`).toContain(required);
+    }
     for (const path of domainFiles) {
-      const text = readFixedInput(path);
+      const text = readManifestInput(path);
       // No domain file may reach into the adapter boundary or the driver.
       expect(/from\s+['"]pg['"]/.test(text), `${path} must not import pg`).toBe(false);
       expect(
@@ -397,8 +355,20 @@ describe('Phase 50A neutrality — no provider-specific concept in the implement
   it('the wedge public surface is NOT widened by Phase 50A', () => {
     // ADR-024G / ADR-026A §5 keep the root export type-only. Re-exporting the
     // store would make `pg` a runtime dependency of every type-only consumer.
-    const index = readFixedInput('src/straylight/index.ts');
+    const index = readManifestInput('src/straylight/index.ts');
     expect(/postgres/i.test(index), 'the wedge barrel must not export the store').toBe(false);
     expect(/from\s+['"]pg['"]/.test(index)).toBe(false);
+  });
+
+  it('an UNDECLARED input cannot be read through the manifest accessor', () => {
+    // The accessor is what keeps the declaration complete by construction: a read
+    // of something no root covers throws rather than quietly widening the input
+    // set behind the workflow's back.
+    expect(() => readManifestInput('src/straylight/no-such-undeclared-probe.ts')).toThrow(
+      /not covered by any declared root/,
+    );
+    // And a genuinely covered path is accepted, so the refusal is specific rather
+    // than blanket.
+    expect(() => readManifestInput('src/straylight/index.ts')).not.toThrow();
   });
 });

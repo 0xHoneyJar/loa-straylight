@@ -362,3 +362,35 @@ export const SELECT_AUDIT_EVENT_BY_ID = `
          audit_hash, previous_audit_hash, previous_audit_hash_key, payload
     FROM audit_events WHERE audit_event_id = $1
 `;
+
+// ── stored-placement validation (per estate, R2) ─────────────────────────
+//
+// Placement is STORE-ASSIGNED, so it is validated against the store's own
+// invariants rather than against any caller claim. Before an existing row may be
+// certified as the convergence target of an incoming write, its position must be
+// consistent with the per-estate DENSE-PREFIX invariant (positions are exactly
+// 1..n) and with the shipped constraints `CHECK (append_position >= 1)` and
+// `UNIQUE (estate_id, append_position)`.
+//
+// These statements return the estate's LIVE positions for one table. The
+// in-snapshot classifier in `session.ts` performs the same check against the
+// loaded snapshot; only the database can see a row committed by another
+// transaction between this session's load and its write, which is why the live
+// form exists here.
+
+export const SELECT_TRANSITION_POSITIONS = `
+  SELECT append_position FROM estate_transitions
+   WHERE estate_id = $1 ORDER BY append_position ASC
+`;
+export const SELECT_TRANSITION_RECEIPT_POSITIONS = `
+  SELECT append_position FROM transition_receipts
+   WHERE estate_id = $1 ORDER BY append_position ASC
+`;
+export const SELECT_RECALL_RECEIPT_POSITIONS = `
+  SELECT append_position FROM recall_receipts
+   WHERE estate_id = $1 ORDER BY append_position ASC
+`;
+export const SELECT_AUDIT_EVENT_POSITIONS = `
+  SELECT append_position FROM audit_events
+   WHERE estate_id = $1 ORDER BY append_position ASC
+`;

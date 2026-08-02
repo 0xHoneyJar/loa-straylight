@@ -1172,30 +1172,56 @@ maybe('Phase 50A patch — immutable-record idempotency compares the complete du
     }
   });
 
-  // ── rejection-remediation R2 — the loaded-prefix classifier ─────────────
+  // ── R2 (architecture correction) — the loaded-prefix classifier ──────────
   //
-  // The rejected implementation's `classifyExistingAppend` compared ONLY
-  // `canonicalPayload`. It ran before any position was claimed and had no
-  // notion of the position the append would occupy, so a row in the LOADED
-  // PREFIX carrying the same immutable id and the same payload was counted
-  // idempotent regardless of its promoted `append_position`. Codex's exact
-  // observation: a dense prefix with a filler at position 1 and the target
-  // id/payload at position 2 returned `committed: true` with
-  // `{inserted: 0, idempotent: 1}` — convergence claimed on a row that is not
-  // the row the caller offered, contradicting the complete-durable-row equality
-  // contract the proof document states (§5).
+  // TWO successive corrections are recorded here, because the second REPLACES
+  // the first and the distinction is the whole point.
   //
-  // The correction compares the COMPLETE durable row, including the append
-  // position the offer claims. `persist.ts` already did this against the LIVE
-  // database row; the two classifiers now agree on what makes two rows the same
-  // row, and the structural test below pins that agreement.
+  // The ORIGINAL defect: `classifyExistingAppend` compared ONLY
+  // `canonicalPayload`, so a row in the loaded prefix carrying the same
+  // immutable id and payload was counted idempotent regardless of the promoted
+  // `estate_id` it was stored under — convergence reported for a write that
+  // produced no row visible to the estate being written.
+  //
+  // The REJECTED correction added a session-local `offerPosition` ordinal and
+  // compared the stored `append_position` against it. That was unsound at the
+  // root and the durable REJECT reopened it: the adapter's append methods supply
+  // NO append position, so no caller-supplied position exists and none may be
+  // invented, and a counter that restarts at 1 in every transaction cannot
+  // establish a historical durable position. Concretely it FALSELY REFUSED a
+  // byte-identical replay of an independently committed operation — the case
+  // directly below, where the target is durable at position 2 and is offered
+  // first, so the ordinal claimed 1.
+  //
+  // The CLOSED design separates the two concerns the rejected code conflated:
+  //
+  //   caller-controlled immutable equality  ONE shared declaration in `rows.ts`
+  //       (payload carrying the record's own id, record estate, and for audit
+  //       events the chain fields including the normalized parent key), consumed
+  //       identically by this in-snapshot classifier and by the live-row
+  //       classifier in `persist.ts`. `append_position` is NOT in it.
+  //
+  //   store-assigned placement integrity    validated separately, against the
+  //       per-estate dense-prefix invariant and the shipped constraints.
+  //
+  //   session-estate binding                estate authority is the SESSION's
+  //       (the estate the host locked and loaded), not the record's self-report.
+  //
+  // Classification is therefore a pure function of the offered record, the
+  // session's bound estate, and the stored rows — independent of offer order.
 
-  it('R2: DENSE-PREFIX position mismatch is a conflict, not idempotency (exact Codex case)', async () => {
-    // Two distinct admissions. The FILLER occupies position 1; the TARGET's
-    // id/payload is planted at position 2. The prefix is DENSE, so the
-    // load-time guard passes and the classifier is genuinely reached — this is
-    // what distinguishes the defect from the already-proven prefix-movement
-    // case.
+  it('R2: a byte-identical replay of an independently committed operation CONVERGES regardless of offer order', async () => {
+    // THE EXACT CASE THE REJECTED ORDINAL GOT WRONG, now asserted with the sound
+    // outcome. Two operations were committed independently: the FILLER landed at
+    // position 1, the TARGET at position 2. A faithful retry of the second
+    // operation alone re-offers only the TARGET, so it is the FIRST offer of its
+    // session while its durable row sits at position 2.
+    //
+    // Under the rejected ordinal that was refused as `immutable_id_conflict`
+    // with "append_position: existing 2 != incoming 1". It is a RETRY: every
+    // caller-controlled field is byte-identical, and the position was never the
+    // caller's to supply. It must converge, consume no position, and create no
+    // duplicate.
     const target = captureAdmitRecords('r2 dense prefix target');
     const filler = captureAdmitRecords('r2 dense prefix filler');
     expect(target.transition.transition_id).not.toBe(filler.transition.transition_id);
@@ -1215,30 +1241,21 @@ maybe('Phase 50A patch — immutable-record idempotency compares the complete du
         );
       });
 
-      // Offering the TARGET first makes it the 1st append of this session while
-      // the durable row sits at position 2. Under the defect this reported
-      // committed=true, {inserted:0, idempotent:1}.
-      let caught: unknown;
-      let outcome: unknown;
-      try {
-        outcome = await probe.host.withEstateSession(ESTATE_ID, (storage) => {
-          storage.appendTransition(target.transition);
-          return 'offered';
-        });
-      } catch (err) {
-        caught = err;
-      }
+      const outcome = await probe.host.withEstateSession(ESTATE_ID, (storage) => {
+        storage.appendTransition(target.transition);
+        return 'offered';
+      });
 
-      expect(outcome, 'the mismatched offer must NOT be reported as committed').toBeUndefined();
-      expect(caught).toBeInstanceOf(PostgresIntegrityError);
-      expect(caught).toMatchObject({ reason: 'immutable_id_conflict' });
-      // The refusal names the PROMOTED column that differs — the payload is
-      // byte-identical here, so a payload-only comparison could not have found
-      // anything to report.
-      expect(String((caught as Error).message)).toContain('append_position');
+      // It CONVERGED: committed, zero inserts, one OBSERVABLE convergence — a
+      // retry's idempotency must not look the same as a callback that did
+      // nothing.
+      expect(outcome.committed).toBe(true);
+      expect(outcome.value).toBe('offered');
+      expect(outcome.persisted.inserted).toBe(0);
+      expect(outcome.persisted.idempotent).toBe(1);
 
-      // ZERO partial durability: both planted rows unchanged, nothing added,
-      // and nothing else from the refused session persisted.
+      // ZERO new positions and zero duplicates: the durable rows are EXACTLY
+      // what the two independent operations left, unchanged and unmoved.
       const after = await probe.host.withClient(async (client) => {
         const rows = await client.query<{ transition_id: string; p: string }>(
           `SELECT transition_id, append_position::text AS p
@@ -1256,6 +1273,80 @@ maybe('Phase 50A patch — immutable-record idempotency compares the complete du
         { transition_id: target.transition.transition_id, p: '2' },
       ]);
       expect(after.others).toEqual({ audits: '0', assertions: '0', receipts: '0' });
+
+      // Offering BOTH records — in the order that makes the target the SECOND
+      // offer rather than the first — converges identically. Classification does
+      // not depend on how many earlier appends the session made.
+      const reordered = await probe.host.withEstateSession(ESTATE_ID, (storage) => {
+        storage.appendTransition(filler.transition);
+        storage.appendTransition(target.transition);
+        return 'both';
+      });
+      expect(reordered.committed).toBe(true);
+      expect(reordered.persisted.inserted).toBe(0);
+      expect(reordered.persisted.idempotent).toBe(2);
+
+      const unchanged = await probe.host.withClient(async (client) => {
+        const rows = await client.query<{ transition_id: string; p: string }>(
+          `SELECT transition_id, append_position::text AS p
+             FROM estate_transitions ORDER BY append_position ASC`,
+        );
+        return rows.rows;
+      });
+      expect(unchanged).toEqual(after.rows);
+    } finally {
+      await probe.dispose();
+    }
+  });
+
+  it('R2: a DIFFERENT record reusing a durable immutable id is still refused, and rolls back', async () => {
+    // The companion boundary to the convergence above. Position is no longer
+    // compared, so a refusal must come from a CALLER-CONTROLLED field — here the
+    // payload. Without this, "stop comparing the position" could be misread as
+    // "stop refusing conflicting reuse", which it is not.
+    const target = captureAdmitRecords('r2 conflicting reuse target');
+    const probe = await openScratchDatabase(sourceHost(), 'r2-conflict-reuse');
+    try {
+      // A durable row under THIS estate at a sound position, carrying the
+      // target's id but a DIFFERENT payload.
+      await probe.host.withClient(async (client) => {
+        await client.query(
+          `INSERT INTO estate_transitions (transition_id, estate_id, append_position, payload)
+           VALUES ($1, $2, 1, $3::jsonb)`,
+          [
+            target.transition.transition_id,
+            ESTATE_ID,
+            JSON.stringify({ ...(target.transition as object), tampered: true }),
+          ],
+        );
+      });
+
+      let caught: unknown;
+      let outcome: unknown;
+      try {
+        outcome = await probe.host.withEstateSession(ESTATE_ID, (storage) => {
+          storage.appendTransition(target.transition);
+          return 'offered';
+        });
+      } catch (err) {
+        caught = err;
+      }
+      expect(outcome, 'conflicting reuse must NOT be reported as committed').toBeUndefined();
+      expect(caught).toBeInstanceOf(PostgresIntegrityError);
+      expect(caught).toMatchObject({ reason: 'immutable_id_conflict' });
+      // The refusal names a CALLER-CONTROLLED column.
+      expect(String((caught as Error).message)).toContain('payload');
+
+      // Zero partial durability.
+      const after = await probe.host.withClient(async (client) => {
+        const r = await client.query<{ t: string; au: string; tr: string }>(
+          `SELECT (SELECT count(*)::text FROM estate_transitions)  AS t,
+                  (SELECT count(*)::text FROM audit_events)        AS au,
+                  (SELECT count(*)::text FROM transition_receipts) AS tr`,
+        );
+        return r.rows[0];
+      });
+      expect(after).toEqual({ t: '1', au: '0', tr: '0' });
     } finally {
       await probe.dispose();
     }
@@ -1297,13 +1388,23 @@ maybe('Phase 50A patch — immutable-record idempotency compares the complete du
     }
   });
 
-  it('R2: the session classifier and persist.ts compare the SAME durable column set', async () => {
-    // A STRUCTURAL guard, because the two classifiers cannot share code: only
-    // `session.ts` is in this remediation's authorized scope, and `persist.ts`
-    // is byte-unchanged. The defect was precisely that the two disagreed about
-    // what makes two rows the same row — the live one compared the complete row
-    // while the in-session one compared the payload alone. This test fails if
-    // either side's column set changes without the other.
+  it('R2: the caller-controlled comparison is declared ONCE and shared by both classifiers', async () => {
+    // The correction is a SINGLE DECLARATION, not two agreeing copies. The
+    // rejected shape had `session.ts` build its own `durableRowOf` while
+    // `persist.ts` built its own `durableColumns`; the structural test then
+    // checked that each file merely MENTIONED the same column names, which a
+    // rename or a divergent edit on one side could satisfy while the two
+    // disagreed about semantics.
+    //
+    // Now `rows.ts` declares the caller-controlled set once
+    // (`CALLER_CONTROLLED_COLUMNS` / `callerControlledRow` /
+    // `firstCallerControlledMismatch`) and BOTH classifiers import it. This test
+    // pins that: neither consumer may declare its own comparison basis, and the
+    // shared declaration's contents are asserted directly.
+    const rowsSrc = readFileSync(
+      resolve(REPO_ROOT, 'src/straylight/storage/postgres/rows.ts'),
+      'utf8',
+    );
     const sessionSrc = readFileSync(
       resolve(REPO_ROOT, 'src/straylight/storage/postgres/session.ts'),
       'utf8',
@@ -1313,8 +1414,116 @@ maybe('Phase 50A patch — immutable-record idempotency compares the complete du
       'utf8',
     );
 
-    // Every promoted column persist.ts binds for the audit-event INSERT (its
-    // widest row) must appear in the session's comparison basis.
+    // (1) The declaration lives in ONE place and is what both sides import.
+    const { CALLER_CONTROLLED_COLUMNS, callerControlledRow, firstCallerControlledMismatch } =
+      await import('../../src/straylight/storage/postgres/rows.js');
+    expect(rowsSrc).toContain('export const CALLER_CONTROLLED_COLUMNS');
+    for (const consumer of [sessionSrc, persistSrc]) {
+      expect(consumer, 'both classifiers must import the shared comparison').toMatch(
+        /firstCallerControlledMismatch/,
+      );
+      expect(consumer, 'both classifiers must build rows through the shared builder').toMatch(
+        /callerControlledRow\(/,
+      );
+      // Neither consumer may declare its own comparison basis or comparator.
+      expect(
+        consumer,
+        'a consumer must not re-declare the comparison basis (that is how the two drifted)',
+      ).not.toMatch(/^(?:export\s+)?(?:function|type|const)\s+durableRowOf\b/m);
+      expect(consumer).not.toMatch(/^(?:export\s+)?function\s+firstDurableMismatch\b/m);
+    }
+
+    // (2) The shared set is EXACTLY the caller-controlled fields — and
+    // `append_position` is ABSENT, because it is store-assigned. Re-adding it
+    // fails here: that is the abstraction the durable REJECT found unsound.
+    expect([...CALLER_CONTROLLED_COLUMNS]).toEqual([
+      'payload',
+      'estate_id',
+      'audit_hash',
+      'previous_audit_hash',
+      'previous_audit_hash_key',
+    ]);
+    expect(
+      CALLER_CONTROLLED_COLUMNS as readonly string[],
+      'append_position is STORE-assigned and must never be compared as caller-supplied',
+    ).not.toContain('append_position');
+
+    // (3) The builder promotes exactly those fields and nothing positional.
+    const auditRow = callerControlledRow(ESTATE_ID, {
+      audit_event_id: 'audit:probe',
+      estate_id: ESTATE_ID,
+      audit_hash: 'sha256:probe',
+      previous_audit_hash: undefined,
+    });
+    expect(Object.keys(auditRow).sort()).toEqual([
+      'audit_hash',
+      'estate_id',
+      'payload',
+      'previous_audit_hash',
+      'previous_audit_hash_key',
+    ]);
+    // Genesis: the nullable column is NULL while the normalized key is '' — the
+    // two are DISTINCT enforcement columns and must never be conflated.
+    expect(auditRow['previous_audit_hash']).toBeNull();
+    expect(auditRow['previous_audit_hash_key']).toBe('');
+    expect(
+      firstCallerControlledMismatch(
+        { previous_audit_hash: null, previous_audit_hash_key: '' },
+        { previous_audit_hash: '', previous_audit_hash_key: '' },
+      ),
+      "NULL must never be conflated with ''",
+    ).toMatchObject({ column: 'previous_audit_hash' });
+    // A non-chain-linked row carries only the two universal fields.
+    const plainRow = callerControlledRow(ESTATE_ID, { transition_id: 't', estate_id: ESTATE_ID });
+    expect(Object.keys(plainRow).sort()).toEqual(['estate_id', 'payload']);
+    // And a column present on one side only is a DIFFERENCE, not an unchecked
+    // field, so a chain-linked record cannot converge on a plain row.
+    expect(firstCallerControlledMismatch(plainRow, auditRow)).not.toBeNull();
+
+    // (4) The session classifier decides from the shared comparator, over the
+    // SESSION's bound estate — not the record's self-report — and validates
+    // stored placement separately.
+    const body = extractFunctionBody(sessionSrc, 'classifyExistingAppend');
+    expect(body, 'the offered row must be built under the SESSION\'s estate authority').toMatch(
+      /callerControlledRow\(\s*this\.boundEstateId\s*,\s*incoming\s*\)/,
+    );
+    expect(body, 'the stored row must be built from the row\'s own promoted estate').toMatch(
+      /callerControlledRow\(\s*row\.estate_id\s*,\s*row\.record\s*\)/,
+    );
+    expect(body, 'the decision must come from the shared comparator').toMatch(
+      /firstCallerControlledMismatch\(/,
+    );
+    expect(body, 'a conflict is raised on any caller-controlled mismatch').toMatch(
+      /mismatch\s*!==\s*null/,
+    );
+    expect(body, 'stored placement must be validated SEPARATELY').toMatch(
+      /storedPlacementViolation\(/,
+    );
+    // No session-local or callback-local append ordinal may exist IN CODE, under
+    // any spelling. This is the abstraction that was deleted.
+    //
+    // Comments are STRIPPED before the check, deliberately: prose recording WHY
+    // the ordinal was removed is load-bearing documentation and must stay
+    // readable, while a declaration or a use must fail. Checking raw bytes would
+    // force the correction to be silent about the defect it closes.
+    const sessionCode = stripComments(sessionSrc);
+    expect(sessionCode, 'the offered-ordinal abstraction must be GONE from the code').not.toMatch(
+      /offerPosition|offered[A-Za-z]*Pos\b/,
+    );
+    // The stripper is not vacuous: it keeps code and drops the prose that
+    // mentions the removed names.
+    expect(sessionCode, 'the stripper must keep real code').toContain('classifyExistingAppend');
+    expect(sessionSrc, 'the prose explaining the removal is expected to survive in the file').toMatch(
+      /offerPosition/,
+    );
+    // The classifier must not decide on a direct payload-to-payload comparison
+    // under any spelling.
+    expect(sessionSrc).not.toMatch(
+      /canonicalPayload\([^)]*\)\s*(?:===|!==|==|!=)\s*canonicalPayload\(/,
+    );
+
+    // (5) persist.ts still BINDS every durable column it INSERTs — including
+    // append_position — while comparing only the caller-controlled subset.
     for (const column of [
       'estate_id',
       'append_position',
@@ -1324,55 +1533,17 @@ maybe('Phase 50A patch — immutable-record idempotency compares the complete du
       'payload',
     ]) {
       expect(persistSrc, `persist.ts must bind ${column}`).toContain(`${column}:`);
-      expect(sessionSrc, `session.ts must compare ${column}`).toContain(column);
     }
-
-    // The session classifier must NOT reach its decision by comparing the two
-    // canonical payloads DIRECTLY, under any spelling. Banning one `if (...)`
-    // shape is not enough — the rejected comparison can be rewritten as a
-    // ternary, a variable, or an early return. What is checked is that the two
-    // payloads are never compared to each other anywhere in the file.
-    expect(
-      sessionSrc,
-      'the classifier must not decide on a direct payload-to-payload comparison',
-    ).not.toMatch(
-      /canonicalPayload\([^)]*\)\s*(?:===|!==|==|!=)\s*canonicalPayload\(/,
+    expect(persistSrc, 'persist.ts must still prove its bind set matches the INSERT').toContain(
+      'assertColumnsMatchStatement',
+    );
+    expect(persistSrc, 'persist.ts must validate live placement separately').toMatch(
+      /storedPlacementViolation\(/,
     );
 
-    // The classification must be DERIVED from the complete-row comparison. The
-    // body of `classifyExistingAppend` is extracted and inspected, so a helper
-    // that merely exists elsewhere in the file cannot satisfy this.
-    const body = extractFunctionBody(sessionSrc, 'classifyExistingAppend');
-    expect(body, 'classifyExistingAppend must build the existing durable row').toMatch(
-      /durableRowOf\(\s*row\.estate_id\s*,\s*row\.append_position\s*,\s*row\.record\s*\)/,
-    );
-    expect(body, 'classifyExistingAppend must build the offered durable row').toMatch(
-      /durableRowOf\(\s*estate_id\s*,\s*offeredPosition\s*,\s*incoming\s*\)/,
-    );
-    expect(body, 'the decision must come from the complete-row mismatch').toMatch(
-      /firstDurableMismatch\(/,
-    );
-    // The idempotent branch must be gated on "no mismatch", not on anything
-    // weaker.
-    expect(body).toMatch(/mismatch\s*===\s*null/);
-    // Every caller must supply a real offered position, not a constant. Four
-    // append-only writers exist, and each must pass an `offerPosition(...)`
-    // call — a hardcoded literal would make the position check vacuous.
-    const offers = [...sessionSrc.matchAll(/this\.offerPosition\(\s*this\.offered\w+\s*,/g)];
-    expect(offers, 'every append-only writer must offer a counted position').toHaveLength(4);
-    // And the comparison must include the position column itself.
-    const rowBuilder = extractFunctionBody(sessionSrc, 'durableRowOf');
-    for (const column of ['estate_id', 'append_position', 'payload']) {
-      expect(rowBuilder, `durableRowOf must promote ${column}`).toContain(column);
-    }
-    expect(rowBuilder, 'durableRowOf must promote the audit chain columns').toMatch(
-      /previous_audit_hash_key/,
-    );
-
-    // Behavioural half of the same claim: the two classifiers agree that a
-    // same-payload row under a DIFFERENT estate is a conflict. (The live
-    // classifier's path — the planted row is invisible to this estate's
-    // snapshot, so the collision surfaces at INSERT time.)
+    // (6) Behavioural half: BOTH classifiers refuse a cross-estate reuse of an
+    // immutable id. Here the planted row is invisible to this estate's snapshot,
+    // so the collision surfaces at INSERT time and the LIVE classifier decides.
     const captured = captureAdmitRecords('r2 shared basis');
     const probe = await openScratchDatabase(sourceHost(), 'r2-shared-basis');
     try {
@@ -1703,6 +1874,60 @@ describe('Phase 50A remediation R4 — the callback-inspection union has a REAL 
  * (rather than a line window) means a body cannot slip out of the inspected
  * region by growing.
  */
+/**
+ * TypeScript source with comments and string/template literals removed, so a
+ * structural assertion inspects CODE rather than prose.
+ *
+ * Needed because the R2 correction DELETED an abstraction and must still be able
+ * to explain why in comments. A raw-byte ban on the removed identifiers would
+ * force the code to be silent about the defect it closes; a ban on the stripped
+ * code says exactly what is meant — the name may be discussed, never declared or
+ * used. String and template literals go too, since an error message legitimately
+ * names columns.
+ *
+ * Deliberately simple: a character scanner, not a parser. It handles line
+ * comments, block comments, and the three quote forms with escapes, which is
+ * every construct these files use. Regex literals are not special-cased because
+ * neither file contains one; a `/` outside a comment or string is left as-is.
+ */
+function stripComments(source: string): string {
+  let out = '';
+  let i = 0;
+  while (i < source.length) {
+    const two = source.slice(i, i + 2);
+    if (two === '//') {
+      const end = source.indexOf('\n', i);
+      i = end === -1 ? source.length : end;
+      continue;
+    }
+    if (two === '/*') {
+      const end = source.indexOf('*/', i + 2);
+      i = end === -1 ? source.length : end + 2;
+      continue;
+    }
+    const ch = source[i]!;
+    if (ch === "'" || ch === '"' || ch === '`') {
+      // Consume the literal, including escapes, emitting nothing.
+      i += 1;
+      while (i < source.length) {
+        if (source[i] === '\\') {
+          i += 2;
+          continue;
+        }
+        if (source[i] === ch) {
+          i += 1;
+          break;
+        }
+        i += 1;
+      }
+      continue;
+    }
+    out += ch;
+    i += 1;
+  }
+  return out;
+}
+
 function extractFunctionBody(source: string, name: string): string {
   // Match the DECLARATION, not a call site: a top-level `function name(` or a
   // class member (`private name<T>(`, `name(`) at the start of a line. Anchoring

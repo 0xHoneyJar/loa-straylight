@@ -147,7 +147,9 @@ export function verifyChains(snapshot: StoreSnapshot): ChainVerification[] {
         record: r.record as never,
       })),
     };
-    const probe = new PostgresAdapterSession(state);
+    // Read-only chain verification for ONE estate: the probe session is bound to
+    // exactly that estate (R2).
+    const probe = new PostgresAdapterSession(state, estate_id);
     const verdict = new AuditLog(probe).verifyChain(estate_id);
     const tail = probe.getAuditTail(estate_id);
     probe.abandon();

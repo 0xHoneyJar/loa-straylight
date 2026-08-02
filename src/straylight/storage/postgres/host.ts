@@ -148,7 +148,12 @@ export class PostgresEstateHost {
       const state = await loadEstateState(client, estate_id);
       const loadedFingerprint = fingerprintOf(state, estate_id);
 
-      session = new PostgresAdapterSession(state);
+      // The session is BOUND to the estate this transaction locked and loaded
+      // (R2). That binding is the store's estate authority: every append-only
+      // write must declare exactly this estate, and a record naming any other is
+      // refused as an integrity violation that rolls the transaction back. A
+      // record cannot vouch for its own estate; the locked estate can.
+      session = new PostgresAdapterSession(state, estate_id);
       const value = body(session);
 
       // FIRST thing after the callback returns, before `session.close()`,
@@ -382,7 +387,8 @@ export class PostgresEstateHost {
  */
 async function assertDurableChainIntact(client: PoolClient, estate_id: ID): Promise<void> {
   const state = await loadEstateState(client, estate_id);
-  const probe = new PostgresAdapterSession(state);
+  // Read-only post-write verification for ONE estate: bound to that estate (R2).
+  const probe = new PostgresAdapterSession(state, estate_id);
   const verdict = new AuditLog(probe).verifyChain(estate_id);
   probe.abandon();
   if (!verdict.ok) {
