@@ -75,6 +75,14 @@ jobs:
     name: Canonical store — two-host proof
     runs-on: ubuntu-latest
 
+    # BOUNDED. The default job limit is six hours, which turns a stall into an
+    # opaque, very late failure — the first attempt at this proof sat in one step
+    # for over two hours while the same work completed in well under a minute
+    # locally. 45 minutes is comfortably above the observed full-run cost and
+    # fails fast on a genuine stall, so a timeout is diagnosable rather than
+    # indistinguishable from slowness.
+    timeout-minutes: 45
+
     # TWO separately initialized PostgreSQL servers, on two different ports.
     # Not one server with two databases: §13.1(i) requires the restore to land
     # in a different conforming host, and the proof mechanically verifies the

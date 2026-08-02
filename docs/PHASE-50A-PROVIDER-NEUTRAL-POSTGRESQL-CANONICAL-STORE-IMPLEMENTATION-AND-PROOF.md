@@ -1622,6 +1622,41 @@ input, so a dispatch cannot redirect the proof at another repository, ref, or
 configuration. Both SHA values reach their scripts through the **environment**,
 never interpolated into shell text.
 
+### 16.5a Making the nested harnesses runnable on a hosted runner
+
+Both mutation harnesses run an inner `vitest` per mutation against a disposable
+copy of the tree. Two properties of that design had to be corrected before the
+remote proof could complete, and both were found *by* the remote proof rather
+than reasoned about in advance:
+
+* **The non-vacuity guard was ANSI-dependent.** It requires the inner run to
+  report `Tests N passed|failed`, because a `-t` pattern matching no tests can
+  exit 0 and would make every mutation look like a pass. Vitest colourizes that
+  summary under the runner's terminal settings, so the guard matched nothing and
+  twenty otherwise-correct cases reported "the inner run must report test
+  results". Captured output is now normalized through a stripper before every
+  assertion, and a test asserts the stripper directly against both the colourized
+  and the plain form — including that a zero-match run is still rejected either
+  way. Verified under `FORCE_COLOR=3 CI=true`.
+
+* **Each copy was far larger than the manifest needs.** The R3 harness copied
+  `docs/` wholesale — 6.4 MB of unrelated ADRs — into each of ~30 copies. On a
+  hosted runner's slower disk that dominated the step's wall clock: the first
+  attempt sat in `npm test` for over two hours without finishing, while the same
+  harnesses complete in ~26 s locally even pinned to two cores. Only the two
+  `docs` paths the manifest actually declares are copied now.
+
+Two bounds were added so a future stall is diagnosable rather than opaque: each
+inner run carries an explicit `timeout` with `SIGKILL` (a killed run reports no
+test results, so the non-vacuity guard fails loudly instead of the mutation
+looking like a pass), and the workflow job carries `timeout-minutes: 45` —
+comfortably above the observed full-run cost, well below the six-hour default
+that made slowness indistinguishable from a hang.
+
+Verified after both corrections, under the runner's own conditions
+(`taskset -c 0,1`, `CI=true`, `FORCE_COLOR=3`): the whole suite completes in
+70 s — 87 files, 2208 passed, 149 database-gated skips.
+
 ### 16.6 Scope of this slice
 
 Changed, and all inside the packet's seven allowed paths:

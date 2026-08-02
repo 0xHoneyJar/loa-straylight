@@ -112,6 +112,12 @@ maybe('Phase 50A R2 — independent mutation matrix (each mutation must FAIL a n
           cwd: dir,
           encoding: 'utf8',
           env: { ...process.env, STRAYLIGHT_PHASE_50A_POSTGRES: '1' },
+          // BOUNDED. An inner run that hung would otherwise park this suite until
+          // the CI job's own limit, turning a diagnosable failure into an opaque
+          // timeout. A killed run reports no test results, so `assertRanTests`
+          // fails loudly instead of the mutation looking like a pass.
+          timeout: 180_000,
+          killSignal: 'SIGKILL',
         },
       );
       return {

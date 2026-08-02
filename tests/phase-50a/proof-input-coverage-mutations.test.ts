@@ -27,7 +27,15 @@
 // repository file is unchanged afterwards.
 
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -77,9 +85,15 @@ function runMutated(
   try {
     // Every tree and file the MANIFEST declares must exist in the copy, or a root
     // would resolve to nothing and every mutation would fail for that reason
-    // instead of the intended one. `docs/` is included in full because two
-    // manifest roots live under it.
-    for (const tree of ['src', 'tests', 'fixtures', 'scripts', 'migrations', 'docs', '.github']) {
+    // instead of the intended one.
+    //
+    // The set is MINIMAL on purpose. Copying `docs/` wholesale pulled 6.4 MB of
+    // unrelated ADRs into each of ~30 copies; on a hosted runner's slower disk
+    // that dominated the step's wall clock so heavily that the first attempt at
+    // this proof ran for over two hours without finishing, while completing in
+    // ~26 s locally (even pinned to two cores). Only the two `docs` paths the
+    // manifest actually declares are copied.
+    for (const tree of ['src', 'tests', 'fixtures', 'scripts', 'migrations', '.github']) {
       cpSync(resolve(REPO_ROOT, tree), join(dir, tree), { recursive: true });
     }
     for (const file of [
@@ -87,9 +101,15 @@ function runMutated(
       'package.json',
       'package-lock.json',
       'docker-compose.phase-50a.yml',
+      // The proof document — a declared manifest root, copied individually rather
+      // than by pulling in all of `docs/`.
+      'docs/PHASE-50A-PROVIDER-NEUTRAL-POSTGRESQL-CANONICAL-STORE-IMPLEMENTATION-AND-PROOF.md',
     ]) {
+      mkdirSync(dirname(join(dir, file)), { recursive: true });
       cpSync(resolve(REPO_ROOT, file), join(dir, file));
     }
+    // `docs/runbooks` — the other declared `docs` root.
+    cpSync(resolve(REPO_ROOT, 'docs/runbooks'), join(dir, 'docs/runbooks'), { recursive: true });
     // No harness inside the copy → no recursion.
     rmSync(join(dir, 'tests/phase-50a', SELF), { force: true });
 
@@ -127,7 +147,18 @@ function runMutated(
         '-t',
         testNamePattern,
       ],
-      { cwd: dir, encoding: 'utf8' },
+      {
+        cwd: dir,
+        encoding: 'utf8',
+        // BOUNDED. An inner run that hung would otherwise park this suite until
+        // the CI job's own limit, turning a diagnosable failure into an opaque
+        // timeout — which is exactly what a slower runner turned the first
+        // attempt at this proof into. A killed run reports no test results, so
+        // `assertRanTests` fails loudly instead of the mutation looking like a
+        // pass.
+        timeout: 120_000,
+        killSignal: 'SIGKILL',
+      },
     );
     return {
       ok: run.status === 0,
