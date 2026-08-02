@@ -129,10 +129,30 @@ function runMutated(
       ],
       { cwd: dir, encoding: 'utf8' },
     );
-    return { ok: run.status === 0, output: `${run.stdout ?? ''}${run.stderr ?? ''}` };
+    return {
+      ok: run.status === 0,
+      output: stripAnsi(`${run.stdout ?? ''}${run.stderr ?? ''}`),
+    };
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+/**
+ * Remove ANSI escape sequences from captured output.
+ *
+ * Load-bearing rather than cosmetic. Vitest colourizes its summary when it
+ * believes the stream supports it, so `Tests  1 passed` arrives as
+ * `Tests \x1b[1m\x1b[32m1 passed\x1b[…` under CI's terminal settings while
+ * being plain locally. Every assertion below matches against this normalized
+ * text, so the harness behaves identically in both places — a guard that only
+ * held locally would be no guard at all on the remote proof.
+ */
+function stripAnsi(text: string): string {
+  // The escape byte is built from its code point so this source carries no
+  // literal control character.
+  const esc = String.fromCharCode(27);
+  return text.replace(new RegExp(`${esc}\\[[0-9;]*[A-Za-z]`, 'g'), '');
 }
 
 /**
@@ -157,6 +177,35 @@ function removeTriggerLine(workflow: string, glob: string): string {
 }
 
 describe('Phase 50A R3 — independent probe/mutation matrix (each must FAIL a named test)', () => {
+  it('the non-vacuity guard survives COLOURIZED output (the remote-runner condition)', () => {
+    // The first remote run of this slice failed here and nowhere else: vitest
+    // colourizes its summary under the runner's terminal settings, so the plain
+    // `Tests  1 passed` the guard matched locally arrived with escape sequences
+    // interleaved and matched nothing. The guard then reported "the inner run must
+    // report test results" for twenty otherwise-correct cases.
+    //
+    // The stripper is therefore asserted DIRECTLY, against both forms, so the
+    // guard is proven to behave identically locally and remotely rather than being
+    // trusted to.
+    const esc = String.fromCharCode(27);
+    const colourized = `      Tests  ${esc}[1m${esc}[32m1 passed${esc}[39m${esc}[22m (1)\n`;
+    const plain = '      Tests  1 passed (1)\n';
+
+    // Before stripping, the colourized form does NOT match — this is the defect.
+    expect(/Tests\s+\d+\s+(?:passed|failed)/.test(colourized)).toBe(false);
+    // After stripping, both forms are accepted identically.
+    for (const form of [colourized, plain]) {
+      expect(() => assertRanTests({ output: stripAnsi(form) }, 'stripper probe')).not.toThrow();
+    }
+    // And the stripper does not defeat the guard's real purpose: a zero-match run
+    // is still rejected, colourized or not.
+    for (const form of [`      Tests  ${esc}[1m0 passed${esc}[22m (0)\n`, '      Tests  0 passed (0)\n']) {
+      expect(() => assertRanTests({ output: stripAnsi(form) }, 'stripper probe')).toThrow(
+        /ZERO tests/,
+      );
+    }
+  });
+
   it('BASELINE: the UNMUTATED copy PASSES the coverage claim (the harness is sound)', () => {
     const result = runMutated(
       MANIFEST_PATH,

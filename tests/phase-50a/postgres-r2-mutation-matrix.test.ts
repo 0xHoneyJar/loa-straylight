@@ -116,11 +116,28 @@ maybe('Phase 50A R2 — independent mutation matrix (each mutation must FAIL a n
       );
       return {
         ok: run.status === 0,
-        output: `${run.stdout ?? ''}${run.stderr ?? ''}`,
+        output: stripAnsi(`${run.stdout ?? ''}${run.stderr ?? ''}`),
       };
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  }
+
+  /**
+   * Remove ANSI escape sequences from captured output.
+   *
+   * Load-bearing rather than cosmetic. Vitest colourizes its summary when it
+   * believes the stream supports it, so `Tests  1 passed` arrives with escape
+   * sequences interleaved under CI's terminal settings while being plain
+   * locally. Every assertion below matches against this NORMALIZED text, so the
+   * harness behaves identically in both places — a guard that only held locally
+   * would be no guard at all on the remote proof, which is where it matters.
+   */
+  function stripAnsi(text: string): string {
+    // The escape byte is built from its code point so this source carries no
+    // literal control character.
+    const esc = String.fromCharCode(27);
+    return text.replace(new RegExp(`${esc}\\[[0-9;]*[A-Za-z]`, 'g'), '');
   }
 
   /**
@@ -130,7 +147,7 @@ maybe('Phase 50A R2 — independent mutation matrix (each mutation must FAIL a n
    */
   function assertRanTests(result: { output: string }, context: string): void {
     expect(result.output, `${context}: the inner run must report test results`).toMatch(
-      /Tests\s+\d+\s+(?:passed|failed)|Tests\s+\d+\s+failed/,
+      /Tests\s+\d+\s+(?:passed|failed)/,
     );
     expect(
       /Tests\s+0\s+passed\s*\(0\)/.test(result.output),
