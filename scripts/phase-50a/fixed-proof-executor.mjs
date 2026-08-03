@@ -355,6 +355,7 @@ export function runFixedProof({
   env = process.env,
   repoRoot = REPO_ROOT,
   selfPath = fileURLToPath(import.meta.url),
+  announce = () => {},
 } = {}) {
   const receipts = [];
   const base = {
@@ -443,6 +444,26 @@ export function runFixedProof({
   }
 
   // ── THE GATE HAS SUCCEEDED. Only now may schedule commands launch. ────
+  //
+  // Announce the identity facts HERE, at the moment the gate passes and before
+  // the first launch, so the job log itself carries the ordering evidence: the
+  // banner cannot appear after a schedule command's output, because it is
+  // written before the loop starts. The closing envelope repeats these facts,
+  // but a reader would have to trust the code's structure to know the envelope
+  // was not assembled after the fact. This line is checkable on its own.
+  announce(
+    [
+      "── Phase 50A identity gate: PASSED ─────────────────────────────────",
+      `wrapper_digest    : ${wrapperDigest}`,
+      `executor_digest   : ${base.executor_digest ?? "(unreadable)"}`,
+      `expected_head_sha : ${expectedRaw}`,
+      `observed_head     : ${observed}`,
+      `schedule_length   : ${SCHEDULE.length}`,
+      "No schedule command has been launched yet. Launching now, in order.",
+      "────────────────────────────────────────────────────────────────────",
+    ].join("\n"),
+  );
+
   for (let i = 0; i < SCHEDULE.length; i += 1) {
     const entry = SCHEDULE[i];
     const ordinal = i + 1;
@@ -504,7 +525,9 @@ export function renderReport(result) {
 
 // Entry point. Kept minimal: the logic above is what the tests exercise.
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
-  const result = runFixedProof();
+  const result = runFixedProof({
+    announce: (text) => process.stdout.write(text + "\n"),
+  });
   process.stdout.write(renderReport(result) + "\n");
   process.exit(result.ok ? 0 : 1);
 }

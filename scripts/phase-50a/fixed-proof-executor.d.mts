@@ -125,6 +125,13 @@ export interface RunFixedProofOptions {
   repoRoot?: string;
   /** Path whose bytes produce the executor self-digest. */
   selfPath?: string;
+  /**
+   * Sink for the identity-gate banner, written at the moment the gate passes
+   * and BEFORE the first schedule launch — so the job log itself carries the
+   * ordering evidence rather than requiring the reader to trust code structure.
+   * Defaults to a no-op; the CLI entry point writes to stdout.
+   */
+  announce?: (text: string) => void;
 }
 
 /**

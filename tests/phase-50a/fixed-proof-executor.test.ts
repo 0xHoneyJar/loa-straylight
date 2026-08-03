@@ -295,6 +295,57 @@ describe('Phase 50A R3 — the closed schedule covers the proof and is fixed', (
     expect(result.launches).toBe(SCHEDULE.length);
   });
 
+  it('the identity banner is emitted BEFORE the first schedule launch', () => {
+    // The published envelope is assembled at the END of the run, so a reader of
+    // the job log has to trust the code's structure to believe the identity
+    // check preceded the work. The banner removes that inference: it is written
+    // at the moment the gate passes, so its position in the interleaved log is
+    // itself the ordering evidence. Asserted here over a shared event log, in
+    // ordinary control flow.
+    const head = repoHead();
+    const events: string[] = [];
+    const stub = makeStub(head);
+    const result = runFixedProof({
+      run: (entry) => {
+        events.push(`launch:${entry.label}`);
+        return stub.run(entry);
+      },
+      env: { [EXPECTED_HEAD_ENV]: head },
+      repoRoot: ROOT,
+      selfPath: EXECUTOR_ABS,
+      announce: (text) => events.push(`announce:${text}`),
+    });
+    expect(result.ok).toBe(true);
+    const announceAt = events.findIndex((e) => e.startsWith('announce:'));
+    const firstScheduleAt = events.findIndex((e) => e === `launch:${SCHEDULE[0]!.label}`);
+    expect(announceAt, 'the banner must be emitted').toBeGreaterThan(-1);
+    expect(announceAt, 'the banner must precede the first schedule launch').toBeLessThan(
+      firstScheduleAt,
+    );
+    // It carries the facts an auditor needs, and says plainly that nothing has
+    // run yet.
+    const banner = events[announceAt]!;
+    expect(banner).toContain(PACKET_WRAPPER_SHA256);
+    expect(banner).toContain(head);
+    expect(banner).toContain('No schedule command has been launched yet');
+  });
+
+  it('a REFUSED run emits NO identity banner', () => {
+    // The banner asserts "the gate passed". A refusal must never print it, or
+    // the log would claim an identity that was never established.
+    const events: string[] = [];
+    const result = runFixedProof({
+      run: makeStub(OTHER_SHA, { head: OTHER_SHA }).run,
+      env: { [EXPECTED_HEAD_ENV]: repoHead() },
+      repoRoot: ROOT,
+      selfPath: EXECUTOR_ABS,
+      announce: (text) => events.push(text),
+    });
+    expect(result.ok).toBe(false);
+    expect(result.refusal).toBe(REFUSAL.headMismatch);
+    expect(events, 'a refused run announces no passed gate').toEqual([]);
+  });
+
   it('ZERO LAUNCHES BEFORE IDENTITY: the probe is the only pre-gate launch', () => {
     const head = repoHead();
     const stub = makeStub(head);

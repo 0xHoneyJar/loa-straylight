@@ -2139,8 +2139,8 @@ The byte comparison against the packet is **authoritative**. A green remote run 
 
 ### 18.3 The fixed executor
 
-`scripts/phase-50a/fixed-proof-executor.mjs` (**20396** bytes, SHA-256
-`497ae79c165c636a87fba23c8f14b4c01b909d00a1ea64ec56998a47e6468cce`), with
+`scripts/phase-50a/fixed-proof-executor.mjs` (**21687** bytes, SHA-256
+`83b8307d92fe0a6942d71b84643fdccb8305b013c3ea948249d8fff07e78ad85`), with
 declarations at `scripts/phase-50a/fixed-proof-executor.d.mts`.
 
 - It carries the packet-authorized wrapper digest as a **literal committed
@@ -2172,6 +2172,13 @@ declarations at `scripts/phase-50a/fixed-proof-executor.d.mts`.
 - **Publishes on every run, including a refused one:** wrapper path and observed
   digest, expected wrapper digest, executor self-digest, expected SHA, observed
   HEAD, and the ordered receipts — identity facts always **before** the receipts.
+- **Announces the passed gate in the log, before the first launch.** The closing
+  envelope is assembled at the end of a run, so a reader of the job log would have
+  to trust the code's structure to believe the identity check preceded the work.
+  The banner removes that inference: it is written at the moment the gate passes,
+  so its **position in the interleaved log is itself the ordering evidence**. A
+  refused run emits **no** banner — it would otherwise claim an identity that was
+  never established.
 - **Contains no** markup parser, markup-shaped line scanner, shell parser,
   command-word splitter, comment stripping, positional provenance, dynamic code
   evaluation, dynamic module or command loading, configuration loading, or shell
@@ -2180,8 +2187,8 @@ declarations at `scripts/phase-50a/fixed-proof-executor.d.mts`.
 
 ### 18.4 Tests
 
-`tests/phase-50a/fixed-proof-executor.test.ts` (34 tests) and
-`tests/phase-50a/proof-executor-envelope.test.ts` (16 tests) — **50 passed**.
+`tests/phase-50a/fixed-proof-executor.test.ts` (36 tests) and
+`tests/phase-50a/proof-executor-envelope.test.ts` (16 tests) — **52 passed**.
 
 The wrapper's expected length and digest are **literal constants of the test file**,
 transcribed from the packet and deliberately **not** imported from the executor.
@@ -2304,7 +2311,7 @@ above, against substrate `8bc9e87e…`.
 | `npm run phase-50a:proof` | PASS (two-host export/restore/replacement; chains verify) |
 | `npm run phase-50a:verify-artifact` | PASS (C1–C9; 30/30/30 declarations, 44 packed files) |
 | `git diff --check` | clean |
-| Fixed-executor suites | **50 passed** (34 + 16) |
+| Fixed-executor suites | **52 passed** (36 + 16) |
 | Mutation matrix | **21 passed** (8 re-pointed T*, P* unchanged) |
 
 The executor's refusal paths were also exercised for real, outside the tests: with
