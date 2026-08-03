@@ -1,41 +1,30 @@
 name: Phase 50A PostgreSQL Conformance
 
-# Runs the Phase 50A canonical-store proof against TWO separate PostgreSQL
-# server instances (ADR-049Q §13.1(c), (i)).
+# Phase 50A canonical-store proof — FIXED WRAPPER (R3, patch cycle 3 disposition).
 #
-# Non-production only (§13.2). This workflow provisions nothing outside the
-# runner, contacts no provider, holds no production credential, and touches no
-# living estate. The two services below are ephemeral upstream `postgres`
-# containers on the runner, and the credentials are the same fixed local-only
-# values the checked-in harness uses.
+# This file is a CANONICAL WRAPPER whose complete raw bytes are fixed by the
+# coordinator task packet and pinned by SHA-256 inside
+# `scripts/phase-50a/fixed-proof-executor.mjs`. It declares triggers,
+# permissions, services, bootstrap actions, and ONE proof invocation. It
+# carries no proof schedule, no configurable command, and no second `run:`
+# step: the command schedule is a closed, hard-coded argv table inside the
+# executor.
 #
-# Scope note: this is a NEW, self-contained workflow. It does not modify — and
-# holds no permission over — the Straylight control-plane workflows.
-
-# ── R3: the pull-request trigger is UNCONDITIONAL ────────────────────────
+# Non-production only (ADR-049Q §13.2). This workflow provisions nothing
+# outside the runner, contacts no provider, holds no production credential,
+# and touches no living estate. The two services below are ephemeral upstream
+# `postgres` containers on the runner, with the same fixed local-only
+# credentials the checked-in harness uses.
 #
-# This workflow runs for EVERY pull request. There is no `paths` key and no
+# The pull-request trigger is UNCONDITIONAL: no `paths` key and no
 # `paths-ignore` key, so trigger completeness is a property of the TRIGGER
-# ITSELF: there is no enumeration of repository inputs to keep in step with the
-# tree, and therefore nothing that can drift out of step with it.
+# ITSELF and there is no enumeration of repository inputs to keep in step with
+# the tree. The manual path stays BOUNDED to exactly one required 40-hex SHA.
 #
-# That replaces a model that mirrored a checked-in manifest of proof inputs into
-# a `paths` filter and compared the two sides. It was reopened twice. Coverage of
-# what is DECLARED says nothing about what must be declared, and the comparison
-# derived its authority from a parse of this very file — which a mutation could
-# make synthesize a trigger the file no longer carried. An unconditional trigger
-# removes the question instead of answering it more carefully.
-#
-# The manual exact-head path stays BOUNDED: exactly one required input, the
-# 40-hex commit SHA to check out and assert. Nothing else is parameterizable, so
-# a dispatch cannot redirect the proof at a different repository, ref, or
-# configuration.
-#
-# `tests/phase-50a/workflow-trigger-contract.test.ts` pins the block below to its
-# exact bytes and fails closed on a filtered or parameterized `pull_request`, a
-# missing or broadened manual trigger, a renamed or optional input, a duplicate
-# or unsupported top-level trigger declaration, and the removal of any exact-head
-# safeguard further down this file.
+# Unsupported changes to this file fail for exactly one reason: the raw bytes
+# no longer match the operator-authorized fingerprint. A flipped quote, an
+# appended comment, a changed line ending, or a BOM all break it. Nothing here
+# is parsed as YAML, scanned line by line, or interpreted by the proof.
 on:
   pull_request:
   workflow_dispatch:
@@ -45,14 +34,9 @@ on:
         required: true
         type: string
 
-# Least privilege: read the code and read the private package registry.
-# No contents:write, no issues:write, no pull-requests:write, no packages:write.
-#
-# `packages: read` exists solely so `npm ci` can resolve the private
-# `@0xhoneyjar/loa-hounfour` dependency from GitHub Packages using the
-# EPHEMERAL, job-scoped `GITHUB_TOKEN`. No credential is committed, printed,
-# persisted, or transformed, and the token is exposed to the install step
-# only (see "Install dependencies" below).
+# Least privilege. `packages: read` exists solely so `npm ci` can resolve the
+# private `@0xhoneyjar/loa-hounfour` dependency from GitHub Packages using the
+# EPHEMERAL, job-scoped `GITHUB_TOKEN`. No write scope anywhere.
 permissions:
   contents: read
   packages: read
@@ -65,19 +49,12 @@ jobs:
   postgres-proof:
     name: Canonical store — two-host proof
     runs-on: ubuntu-latest
-
-    # BOUNDED. The default job limit is six hours, which turns a stall into an
-    # opaque, very late failure — the first attempt at this proof sat in one step
-    # for over two hours while the same work completed in well under a minute
-    # locally. 45 minutes is comfortably above the observed full-run cost and
-    # fails fast on a genuine stall, so a timeout is diagnosable rather than
-    # indistinguishable from slowness.
     timeout-minutes: 45
 
     # TWO separately initialized PostgreSQL servers, on two different ports.
-    # Not one server with two databases: §13.1(i) requires the restore to land
-    # in a different conforming host, and the proof mechanically verifies the
-    # two clusters report different system identifiers.
+    # Not one server with two databases: ADR-049Q §13.1(i) requires the restore
+    # to land in a different conforming host, and the proof mechanically
+    # verifies the two clusters report different system identifiers.
     services:
       source:
         image: postgres:16
@@ -109,81 +86,21 @@ jobs:
           --health-retries 30
 
     steps:
-      # ── EXACT-HEAD GIT IDENTITY (R3) ────────────────────────────────────
+      # Checkout pins the EXACT audited head: the actual PR head on a
+      # pull_request run, the dispatch input on a manual run. Never
+      # refs/pull/<n>/merge — a synthetic merge commit is not exact-head
+      # identity evidence even when its tree is identical.
       #
-      # The audit of the previous attempt found that `actions/checkout` had
-      # fetched `refs/pull/<n>/merge` and executed GitHub's SYNTHETIC MERGE
-      # COMMIT, not the audited head. The two trees were byte-identical, so the
-      # run was valid evidence of RUNTIME CONTENT — but it was not exact-head
-      # Git identity evidence, which the packet required.
-      #
-      # The three steps below close that:
-      #
-      #   1. DERIVE the target SHA — the `workflow_dispatch` input on a manual
-      #      run, `github.event.pull_request.head.sha` on a pull-request run (the
-      #      ACTUAL PR head, never the synthetic merge SHA) — and validate it
-      #      against ^[0-9a-f]{40}$, failing closed on anything else.
-      #   2. CHECK OUT that exact SHA as the `ref`.
-      #   3. ASSERT `git rev-parse HEAD` equals it, before any substantive step.
-      #
-      # Nothing substantive runs before step 3 succeeds: no install, no build, no
-      # typecheck, no test, no suite, no proof, no artifact verification.
-      - name: Derive and validate the exact target head SHA
-        id: target
-        env:
-          # Read through the environment, never interpolated into the script
-          # body: a `${{ }}` expansion inside `run:` is executed as shell text.
-          DISPATCH_SHA: ${{ inputs.head_sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          EVENT_NAME: ${{ github.event_name }}
-        run: |
-          set -euo pipefail
-          case "$EVENT_NAME" in
-            workflow_dispatch) target="$DISPATCH_SHA" ;;
-            pull_request)      target="$PR_HEAD_SHA" ;;
-            *)
-              echo "phase-50a: unsupported event '$EVENT_NAME'; refusing to run" >&2
-              exit 1
-              ;;
-          esac
-          if [ -z "$target" ]; then
-            echo "phase-50a: no target head SHA available for event '$EVENT_NAME'" >&2
-            exit 1
-          fi
-          if ! printf '%s' "$target" | grep -Eq '^[0-9a-f]{40}$'; then
-            echo "phase-50a: target head SHA '$target' is not a 40-hex commit id" >&2
-            exit 1
-          fi
-          echo "phase-50a: exact target head SHA = $target"
-          echo "sha=$target" >> "$GITHUB_OUTPUT"
-
-      - name: Checkout the EXACT target head SHA
+      # The expected SHA reaches the executor through the ENVIRONMENT. The
+      # EXECUTOR — not this file — validates its 40-hex shape, reads
+      # `git rev-parse HEAD`, and requires identity before it launches any
+      # child process.
+      - name: Checkout the exact target head SHA
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          # The exact commit, NOT refs/pull/<n>/merge. A synthetic merge commit is
-          # not exact-head identity evidence even when its tree is identical.
-          ref: ${{ steps.target.outputs.sha }}
+          ref: ${{ github.event.pull_request.head.sha || inputs.head_sha }}
           submodules: recursive
 
-      - name: Assert git rev-parse HEAD equals the exact target head SHA
-        env:
-          TARGET_SHA: ${{ steps.target.outputs.sha }}
-        run: |
-          set -euo pipefail
-          actual="$(git rev-parse HEAD)"
-          echo "phase-50a: expected HEAD = $TARGET_SHA"
-          echo "phase-50a: git rev-parse HEAD = $actual"
-          if [ "$actual" != "$TARGET_SHA" ]; then
-            echo "phase-50a: HEAD does not equal the exact target head SHA; refusing to run" >&2
-            exit 1
-          fi
-          echo "phase-50a: EXACT-HEAD IDENTITY CONFIRMED at $actual"
-
-      # `registry-url` + `scope` make setup-node write a runner-local .npmrc
-      # that points the @0xhoneyjar scope at GitHub Packages and reads its
-      # credential from NODE_AUTH_TOKEN at install time. The repository's own
-      # .npmrc is untouched (it is a forbidden path for this packet), and no
-      # credential is written into the tree.
       - name: Set up Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -192,66 +109,19 @@ jobs:
           registry-url: 'https://npm.pkg.github.com'
           scope: '@0xhoneyjar'
 
-      # The ONLY step that receives a token, and it receives the ephemeral,
-      # job-scoped workflow identity — never a PAT, never a committed
-      # credential. It is consumed by npm's registry auth and is never echoed,
-      # written to a file in the tree, exported to a later step, or
-      # transformed. There is deliberately NO fallback registry: if package
-      # authorization is unavailable the install FAILS rather than silently
-      # resolving the dependency from somewhere else.
-      - name: Install dependencies
-        run: npm ci
+      # THE ONLY `run:` STEP IN THIS FILE. It invokes the fixed executor and
+      # nothing else. The executor depends on Node builtins alone, so it starts
+      # before any dependency is installed; `npm ci` is the first entry in its
+      # closed schedule.
+      #
+      # NODE_AUTH_TOKEN is the ephemeral, job-scoped workflow identity. It is
+      # inherited by the `npm ci` child the executor spawns, and is never
+      # echoed, written into the tree, persisted, or transformed. There is
+      # deliberately NO fallback registry: if package authorization is
+      # unavailable the install FAILS rather than silently resolving the
+      # dependency from somewhere else.
+      - name: Phase 50A fixed proof executor
+        run: node scripts/phase-50a/fixed-proof-executor.mjs
         env:
+          PHASE_50A_EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.head_sha }}
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Confirm two distinct PostgreSQL instances
-        run: |
-          docker exec straylight-phase-50a-source \
-            psql -tA -U straylight_proof -d straylight_source \
-            -c 'SELECT system_identifier FROM pg_control_system()'
-          docker exec straylight-phase-50a-replacement \
-            psql -tA -U straylight_proof -d straylight_replacement \
-            -c 'SELECT system_identifier FROM pg_control_system()'
-
-      - name: Build
-        run: npm run build
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Existing test suite (unchanged adapters must not regress)
-        run: npm test
-
-      - name: Control-plane validation
-        run: npm run control-plane:validate
-
-      - name: Control-plane tests
-        run: npm run control-plane:test
-
-      # Requires both instances. Fails — never skips — if either is unreachable.
-      - name: Phase 50A PostgreSQL suites
-        run: npm run phase-50a:test
-
-      - name: Phase 50A two-host export/restore/replacement proof
-        run: npm run phase-50a:proof
-
-      # Complete-tree and package reproducibility under the INTERNAL-ONLY
-      # EXCLUSION contract.
-      #
-      # The PostgreSQL store is internal: it is not exported from
-      # src/straylight/index.ts, has no package subpath, and its declarations
-      # are therefore NOT package artifacts. `npm run build` prunes them, and
-      # this step proves the result exactly — the generated dist-types tree
-      # equals the tracked tree, and `npm pack --dry-run --json` ships neither
-      # an untracked file nor any PostgreSQL declaration.
-      #
-      # This REPLACES the earlier assertion, which only checked that tracked
-      # files were unchanged and explicitly tolerated ("blessed") the 12
-      # untracked PostgreSQL declarations that `npm pack` then packed. Refusing
-      # them is the point: see scripts/phase-50a/verify-generated-artifact.mjs
-      # for the C1..C9 clauses this enforces.
-      - name: Confirm complete generated tree and package are reproducible
-        run: npm run phase-50a:verify-artifact
-
-      - name: Confirm no whitespace damage
-        run: git diff --check

@@ -2070,3 +2070,265 @@ did this work, under lease `lease-phase-50a-implementer-r3-closure-010` (lane #1
 sequence 38). **No** Ultracode, **no** `/batch`, **no** teams, **no** subagents, and
 **no** delegation of any kind. The audit of this slice is Codex's; the implementer
 does not audit its own work.
+
+---
+
+## 18. Patch cycle 3 disposition — the FIXED WRAPPER and FIXED EXECUTOR (R3, final)
+
+**Authority.** The `operator.decision` at lane #122 sequence **42** (comment
+`5168491994`; reducer result `5168498265`), disposing of the Codex **REJECT** at
+sequence **41** (audit comment `5168050720`, audit digest
+`sha256:0de0d69137a91275d43ad77196140786326523efc66f2b93d82fec858decd6c7`, exact
+rejected head `8bc9e87e8d17890f251e69091cbacba619d97ae7`). Implemented under the
+coordinator task packet at comment `5169022573` (packet digest
+`sha256:b414497a055c0bfbd0519a0ea499de93387ae9794d087a31745805433385758b`, posted
+by event `5169042916` at sequence **43**), lease
+`lease-phase-50a-impl-fixed-executor-012` (sequence **44**).
+
+`patch_cycle` remains **3**. This is a fresh **INITIAL** slice on a fresh branch
+and a fresh pull request — **not** a patch cycle 4, which the disposition states is
+unauthorized.
+
+### 18.1 Why the abstraction was replaced rather than repaired
+
+Three successive attempts to prove the workflow's trigger and exact-head posture by
+**recognizing its content** were reopened by audit:
+
+1. a manifest of proof inputs mirrored into an `on.pull_request.paths` filter;
+2. a structural parser of the workflow's bytes with positional provenance;
+3. a direct byte/line checker (`tests/phase-50a/workflow-trigger-contract.test.ts`).
+
+The sequence-41 REJECT named three blockers in the third, and they are one blocker
+wearing three hats — **a recognizer has unsupported forms**:
+
+- unsupported byte/YAML forms (a BOM, a document separator, a CRLF line, a quoted
+  or aliased top-level key) left the contract **green**;
+- it blanked only **whole-line** comments, so an inline comment or an unrelated
+  block scalar restating a literal **satisfied** a safeguard whose implementation
+  had been deleted;
+- its ordering check recognized only single-line `run:` commands, so a `run: |`
+  block executing `npm ci` **before** the exact-HEAD assertion was invisible.
+
+Raw-byte identity has no unsupported forms. So the abstraction is **gone** and the
+property is established a different way.
+
+### 18.2 The canonical wrapper
+
+`.github/workflows/phase-50a-postgres-conformance.yml` is now a **canonical
+wrapper** whose complete raw bytes were **fixed by the coordinator packet** and
+written verbatim from `fixed_wrapper_contract.bytes_base64`:
+
+| Property | Value |
+|---|---|
+| Byte length | **5455** |
+| Raw-byte SHA-256 | `ff91a255304fcadfba0d8397b91a63a6e24327817442f74497baac7031865e48` |
+| Encoding | UTF-8, LF only, no BOM, no tab, exactly one trailing LF |
+| `run:` steps | **exactly one**, invoking `node scripts/phase-50a/fixed-proof-executor.mjs` |
+
+It carries the unconditional `pull_request` trigger (no `paths`, no
+`paths-ignore`), a bounded `workflow_dispatch` whose only input is a required
+string `head_sha`, fixed least-privilege permissions (`contents: read`,
+`packages: read`), the two fixed PostgreSQL services, SHA-pinned bootstrap
+actions, and a checkout pinned to the exact audited head. It carries **no proof
+command of its own** — `npm run build`, `typecheck`, `npm test`, the control-plane
+commands, the Phase 50A commands, `git diff --check`, and the `docker exec`
+instance confirmations appear **nowhere** in the YAML.
+
+The byte comparison against the packet is **authoritative**. A green remote run is
+**not** acceptance and never substitutes for it.
+
+### 18.3 The fixed executor
+
+`scripts/phase-50a/fixed-proof-executor.mjs` (**20396** bytes, SHA-256
+`497ae79c165c636a87fba23c8f14b4c01b909d00a1ea64ec56998a47e6468cce`), with
+declarations at `scripts/phase-50a/fixed-proof-executor.d.mts`.
+
+- It carries the packet-authorized wrapper digest as a **literal committed
+  constant**. It never computes the expected digest from the file it checks, and
+  never reads it from an environment variable, a config file, or an argument. **It
+  cannot authorize itself** — and the negative test *"SELF-AUTHORIZATION IS
+  IMPOSSIBLE"* proves a different well-formed workflow (valid YAML, unconditional
+  `pull_request`, one required `head_sha`) is still refused, because the gate is
+  raw-byte identity rather than shape recognition.
+- **Identity gate, before any child process:** hash the wrapper's raw bytes and
+  require the pinned digest; require `PHASE_50A_EXPECTED_HEAD_SHA` to be exactly
+  40 lowercase hex; read `git rev-parse HEAD`; require exact equality. The
+  `rev-parse` read is the **only** launch permitted before the gate, is itself a
+  fixed argv array with `shell: false`, and is recorded as an identity probe —
+  never as a schedule command.
+- **Closed schedule:** 12 literal `{ label, file, args, timeout_ms }` entries,
+  frozen data in the source, covering exactly the substantive commands the previous
+  workflow ran, in the same order. Every launch is `spawnSync` with `shell: false`
+  and an argv **array**.
+- **Stops** at the first nonzero exit, terminating signal, timeout, or spawn
+  failure. All four are classified **distinctly** in precedence order: a timeout is
+  detected by `error.code === 'ETIMEDOUT'` rather than by the presence of a signal,
+  because Node reports a timeout kill *as* `SIGTERM` — collapsing the two would
+  report a stall as an ordinary signal death.
+- **Deterministic receipts:** one per attempted command, carrying ordinal, label,
+  file, exact argv, status, signal, `timed_out`, `spawn_failed`, and outcome. No
+  timestamp, duration, hostname, or absolute path, so two runs of the same schedule
+  produce byte-identical receipt text.
+- **Publishes on every run, including a refused one:** wrapper path and observed
+  digest, expected wrapper digest, executor self-digest, expected SHA, observed
+  HEAD, and the ordered receipts — identity facts always **before** the receipts.
+- **Contains no** markup parser, markup-shaped line scanner, shell parser,
+  command-word splitter, comment stripping, positional provenance, dynamic code
+  evaluation, dynamic module or command loading, configuration loading, or shell
+  launch. It imports Node builtins only, so it runs **before** `npm ci` — which is
+  the first entry of its own schedule.
+
+### 18.4 Tests
+
+`tests/phase-50a/fixed-proof-executor.test.ts` (34 tests) and
+`tests/phase-50a/proof-executor-envelope.test.ts` (16 tests) — **50 passed**.
+
+The wrapper's expected length and digest are **literal constants of the test file**,
+transcribed from the packet and deliberately **not** imported from the executor.
+Comparing two independently committed copies against the packet is what makes drift
+detectable; a test that read the executor's own constant would prove only
+self-consistency.
+
+Proven positively: exact wrapper bytes and digest; canonical encoding; pinned-
+constant agreement; the single invocation seam; schedule coverage and frozen argv;
+fixed argv and exact order over a stubbed call log; zero launches before identity;
+complete deterministic receipts; the published envelope.
+
+Proven negatively — each asserting an **exact launch count**, not merely a nonzero
+exit: eight byte-level wrapper mutations (flipped quote, appended comment, CRLF
+line, prepended BOM, added trailing space, re-indented line, removed trailing
+newline, document separator) each fail the fingerprint; a bad wrapper launches
+**zero** commands; a HEAD mismatch launches **zero**; nine malformed expected-SHA
+shapes (absent, empty, 39-hex, 41-hex, uppercase, non-hex, leading and trailing
+whitespace, trailing newline) each launch **zero**; an unreadable HEAD launches
+zero; no refusal path exits zero or runs a shortened schedule; self-authorization
+is impossible; and a nonzero exit, signal, timeout, and spawn failure each stop
+every successor with the failure surfaced distinctly.
+
+Every disposable-copy mutation reverts by discarding the copy, and each case
+**re-reads the repository file afterwards** to prove it was never touched. No probe
+directory survives.
+
+**Test-adequacy check (implementer-side, not a substitute for audit).** Five
+mutations were applied to disposable copies to confirm these tests fail when the
+safeguards are broken: appending one comment to the wrapper failed **24** tests;
+removing the HEAD identity check failed 2; making the digest comparison
+self-derived — the exact defect the packet forbids — failed **11**; removing the
+stop-on-failure return failed 2; collapsing the timeout classification failed 1;
+setting `shell: true` failed 1. All probe copies were removed.
+
+### 18.5 Deletions and re-pointings — disclosed, never silent
+
+- **DELETED:** `tests/phase-50a/workflow-trigger-contract.test.ts` (568 lines), the
+  rejected semantic checker. Not relocated, renamed, or reimplemented. The
+  retirement is asserted mechanically in
+  `tests/phase-50a/proof-input-coverage-mutations.test.ts`, which now requires the
+  file to be untracked.
+- **RE-POINTED:** trigger probes **T1–T8** in the mutation matrix now target the
+  fingerprint test instead of the deleted checker. Every one is checked against the
+  single property the wrapper has — its raw bytes hash to the authorized
+  fingerprint.
+- **RETIRED with replacement, T9–T11:** T9 removed the 40-hex validation from the
+  workflow's inline shell; T10 redirected the checkout `ref`; T11 removed the
+  `git rev-parse HEAD` equality assertion. **There is no inline shell left** — those
+  behaviors moved into the executor, where they are executed rather than
+  recognized. Their replacements are the MALFORMED EXPECTED SHA case (nine shapes,
+  zero launches each), the fingerprint refusal plus the `ref:`-assignment assertion
+  in the artifact suite, and the HEAD MISMATCH case (exact launch count zero) —
+  each **stronger** than the workflow-byte probe it replaces.
+- **RE-POINTED baseline:** the trigger baseline previously changed whitespace inside
+  a workflow **comment** and required the contract to still pass. Under the
+  fingerprint model there is no benign workflow byte — that same edit is now a
+  **refusal**, and is asserted as one. Keeping it as a baseline would assert the
+  opposite of the correction, so the benign edit moved to a file the fingerprint
+  does not cover.
+- **REPLACED in `tests/phase-50a/artifact-and-workflow-contract.test.ts`:** the
+  run-command ordering scan, the `>5` run-command count, the per-step `run:`
+  lookup, the structural `workflow_dispatch` block slice, the exact-head literal
+  scan, and the multi-line `run: |` interpolation scan — all invalidated by the
+  fixed wrapper. Its permissions, registry/scope, and credential-posture
+  assertions remain, restated over the wrapper, plus new assertions that the
+  wrapper delegates to the executor and carries no proof command.
+
+One assertion needed correcting for the opposite reason: a whole-document
+`not.toContain('refs/pull/')` failed because the wrapper's **prose explains why**
+the synthetic merge ref is wrong and therefore names it. It now asserts over the
+`ref:` **assignment**. Reading a safeguard's prose as if it were the safeguard is
+precisely what reopened this proof at sequence 41 — here it would have bitten as a
+false alarm rather than a false pass.
+
+### 18.6 Preservation
+
+**Positive blob identity:** all **648** tracked paths outside this packet's 10
+allowed paths have identical mode, type, and blob identity to substrate
+`8bc9e87e8d17890f251e69091cbacba619d97ae7`. No path outside the allowed set was
+added, removed, or modified.
+
+Exactly **8** of the 10 allowed paths were touched: the wrapper (modified), the
+executor and its declarations (added), the two new test files (added), the rejected
+checker (deleted), the mutation matrix and the artifact suite (modified).
+`tests/phase-50a/proof-input-manifest.json` is **unchanged** — its existing
+`scripts/phase-50a` and `tests/phase-50a` tree roots already cover the new files,
+so no manifest change was required and none was made. It retains its narrowed
+scope: the scan set of one suite, claiming authority over nothing else. **No
+whole-workflow manifest authority was restored.**
+
+`package.json` and `package-lock.json` are **untouched** — the executor uses Node
+builtins and is invoked directly by `node`, so no script entry or dependency was
+needed.
+
+Preserved byte-identically: R1, R2, R4; all PostgreSQL production code and
+migrations; transaction semantics; audit-chain behavior; the internal-only package
+boundary and the public `StorageAdapter` seam; the two-host proof harness; the
+artifact/pruning scripts; every `postgres-*` suite; the no-leak suite;
+`tests/storage-conformance.test.ts`; and the whole `tests/control-plane` tree.
+
+**Inherited evidence.** The corrected historical figures — **647** branch-point
+tracked paths, **13** modified inherited, **9** added, **634** byte-identical — are
+retained exactly as recorded in §17 and reproduce precisely from
+`f1b5f0f3924eb4c8624c8b2efb1f3072fbfa92f4 → a720e946717f246ec4e646f85d549d92b49b9fb7`,
+the comparison they describe. They are **that slice's** figures and are not
+restated as this slice's. This slice's own accounting is the 648-path blob identity
+above, against substrate `8bc9e87e…`.
+
+### 18.7 Local results
+
+| Check | Result |
+|---|---|
+| `npm run build` | PASS (30 tracked dist-types declarations; PostgreSQL declarations pruned) |
+| `npm run typecheck` | PASS |
+| `npm test` | **88 files, 2222 passed, 149 skipped** |
+| `npm run control-plane:validate` | PASS (policy, schemas, state machine, markers) |
+| `npm run control-plane:test` | **29 files, 1025 passed** |
+| `npm run phase-50a:test` | **14 files, 271 passed** |
+| `npm run phase-50a:proof` | PASS (two-host export/restore/replacement; chains verify) |
+| `npm run phase-50a:verify-artifact` | PASS (C1–C9; 30/30/30 declarations, 44 packed files) |
+| `git diff --check` | clean |
+| Fixed-executor suites | **50 passed** (34 + 16) |
+| Mutation matrix | **21 passed** (8 re-pointed T*, P* unchanged) |
+
+The executor's refusal paths were also exercised for real, outside the tests: with
+no `PHASE_50A_EXPECTED_HEAD_SHA` it exits **1** with `expected-head-sha-malformed`
+and `schedule_launches: 0`; with a valid-shaped but wrong SHA it exits **1** with
+`head-identity-mismatch` and `schedule_launches: 0`. Both published the full
+envelope.
+
+### 18.8 What this slice does NOT establish
+
+It closes R3 by **replacing** the failed abstraction with a finite closed
+architecture, and preserves everything else byte-identically. It claims **no**
+acceptance, **no** readiness, **no** gate disposition, **no** Phase 50B work, **no**
+MVP-2 completion, and **no** merge. The fresh pull request is **not merged**. PRs
+**#126** and **#125** and every earlier rejected branch and pull request of this
+lane were left **untouched** — not reopened, amended, extended, or closed — and
+**nothing here is offered as merge evidence**; `8bc9e87e…` served as inspectable
+substrate only. Every residual unproven pre-production obligation in §10 stands
+undischarged: durability, failover, network isolation, tenancy, availability,
+version policy, and incident recovery. Nothing here involves a provider, a
+production resource, a credential, or a living estate.
+
+**Implementation provenance.** Exactly **one** Claude Opus xhigh implementer context
+did this work, under lease `lease-phase-50a-impl-fixed-executor-012` (lane #122
+sequence 44). **No** Ultracode, **no** `/batch`, **no** teams, **no** subagents, and
+**no** delegation of any kind. The audit of this slice is Codex's; the implementer
+does not audit its own work.

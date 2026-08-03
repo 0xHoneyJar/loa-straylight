@@ -13,36 +13,69 @@
 // ── WHAT THIS MATRIX COVERS, AND WHAT IT NO LONGER DOES ─────────────────
 //
 // TRIGGER PROBES (T*) mutate the WORKFLOW and require a named test in
-// `tests/phase-50a/workflow-trigger-contract.test.ts` to fail. They are the
-// independent form of the enumerated trigger rejections: a filtered or removed
-// `pull_request`, an introduced `paths`/`paths-ignore`, a removed or broadened
-// `workflow_dispatch`, `head_sha` ceasing to be the sole required input, and the
-// removal of the exact 40-hex validation, the exact checkout `ref`, or the
-// `git rev-parse HEAD` equality assertion.
+// `tests/phase-50a/fixed-proof-executor.test.ts` to fail.
+//
+// RE-POINTED under the patch-cycle-3 disposition (operator.decision at lane
+// sequence 42, coordinator packet comment 5169022573). The workflow is now a
+// CANONICAL WRAPPER whose complete raw bytes are fixed by the operator-authorized
+// packet, and `tests/phase-50a/workflow-trigger-contract.test.ts` — the 568-line
+// semantic checker these cases used to target — is DELETED.
+//
+// So every surviving T* case is now checked against ONE property: the mutated raw
+// bytes no longer hash to the authorized fingerprint. That collapse is the point
+// of the correction, not a weakening of it. The rejected checker needed a separate
+// recognizer per property, and each recognizer had unsupported forms — a quoted
+// key, a BOM, a CRLF line, an inline comment restating a deleted safeguard, a
+// `run: |` block hiding a command. Raw-byte identity has no unsupported forms, so
+// T1-T8 below are joined by six byte-level mutations in the fingerprint suite
+// itself (a flipped quote, an appended comment, a CRLF line, a BOM, a trailing
+// space, a re-indent, a removed trailing newline, a document separator) that the
+// old model could not have caught at all.
 //
 // SCAN-SET PROBES (P*) mutate the MANIFEST or its consumer and require a named
 // test in `tests/phase-50a/no-leak-and-neutrality.test.ts` to fail — that being the
-// one suite whose scan set the manifest declares.
+// one suite whose scan set the manifest declares. UNCHANGED by this correction.
 //
-// DISCLOSED RETIREMENTS. The rejected matrix carried three parser-bound cases that
-// are GONE, deleted with the abstraction they probed rather than silently dropped:
+// ── DISCLOSED RETIREMENTS ───────────────────────────────────────────────
+//
+// Retired with the abstraction they probed, rather than silently dropped.
+//
+// From the patch-cycle-3 correction (this slice):
+//
+//   * T9 removed the exact 40-hex head-SHA validation from the workflow's inline
+//     shell. There is no inline shell left: the wrapper's only `run:` step invokes
+//     the executor, and the 40-hex validation now lives in the executor, where it
+//     is EXECUTED rather than recognized. Its replacement is the MALFORMED
+//     EXPECTED SHA case in the fingerprint suite, which drives nine bad shapes
+//     (absent, empty, 39-hex, 41-hex, uppercase, non-hex, leading/trailing
+//     whitespace, trailing newline) through the real gate and asserts ZERO
+//     schedule launches for each. A mutation of workflow bytes cannot reach that
+//     validation any more, which is why the case moved rather than being kept.
+//   * T10 redirected the checkout `ref` away from the derived SHA. The `ref:`
+//     assignment is now part of the fixed wrapper bytes, so redirecting it is a
+//     byte change and is refused by the fingerprint — no longer a distinct
+//     property needing its own probe. The assignment itself is additionally
+//     asserted in `tests/phase-50a/artifact-and-workflow-contract.test.ts`.
+//   * T11 removed the `git rev-parse HEAD` equality assertion from the workflow's
+//     inline shell. That assertion is now the executor's identity gate. Its
+//     replacement is the HEAD MISMATCH case, which asserts an EXACT launch count
+//     of zero — strictly stronger than the old check, which could only observe
+//     that a named test failed.
+//
+// From the earlier patch cycles (retained disclosure):
 //
 //   * P1 replaced `scripts/phase-50a/workflow-trigger-parser.mjs` so it
 //     SYNTHESIZED a path the workflow no longer declared — the mutation that
-//     defeated the rejected suite, aimed at a byte-offset provenance assertion.
-//     Both the parser and the provenance assertion are DELETED. Nothing derives a
-//     trigger claim from a parsed value or offset any more, so there is no
-//     parser-replacement or parser-bypass mutation left to be load-bearing: T1-T11
-//     mutate the workflow's own bytes and are checked directly against them.
+//     defeated the first rejected suite, aimed at a positional provenance
+//     assertion. Both the parser and the provenance assertion are DELETED.
 //   * P8 removed each `on.pull_request.paths` entry INDIVIDUALLY. There is no
 //     `paths` filter to remove; the pull-request trigger is unconditional. T1/T2
 //     invert it — INTRODUCING a filter is now the refusal.
 //   * P9 removed `workflow_dispatch` and expected the PARSER's absence reason. The
-//     mutation survives as T5, checked against the workflow's bytes instead.
-//
-// Also retired: P3's target. It truncated `readManifest`'s root list to prove the
-// consumer could not narrow the declaration, and it aimed at a coverage test that
-// no longer exists; it survives as P3 below, re-pointed at the no-leak suite.
+//     mutation survives as T5, checked against the wrapper's bytes instead.
+//   * P3's original target truncated `readManifest`'s root list to prove the
+//     consumer could not narrow the declaration, aimed at a coverage test that no
+//     longer exists; it survives as P3 below, re-pointed at the no-leak suite.
 
 import { spawnSync } from 'node:child_process';
 import {
@@ -69,8 +102,24 @@ const SELF = 'proof-input-coverage-mutations.test.ts';
 
 /** The workflow the trigger probes mutate. */
 const WORKFLOW = '.github/workflows/phase-50a-postgres-conformance.yml';
-/** The trigger contract the trigger probes must break. */
-const TRIGGER_SUITE = 'tests/phase-50a/workflow-trigger-contract.test.ts';
+/**
+ * The FINGERPRINT suite the trigger probes must break.
+ *
+ * Re-pointed from the deleted semantic checker. One named test carries every
+ * surviving T* case, because the wrapper now has exactly one authorization
+ * property: its raw bytes hash to the packet-authorized fingerprint.
+ */
+const TRIGGER_SUITE = 'tests/phase-50a/fixed-proof-executor.test.ts';
+
+/**
+ * The named test every T* mutation must break, and the refusal it must name.
+ *
+ * The mutated bytes are compared against a literal constant of that suite, so
+ * ANY byte difference fails it — which is exactly why the per-property probes
+ * below collapse onto a single target.
+ */
+const FINGERPRINT_TEST = 'the wrapper byte length and RAW-BYTE SHA-256 equal the packet contract';
+const FINGERPRINT_FAILURE = /wrapper byte length|RAW-BYTE SHA-256|Tests\s+\d+\s+failed/;
 /** The no-leak suite, the one suite whose scan set the manifest declares. */
 const NO_LEAK_SUITE = 'tests/phase-50a/no-leak-and-neutrality.test.ts';
 
@@ -282,17 +331,30 @@ describe('Phase 50A R3 — independent probe/mutation matrix (each must FAIL a n
     );
   });
 
-  it('BASELINE (trigger): the UNMUTATED copy PASSES the trigger contract (the harness is sound)', () => {
+  it('BASELINE (trigger): an UNMUTATED wrapper PASSES the fingerprint (the harness is sound)', () => {
+    // RE-POINTED, and the benign edit had to MOVE OFF the workflow.
+    //
+    // The old baseline changed whitespace inside a workflow COMMENT and required
+    // the contract to still pass — under a semantic model a comment was benign.
+    // Under the fingerprint model there is no benign workflow byte: that same
+    // edit is now a REFUSAL, and it is asserted as one ("refuses one appended
+    // comment line", "refuses one added trailing space"). Keeping it as a
+    // baseline would assert the exact opposite of the correction.
+    //
+    // So the benign edit moves to a file the fingerprint does not cover, and the
+    // baseline proves what a baseline is for: this harness can run the
+    // fingerprint suite inside a copy and obtain a PASS, so a FAIL from any T*
+    // case below is attributable to the mutation rather than to the harness.
     const result = runMutated(
-      WORKFLOW,
-      // A benign whitespace change inside a comment: it must not affect the
-      // contract, which is itself worth proving.
-      (s) => s.replace('# Least privilege:', '#  Least privilege:'),
+      'docs/PHASE-50A-PROVIDER-NEUTRAL-POSTGRESQL-CANONICAL-STORE-IMPLEMENTATION-AND-PROOF.md',
+      (s) => `${s}\n<!-- benign baseline edit, outside the fingerprinted wrapper -->\n`,
       TRIGGER_SUITE,
-      'THE CLAIM: the checked-in workflow satisfies the trigger contract completely',
+      FINGERPRINT_TEST,
     );
     assertRanTests(result, 'baseline/trigger');
-    expect(result.ok, `the trigger baseline must PASS:\n${result.output.slice(-4000)}`).toBe(true);
+    expect(result.ok, `the fingerprint baseline must PASS:\n${result.output.slice(-4000)}`).toBe(
+      true,
+    );
   }, 300_000);
 
   it('BASELINE (scan set): the UNMUTATED copy PASSES the no-leak scan (the harness is sound)', () => {
@@ -330,8 +392,8 @@ describe('Phase 50A R3 — independent probe/mutation matrix (each must FAIL a n
         );
       },
       testFile: TRIGGER_SUITE,
-      testName: 'NO paths or paths-ignore key appears anywhere in the workflow',
-      expectOutput: /path-filter-present|Tests\s+\d+\s+failed/,
+      testName: FINGERPRINT_TEST,
+      expectOutput: FINGERPRINT_FAILURE,
     },
     {
       id: 'T2',
@@ -340,8 +402,8 @@ describe('Phase 50A R3 — independent probe/mutation matrix (each must FAIL a n
       mutate: (s) =>
         s.replace('  pull_request:\n', "  pull_request:\n    paths-ignore:\n      - 'docs/**'\n"),
       testFile: TRIGGER_SUITE,
-      testName: 'NO paths or paths-ignore key appears anywhere in the workflow',
-      expectOutput: /path-filter-present|Tests\s+\d+\s+failed/,
+      testName: FINGERPRINT_TEST,
+      expectOutput: FINGERPRINT_FAILURE,
     },
     {
       id: 'T3',
@@ -349,9 +411,8 @@ describe('Phase 50A R3 — independent probe/mutation matrix (each must FAIL a n
       file: WORKFLOW,
       mutate: (s) => s.replace('  pull_request:\n', ''),
       testFile: TRIGGER_SUITE,
-      testName:
-        'the pull-request trigger is UNCONDITIONAL and the manual trigger is BOUNDED to one required head_sha',
-      expectOutput: /trigger-block-not-canonical|Tests\s+\d+\s+failed/,
+      testName: FINGERPRINT_TEST,
+      expectOutput: FINGERPRINT_FAILURE,
     },
     {
       id: 'T4',
@@ -360,9 +421,8 @@ describe('Phase 50A R3 — independent probe/mutation matrix (each must FAIL a n
       mutate: (s) =>
         s.replace('  pull_request:\n', '  pull_request:\n    branches:\n      - main\n'),
       testFile: TRIGGER_SUITE,
-      testName:
-        'the pull-request trigger is UNCONDITIONAL and the manual trigger is BOUNDED to one required head_sha',
-      expectOutput: /trigger-block-not-canonical|Tests\s+\d+\s+failed/,
+      testName: FINGERPRINT_TEST,
+      expectOutput: FINGERPRINT_FAILURE,
     },
     {
       id: 'T5',
@@ -376,9 +436,8 @@ describe('Phase 50A R3 — independent probe/mutation matrix (each must FAIL a n
         return s.slice(0, start) + s.slice(end + 1);
       },
       testFile: TRIGGER_SUITE,
-      testName:
-        'the pull-request trigger is UNCONDITIONAL and the manual trigger is BOUNDED to one required head_sha',
-      expectOutput: /trigger-block-not-canonical|Tests\s+\d+\s+failed/,
+      testName: FINGERPRINT_TEST,
+      expectOutput: FINGERPRINT_FAILURE,
     },
     {
       id: 'T6',
@@ -390,9 +449,8 @@ describe('Phase 50A R3 — independent probe/mutation matrix (each must FAIL a n
           "        type: string\n      target_repo:\n        description: 'extra'\n        required: false\n        type: string\n",
         ),
       testFile: TRIGGER_SUITE,
-      testName:
-        'the pull-request trigger is UNCONDITIONAL and the manual trigger is BOUNDED to one required head_sha',
-      expectOutput: /trigger-block-not-canonical|Tests\s+\d+\s+failed/,
+      testName: FINGERPRINT_TEST,
+      expectOutput: FINGERPRINT_FAILURE,
     },
     {
       id: 'T7',
@@ -400,9 +458,8 @@ describe('Phase 50A R3 — independent probe/mutation matrix (each must FAIL a n
       file: WORKFLOW,
       mutate: (s) => s.replace('      head_sha:\n', '      commit_sha:\n'),
       testFile: TRIGGER_SUITE,
-      testName:
-        'the pull-request trigger is UNCONDITIONAL and the manual trigger is BOUNDED to one required head_sha',
-      expectOutput: /trigger-block-not-canonical|Tests\s+\d+\s+failed/,
+      testName: FINGERPRINT_TEST,
+      expectOutput: FINGERPRINT_FAILURE,
     },
     {
       id: 'T8',
@@ -410,51 +467,8 @@ describe('Phase 50A R3 — independent probe/mutation matrix (each must FAIL a n
       file: WORKFLOW,
       mutate: (s) => s.replace('        required: true\n', '        required: false\n'),
       testFile: TRIGGER_SUITE,
-      testName:
-        'the pull-request trigger is UNCONDITIONAL and the manual trigger is BOUNDED to one required head_sha',
-      expectOutput: /trigger-block-not-canonical|Tests\s+\d+\s+failed/,
-    },
-    {
-      id: 'T9',
-      description: 'REMOVE the exact 40-hex head-SHA validation (leaving the comment about it)',
-      file: WORKFLOW,
-      mutate: (s) => {
-        expect(s).toContain("grep -Eq '^[0-9a-f]{40}$'");
-        return s.replace("grep -Eq '^[0-9a-f]{40}$'", "grep -Eq '.*'");
-      },
-      testFile: TRIGGER_SUITE,
-      testName: 'the exact 40-hex head-SHA validation is intact',
-      expectOutput: /head-sha-validation-absent|Tests\s+\d+\s+failed/,
-    },
-    {
-      id: 'T10',
-      description: 'REDIRECT the checkout ref away from the derived SHA',
-      file: WORKFLOW,
-      mutate: (s) => {
-        expect(s).toContain('ref: ${{ steps.target.outputs.sha }}');
-        return s.replace(
-          'ref: ${{ steps.target.outputs.sha }}',
-          'ref: ${{ github.event.pull_request.head.ref }}',
-        );
-      },
-      testFile: TRIGGER_SUITE,
-      testName: 'the checkout pins the EXACT derived SHA as its ref',
-      expectOutput: /checkout-ref-not-pinned|Tests\s+\d+\s+failed/,
-    },
-    {
-      id: 'T11',
-      description: 'REMOVE the git rev-parse HEAD equality assertion (leaving the step name)',
-      file: WORKFLOW,
-      mutate: (s) => {
-        expect(s).toContain('actual="$(git rev-parse HEAD)"');
-        return s
-          .replace('actual="$(git rev-parse HEAD)"', 'actual="$TARGET_SHA"')
-          .replace('"$actual" != "$TARGET_SHA"', '1 -eq 1');
-      },
-      testFile: TRIGGER_SUITE,
-      testName:
-        'the git rev-parse HEAD equality assertion is intact and precedes every substantive step',
-      expectOutput: /head-equality-(?:assertion|comparison)-absent|Tests\s+\d+\s+failed/,
+      testName: FINGERPRINT_TEST,
+      expectOutput: FINGERPRINT_FAILURE,
     },
 
     // ── SCAN-SET PROBES ───────────────────────────────────────────────────
@@ -599,6 +613,9 @@ describe('Phase 50A R3 — independent probe/mutation matrix (each must FAIL a n
       'scripts/phase-50a/workflow-trigger-parser.mjs',
       'scripts/phase-50a/workflow-trigger-parser.d.mts',
       'tests/phase-50a/proof-input-coverage.test.ts',
+      // Patch cycle 3: the REJECTED semantic checker. Deleted, not relocated,
+      // renamed, or reimplemented — the abstraction was the defect.
+      'tests/phase-50a/workflow-trigger-contract.test.ts',
     ]) {
       const tracked = spawnSync('git', ['ls-files', '--error-unmatch', '--', retired], {
         cwd: REPO_ROOT,

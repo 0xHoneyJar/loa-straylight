@@ -155,9 +155,43 @@ describe('Phase 50A patch — the internal PostgreSQL declarations are excluded,
   });
 });
 
-// ── Findings 1 & 6 — the proof workflow ────────────────────────────────
+// ── Findings 1 & 6 — the proof workflow (R3: the FIXED WRAPPER) ────────
+//
+// SCOPE CHANGE, patch cycle 3 disposition (packet comment 5169022573).
+//
+// The workflow is now a CANONICAL WRAPPER whose complete raw bytes are fixed by
+// the operator-authorized coordinator packet. Several assertions that used to
+// live here were assertions ABOUT WORKFLOW CONTENT, and the fixed wrapper both
+// invalidates their shape and makes them unnecessary. They are REPLACED, not
+// silently dropped:
+//
+//   * the run-command ORDERING scan ("every substantive step comes after the
+//     exact-head assertion") — the wrapper no longer contains the substantive
+//     steps at all; the executor's identity gate precedes its closed schedule in
+//     ordinary Node control flow, proven in
+//     `tests/phase-50a/fixed-proof-executor.test.ts`;
+//   * the `>5 run commands` COUNT and the per-step `run:` command LOOKUP — the
+//     wrapper declares exactly ONE run step, and the schedule it delegates to is
+//     asserted entry-by-entry against its fixed argv arrays;
+//   * the structural `workflow_dispatch` BLOCK SLICE (locate the block, then
+//     enumerate input names inside it) — a positional content model of exactly
+//     the kind that was reopened twice; the trigger is now pinned by the byte
+//     fingerprint;
+//   * the exact-head LITERAL scan (`^[0-9a-f]{40}$`, `git rev-parse HEAD`,
+//     `ref:`) — those literals moved into the executor, where the behavior is
+//     executed rather than recognized;
+//   * the multi-line `run: |` body scan for `${{ }}` interpolation — there is no
+//     multi-line run body left to scan.
+//
+// WHAT REMAINS HERE is this suite's own subject, restated over the fixed
+// wrapper: its least-privilege permissions, its registry/scope configuration,
+// its credential posture, and the fact that it delegates to the fixed executor
+// and carries no proof schedule of its own. The byte/digest pin itself lives in
+// `tests/phase-50a/fixed-proof-executor.test.ts`; this suite deliberately reads
+// the same properties independently, because two readers of one safeguard is a
+// strength rather than drift.
 
-describe('Phase 50A patch — the proof workflow authenticates and triggers correctly', () => {
+describe('Phase 50A R3 — the fixed wrapper authenticates and delegates correctly', () => {
   it('grants least-privilege packages:read alongside contents:read, and nothing more', () => {
     const text = readWorkflow();
     const block = /\npermissions:\n((?:[ \t]+\S.*\n|\n)*)/.exec(text)?.[1] ?? '';
@@ -174,11 +208,11 @@ describe('Phase 50A patch — the proof workflow authenticates and triggers corr
     expect(text).toContain("node-version: '22'");
   });
 
-  it('exposes an EPHEMERAL token to the install step ONLY, and to no other step', () => {
+  it('exposes an EPHEMERAL token to the single executor step ONLY', () => {
     const text = readWorkflow();
-    // Exactly one NODE_AUTH_TOKEN ASSIGNMENT — comments naming the variable to
-    // explain the posture are not assignments and must not be counted as extra
-    // exposures.
+    // Exactly one NODE_AUTH_TOKEN ASSIGNMENT. `npm ci` is now the first entry of
+    // the executor's closed schedule, so the token belongs to the step that
+    // invokes the executor — the child process inherits it.
     const assignments = text
       .split('\n')
       .filter((l) => /^\s*NODE_AUTH_TOKEN\s*:/.test(l));
@@ -186,201 +220,88 @@ describe('Phase 50A patch — the proof workflow authenticates and triggers corr
     expect(assignments[0]).toMatch(
       /\$\{\{\s*secrets\.GITHUB_TOKEN\s*\}\}|\$\{\{\s*github\.token\s*\}\}/,
     );
-
-    // It belongs to the `npm ci` step. Take the step that ASSIGNS the token and
-    // require it to be the install step.
     const steps = text.split(/\n      - name: /).slice(1);
     const tokenSteps = steps.filter((s) => /^\s*NODE_AUTH_TOKEN\s*:/m.test(s));
     expect(tokenSteps).toHaveLength(1);
-    expect(tokenSteps[0]).toContain('npm ci');
-    expect(tokenSteps[0]?.split('\n')[0]).toMatch(/Install dependencies/);
+    expect(tokenSteps[0]).toContain('node scripts/phase-50a/fixed-proof-executor.mjs');
   });
 
   it('never echoes, writes, or persists a credential, and adds no fallback registry', () => {
     const text = readWorkflow();
-    // No committed credential, no PAT, no token printed or written.
     expect(/echo\s+.*NODE_AUTH_TOKEN|cat\s+.*NODE_AUTH_TOKEN/.test(text)).toBe(false);
     expect(/>>?\s*\.npmrc|npm\s+config\s+set\s+.*authToken/.test(text)).toBe(false);
     expect(/secrets\.(?!GITHUB_TOKEN)[A-Z_]+/.test(text)).toBe(false);
     expect(/ghp_|github_pat_/.test(text)).toBe(false);
-    // No alternate/fallback registry and no replacement of the dependency.
     const registries = [...text.matchAll(/https:\/\/[a-z0-9.-]*npm[a-z0-9.-]*/gi)].map((m) => m[0]);
     expect([...new Set(registries)]).toEqual(['https://npm.pkg.github.com']);
     expect(/--registry|registry\.npmjs\.org/.test(text)).toBe(false);
   });
 
-  // ── R3: the coverage model is RETIRED, not relocated ──────────────────
-  //
-  // This suite used to carry the workflow-coverage proof: it EXTRACTED an input
-  // declaration from marked comment blocks and compared it against the workflow's
-  // `pull_request.paths`. That model was reopened twice. The second version
-  // replaced the extractor with a bounded structural PARSER of the workflow's
-  // bytes and verified each recovered path against a byte offset — and was
-  // reopened again, because the offsets were not independently bound to a real
-  // `on.pull_request.paths` sequence item and because the manifest claimed
-  // authority over inputs it never enumerated.
-  //
-  // Repairing the abstraction failed twice, so the abstraction is GONE. The
-  // workflow declares an UNCONDITIONAL `on.pull_request` with no `paths` and no
-  // `paths-ignore`, so trigger completeness follows from the trigger and there is
-  // nothing to enumerate, mirror, parse, or compare. The parser, its offsets, the
-  // offset-provenance assertion, and the parser-replacement mutation are deleted.
-  //
-  // `tests/phase-50a/workflow-trigger-contract.test.ts` now pins the trigger block
-  // to its exact bytes and fails closed on a filtered or parameterized
-  // `pull_request`, a missing or broadened manual trigger, a renamed or optional
-  // input, a duplicate or unsupported top-level trigger, and the removal of any
-  // exact-head safeguard. `tests/phase-50a/proof-input-manifest.json` survives with
-  // its scope corrected to ONE suite's scan set — the no-leak/neutrality suite —
-  // and claims nothing about the workflow.
-  //
-  // What REMAINS here is this suite's own subject: the workflow's authentication
-  // posture, its credential handling, its exact-head identity assertion, and the
-  // presence of every substantive proof step. Those are properties of the workflow
-  // file, and this suite reads them independently of the trigger contract.
-
-  it('derives and asserts an EXACT 40-hex head SHA before any substantive step', () => {
+  it('declares exactly ONE run step, and it invokes only the fixed executor', () => {
     const text = readWorkflow();
-    // The target SHA is validated against the 40-hex shape and failed closed on.
-    expect(text, 'the workflow must validate the target SHA shape').toContain('^[0-9a-f]{40}$');
-    // On a pull request the ACTUAL PR head is used, never the synthetic merge SHA.
-    expect(text).toContain('github.event.pull_request.head.sha');
-    // The checkout takes that exact SHA as its ref.
-    expect(text, 'checkout must pin the exact SHA').toMatch(
-      /ref:\s*\$\{\{\s*steps\.target\.outputs\.sha\s*\}\}/,
-    );
-    // And HEAD equality is ASSERTED.
-    expect(text, 'the workflow must assert git rev-parse HEAD').toContain('git rev-parse HEAD');
+    const runs = [...text.matchAll(/^\s*run:\s*(.*)$/gm)].map((m) => m[1]!.trim());
+    expect(runs).toEqual(['node scripts/phase-50a/fixed-proof-executor.mjs']);
+    // No inline script body of any form. A block scalar under `run:` is exactly
+    // how the rejected checker's ordering model was defeated; the fixed wrapper
+    // has nowhere to put one.
+    expect(text).not.toContain('run: |');
+    expect(text).not.toContain('run: >');
+  });
 
-    // ORDERING is the load-bearing part: the assertion must precede every
-    // substantive step. Compared by position in the file, which is the order the
-    // steps run in.
-    //
-    // Matched against `run:` COMMAND lines, not any mention of the command: the
-    // workflow's explanatory comments name several of these steps, and an earlier
-    // comment occurrence would make a genuine ordering violation invisible (or, as
-    // here, a correct ordering look violated).
-    const assertAt = text.indexOf('Assert git rev-parse HEAD equals the exact target head SHA');
-    expect(assertAt, 'the identity assertion step must exist').toBeGreaterThan(-1);
-    const commandLines = [...text.matchAll(/^ *run: (.+)$/gm)].map((m) => ({
-      command: m[1]!.trim(),
-      at: m.index!,
-    }));
-    expect(commandLines.length, 'the workflow must declare run commands').toBeGreaterThan(5);
-    for (const step of [
-      'npm ci',
+  it('carries NO proof command of its own — the schedule lives in the executor', () => {
+    const text = readWorkflow();
+    for (const command of [
       'npm run build',
       'npm run typecheck',
-      'npm test',
       'npm run control-plane:validate',
       'npm run control-plane:test',
       'npm run phase-50a:test',
       'npm run phase-50a:proof',
       'npm run phase-50a:verify-artifact',
-    ]) {
-      const invocation = commandLines.find((c) => c.command === step);
-      expect(invocation, `the workflow must run \`${step}\` as a step command`).toBeDefined();
-      expect(
-        invocation!.at,
-        `${step} must come AFTER the exact-head identity assertion`,
-      ).toBeGreaterThan(assertAt);
-    }
-  });
-
-  it('the workflow_dispatch exact-head path is BOUNDED to a single SHA input', () => {
-    const text = readWorkflow();
-    // Exactly one input, and it is the head SHA. A dispatch cannot redirect the
-    // proof at another repository, ref, or configuration.
-    expect(text).toContain('workflow_dispatch:');
-    expect(text).toContain('head_sha:');
-    // The block's extent is located STRUCTURALLY — from `workflow_dispatch:` to the
-    // next top-level key — rather than by a literal offset into a neighbouring
-    // comment. The previous form sliced to `'\n# Least privilege'`, which pinned
-    // this test to the exact prose that happened to follow the trigger block; a
-    // reworded comment would have silently mis-sliced it.
-    const lines = text.split('\n');
-    const dispatchLine = lines.findIndex((l) => l === '  workflow_dispatch:');
-    expect(dispatchLine, 'workflow_dispatch must be declared at trigger depth').toBeGreaterThan(-1);
-    const nextTopLevel = lines.findIndex(
-      (l, i) => i > dispatchLine && /^[A-Za-z_]/.test(l) && !l.trim().startsWith('#'),
-    );
-    expect(nextTopLevel, 'a top-level key must follow the trigger block').toBeGreaterThan(
-      dispatchLine,
-    );
-    const block = lines.slice(dispatchLine, nextTopLevel).join('\n');
-    const inputNames = [...block.matchAll(/^      ([a-z_][a-z0-9_]*):$/gm)].map((m) => m[1]);
-    expect(inputNames, 'workflow_dispatch must declare exactly one input').toEqual(['head_sha']);
-    // And that one input is REQUIRED and a string.
-    expect(block).toContain('        required: true');
-    expect(block).toContain('        type: string');
-  });
-
-  it('the pull_request trigger is UNCONDITIONAL — no paths, no paths-ignore', () => {
-    // Read independently of the trigger contract, over the workflow's own lines:
-    // two readers of the same property is defence in depth, not duplication.
-    const significant = readWorkflow()
-      .split('\n')
-      .filter((l) => l.trim() !== '' && !l.trim().startsWith('#'));
-    expect(
-      significant.filter((l) => /^\s*paths(-ignore)?\s*:/.test(l)),
-      'the workflow must declare no path filter of any kind',
-    ).toEqual([]);
-    // `pull_request:` is declared and carries no nested key: the line after it is
-    // back at trigger depth.
-    const prIndex = significant.indexOf('  pull_request:');
-    expect(prIndex, 'pull_request must be declared at trigger depth').toBeGreaterThan(-1);
-    const following = significant[prIndex + 1];
-    expect(following, 'a trigger must follow pull_request').toBeDefined();
-    expect(
-      /^ {2}\S/.test(following!),
-      `pull_request must carry no nested key; found "${following}"`,
-    ).toBe(true);
-  });
-
-  it('the derived SHA reaches the script through the ENVIRONMENT, never shell interpolation', () => {
-    // A `${{ }}` expansion inside a `run:` body is substituted as shell TEXT. The
-    // SHA values are therefore passed as env vars and referenced as such.
-    const text = readWorkflow();
-    const runBodies = [...text.matchAll(/run: \|\n([\s\S]*?)(?=\n      - name:|\n$)/g)].map(
-      (m) => m[1]!,
-    );
-    expect(runBodies.length, 'the workflow must have multi-line run bodies').toBeGreaterThan(0);
-    for (const body of runBodies) {
-      expect(
-        /\$\{\{/.test(body),
-        'no run body may interpolate a workflow expression into shell text',
-      ).toBe(false);
-    }
-  });
-
-  it('runs the artifact/package verification instead of blessing untracked declarations', () => {
-    const text = readWorkflow();
-    expect(text).toContain('npm run phase-50a:verify-artifact');
-    // The replaced assertion required the untracked PostgreSQL declarations to
-    // be PRESENT (`test -n`). That inversion must be gone.
-    expect(text).not.toContain(
-      'test -n "$(git status --porcelain --untracked-files=all -- dist-types/src/straylight/storage/postgres)"',
-    );
-    expect(text).toContain('git diff --check');
-  });
-
-  it('still executes every substantive proof step (none removed by this patch)', () => {
-    const text = readWorkflow();
-    for (const step of [
-      'npm ci',
+      'git diff --check',
       'pg_control_system()',
-      'npm run build',
-      'npm run typecheck',
-      'npm test',
-      'npm run control-plane:validate',
-      'npm run control-plane:test',
-      'npm run phase-50a:test',
-      'npm run phase-50a:proof',
-      'npm run phase-50a:verify-artifact',
     ]) {
-      expect(text, `workflow must run: ${step}`).toContain(step);
+      expect(text, `the wrapper must not run \`${command}\` itself`).not.toContain(command);
     }
-    // And no step is conditionally skipped.
+  });
+
+  it('passes the expected head SHA to the executor through the ENVIRONMENT', () => {
+    const text = readWorkflow();
+    // The executor — not the workflow — validates the shape and asserts HEAD
+    // identity. The workflow's only job is to hand over the value, and it does
+    // so as an env var rather than interpolating it into shell text.
+    expect(text).toContain('PHASE_50A_EXPECTED_HEAD_SHA:');
+    expect(text).toContain('github.event.pull_request.head.sha');
+    expect(text).toContain('inputs.head_sha');
+  });
+
+  it('keeps the checkout pinned to the exact audited head, never the merge ref', () => {
+    const text = readWorkflow();
+    // Assert over the `ref:` ASSIGNMENT, not the whole document. The wrapper's
+    // prose explains WHY the synthetic merge ref is wrong and therefore names
+    // it; a whole-document `not.toContain('refs/pull/')` would fail on that
+    // explanation while proving nothing about the assignment itself. Treating a
+    // safeguard's prose as if it were the safeguard is the precise error that
+    // reopened this proof at sequence 41 — here it would bite in the opposite
+    // direction, as a false alarm rather than a false pass.
+    const refAssignments = [...text.matchAll(/^\s*ref:\s*(.*)$/gm)].map((m) => m[1]!.trim());
+    expect(refAssignments).toEqual([
+      '${{ github.event.pull_request.head.sha || inputs.head_sha }}',
+    ]);
+    expect(refAssignments[0], 'never the synthetic merge ref').not.toContain('refs/pull/');
+  });
+
+  it('runs unconditionally for every pull request, with a bounded manual path', () => {
+    const text = readWorkflow();
+    // Kept as a readable statement of intent. NOT load-bearing on its own: it
+    // holds because these exact bytes are the packet's, which
+    // `tests/phase-50a/fixed-proof-executor.test.ts` pins by digest.
+    expect(text).toContain('\n  pull_request:\n');
+    expect(/^\s*paths(-ignore)?\s*:/m.test(text), 'no path filter of any kind').toBe(false);
+    expect(text).toContain('      head_sha:\n');
+    expect(text).toContain('        required: true\n');
+    expect(text).toContain('        type: string\n');
+    // No step is conditionally skipped.
     expect(/^\s+if:\s/m.test(text.split('steps:')[1] ?? '')).toBe(false);
   });
 });
