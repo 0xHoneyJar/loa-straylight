@@ -1,36 +1,40 @@
-// Phase 50A R3 — the manifest CONSUMER.
+// Phase 50A R3 — the NO-LEAK SCAN-SET manifest CONSUMER.
 //
-// `tests/phase-50a/proof-input-manifest.json` is the SINGLE declaration of the
-// proof's input roots. This module is the only way to read it, and it FAILS
-// CLOSED on a manifest that is missing, empty, unreadable, or malformed — never
-// defaulting to a narrower comparison or a vacuous pass.
+// ── SCOPE, STATED FIRST AND NARROWLY ────────────────────────────────────
 //
-// WHAT REPLACED WHAT. The rejected model declared the input set inside the
-// no-leak suite's own source, inside marked comment blocks, and a second suite
-// EXTRACTED those blocks by their markers to compare against the workflow. Three
-// independent mutations survived that: deleting a declared input (a smaller
-// declaration satisfies `uncovered == []` more easily), truncating the extractor
-// (`slice(1)`), and — decisively — replacing the extractor so it SYNTHESIZED a
-// path the workflow no longer declared. No proof may derive its authority from
-// the extractor it validates.
+// `tests/phase-50a/proof-input-manifest.json` declares the SCAN SET OF ONE SUITE:
+// `tests/phase-50a/no-leak-and-neutrality.test.ts`. That is the whole of its
+// authority. It is the single declaration of what that suite reads, so the suite
+// restates no path and cannot quietly widen its own input set.
 //
-// So there is no extractor here at all:
+// It is NOT — in any wording, and under any name — a declaration of the inputs to
+// anything else. It does not enumerate the inputs to the build, to the typecheck,
+// to the repository-wide test run, to control-plane validation or the
+// control-plane tests, to the fixtures, to the generated declarations, to package
+// pruning, to the C1-C9 artifact verification, or to the remote proof workflow as
+// a whole. Nothing anywhere derives trigger completeness, proof completeness, or
+// input completeness from it.
 //
-//   * the manifest is CHECKED-IN DATA, read whole and used directly;
-//   * the no-leak suite READS ITS INPUTS FROM the manifest instead of restating
-//     them, so there is one declaration and nothing to extract;
-//   * the workflow side is a BOUNDED STRUCTURAL PARSE of the workflow's own bytes
-//     (`workflow-trigger-parser.mjs`);
-//   * the comparison is manifest-against-parsed-workflow. Neither side is derived
-//     from the other.
+// WHY THAT MATTERS. Two successive models claimed exactly the authority this
+// module now disclaims: they treated a manifest as the enumeration of every input
+// to the full proof and mirrored it into the workflow's `on.pull_request.paths`
+// filter. Both were reopened. The enumeration was never complete (vitest.config.ts,
+// tests/_global-setup.ts, the tsconfigs, scripts/prune-dist-runtime.mjs,
+// tests/control-plane/, .straylight/, fixtures/ and the tracked dist-types/ tree
+// were all real inputs it omitted), and "everything DECLARED is covered" is
+// satisfied more easily by declaring less. The workflow's pull-request trigger is
+// now UNCONDITIONAL, so trigger completeness needs no enumeration at all and this
+// manifest is relieved of a job it could not do.
 //
-// There is NO exception mechanism of any kind — no accepted-gap list, no
-// tolerated set, no predicate, and no empty placeholder to append to. The
-// required set of uncovered manifest inputs is EMPTY.
+// This module is the only way to read the manifest, and it FAILS CLOSED on one
+// that is missing, empty, unreadable, malformed, rootless, or that names a root
+// resolving to no real tracked file — never defaulting to a narrower scan or a
+// vacuous pass. There is NO exception mechanism of any kind: no accepted-gap list,
+// no tolerated set, no predicate, and no empty placeholder to append to.
 //
 // Roots are deliberately BROAD (`src/straylight`, not a file list): a broad root
-// also covers files that do not exist yet, so it cannot be defeated by adding,
-// renaming, or deleting a declaration.
+// also covers files that do not exist yet, so the scan set cannot be defeated by
+// adding, renaming, or deleting a declaration.
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
@@ -40,10 +44,8 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(HERE, '../..');
 
-/** The manifest's repository-relative path. Itself a declared input. */
+/** The manifest's repository-relative path. Itself inside the declared scan set. */
 export const MANIFEST_PATH = 'tests/phase-50a/proof-input-manifest.json';
-/** The workflow whose trigger declaration the manifest is compared against. */
-export const WORKFLOW_PATH = '.github/workflows/phase-50a-postgres-conformance.yml';
 
 /**
  * Read and validate the manifest.
@@ -86,7 +88,8 @@ export function readManifest(manifestPath = MANIFEST_PATH) {
     throw new Error(`proof-input manifest ${manifestPath} must declare a \`roots\` array`);
   }
   if (parsed.roots.length === 0) {
-    // A VACUOUS manifest would make every coverage comparison trivially satisfied.
+    // A VACUOUS manifest would make every scan trivially satisfied: a suite that
+    // reads nothing finds nothing wrong.
     throw new Error(`proof-input manifest ${manifestPath} declares no roots`);
   }
   const seen = new Set();
@@ -176,10 +179,10 @@ export function trackedFilesUnder(root, kind) {
 /**
  * Every tracked file the manifest covers, deduplicated and sorted.
  *
- * This is what the no-leak / neutrality suite SCANS. It reads its inputs from
- * here rather than restating them, which is what makes the manifest the single
- * declaration: a file that enters the tree under a declared root is automatically
- * in scope, and there is no second list to keep in step.
+ * This is exactly what the no-leak / neutrality suite SCANS, and it is the extent
+ * of the manifest's authority. That suite reads its inputs from here rather than
+ * restating them, so a file entering the tree under a declared root is
+ * automatically in that suite's scan, and there is no second list to keep in step.
  */
 export function manifestTrackedFiles(manifestPath = MANIFEST_PATH) {
   const manifest = readManifest(manifestPath);
@@ -190,56 +193,22 @@ export function manifestTrackedFiles(manifestPath = MANIFEST_PATH) {
   return [...files].sort();
 }
 
-/** Read one manifest-covered file's text. Refuses an undeclared path. */
+/**
+ * Read one manifest-covered file's text. Refuses an UNDECLARED path.
+ *
+ * This is what keeps the no-leak suite's declaration complete by construction: a
+ * read of something no root covers throws rather than quietly widening that
+ * suite's scan set behind its own declaration.
+ */
 export function readManifestInput(path, manifestPath = MANIFEST_PATH) {
   const covered = manifestTrackedFiles(manifestPath);
   if (!covered.includes(path)) {
     throw new Error(
       `proof-input manifest: ${path} is not covered by any declared root. Declare a root ` +
-        'that covers it (and give that root workflow trigger coverage) rather than reading it directly.',
+        'that covers it rather than reading it directly.',
     );
   }
   return readFileSync(resolve(REPO_ROOT, path), 'utf8');
-}
-
-/**
- * Does a workflow path filter cover a repository-relative path?
- *
- * Only the glob shapes GitHub's `paths:` filter uses AND this proof relies on are
- * interpreted: an exact path, and a `prefix/**` recursive prefix. Any other shape
- * is treated as NOT covering — an unrecognized filter must never be assumed to
- * cover something, which is the direction that fails closed.
- */
-export function filterCovers(glob, path) {
-  if (typeof glob !== 'string' || typeof path !== 'string') return false;
-  if (glob.endsWith('/**')) {
-    const prefix = glob.slice(0, -3);
-    return path === prefix || path.startsWith(`${prefix}/`);
-  }
-  if (glob.includes('*')) return false;
-  return glob === path;
-}
-
-/**
- * Which of `roots` the workflow's parsed trigger filters do NOT cover.
- *
- * A `tree` root is covered only by a filter that covers the WHOLE tree — an exact
- * filter naming one file inside it does not, because a sibling file under the same
- * root could then change the suite's verdict without starting the workflow. This
- * is checked by requiring coverage of the root path itself AND of every tracked
- * file under it, so a declared root cannot be narrowed while files remain.
- */
-export function uncoveredRoots(roots, filters) {
-  const uncovered = [];
-  for (const root of roots) {
-    const covered =
-      filters.some((f) => filterCovers(f, root.path)) &&
-      trackedFilesUnder(root.path, root.kind).every((file) =>
-        filters.some((f) => filterCovers(f, file)),
-      );
-    if (!covered) uncovered.push(root.path);
-  }
-  return uncovered.sort();
 }
 
 /** Repository-relative path of an absolute one. */

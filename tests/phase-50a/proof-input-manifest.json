@@ -1,5 +1,5 @@
 {
-  "$schema_note": "Phase 50A R3 — the FIXED, CHECKED-IN manifest of the proof's input roots. This file is DATA, not code: it is the SINGLE declaration of every repository path whose content can change the Phase 50A no-leak / neutrality suite's verdict. The suite READS ITS INPUTS FROM HERE rather than restating them, so there is one declaration and nothing to extract from source. The coverage proof compares this manifest against a BOUNDED STRUCTURAL PARSE of the workflow's own trigger declaration; neither side is derived from the other. There is NO exception mechanism of any kind — not a renamed one, not an empty one. The required set of uncovered manifest inputs is EMPTY.",
+  "$schema_note": "Phase 50A R3 — the FIXED, CHECKED-IN SCAN SET OF ONE SUITE: tests/phase-50a/no-leak-and-neutrality.test.ts. This file is DATA, not code. Its authority is exactly that suite's read/scan set and NOTHING ELSE: it is the single declaration of the paths that suite scans, so the suite restates no path and cannot widen its own input set (scripts/phase-50a/proof-input-manifest.mjs#readManifestInput refuses an undeclared read). It is NOT a declaration of the inputs to the build, the typecheck, the repository-wide test run, control-plane validation or the control-plane tests, the fixtures, the generated declarations, package pruning, the C1-C9 artifact verification, or the remote proof workflow — and nothing derives trigger, proof, or input completeness from it. The workflow's pull_request trigger is UNCONDITIONAL (no paths, no paths-ignore), so trigger completeness is a property of that trigger and needs no enumeration; tests/phase-50a/workflow-trigger-contract.test.ts pins it. There is NO exception mechanism of any kind — not a renamed one, not an empty one.",
   "version": 1,
   "roots": [
     {
@@ -20,7 +20,7 @@
     {
       "path": "tests/phase-50a",
       "kind": "tree",
-      "why": "The proof suites themselves, INCLUDING this manifest and every file that consumes it. Self-coverage is required: a change to the coverage model must not be able to merge without running the proof."
+      "why": "The proof suites themselves, INCLUDING this manifest and every file that consumes it. Self-coverage is required so that a change to the scan-set model is itself in scope of the scan it configures."
     },
     {
       "path": "docs/PHASE-50A-PROVIDER-NEUTRAL-POSTGRESQL-CANONICAL-STORE-IMPLEMENTATION-AND-PROOF.md",
@@ -45,7 +45,7 @@
     {
       "path": ".github/workflows/phase-50a-postgres-conformance.yml",
       "kind": "file",
-      "why": "The workflow itself. It is BOTH a scanned input of the leak/neutrality suite and the artifact the coverage proof parses, so a change to it must start the workflow that validates it."
+      "why": "The workflow itself, as a SCANNED input of the leak/neutrality suite: it carries the fixed local-only harness credentials and must stay provider-neutral. Its trigger and exact-head posture are NOT this manifest's business — tests/phase-50a/workflow-trigger-contract.test.ts pins those directly over the workflow's own bytes."
     },
     {
       "path": "package.json",

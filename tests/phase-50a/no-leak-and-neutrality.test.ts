@@ -5,31 +5,35 @@
 // the other Phase 50A suites they run under plain `npm test` too. A leak guard
 // that only ran when Docker was up would be no guard at all.
 //
-// ── R3: THE INPUT SET COMES FROM THE MANIFEST ───────────────────────────
+// ── R3: THIS SUITE'S OWN SCAN SET COMES FROM THE MANIFEST ───────────────
 //
-// This suite's conclusions depend on the content of specific repository paths.
-// If one of them changes, this suite's verdict can change with it — so the
-// workflow that runs the suite must be triggered by all of them.
+// This suite's conclusions depend on the content of the paths it scans, so it
+// declares that scan set ONCE, as checked-in DATA, in
+// `tests/phase-50a/proof-input-manifest.json`, and READS ITS INPUTS FROM there.
+// It restates no path, so there is one declaration and nothing to extract from
+// this source; `readManifestInput()` refuses an undeclared read, which is what
+// keeps the declaration complete by construction.
 //
-// The input set is declared ONCE, as checked-in DATA, in
-// `tests/phase-50a/proof-input-manifest.json`, and this suite READS ITS INPUTS
-// FROM that manifest. It restates nothing, so there is one declaration and
-// nothing to extract from this source.
+// SCOPE OF THAT MANIFEST, EXACTLY. It declares THIS SUITE'S read/scan set and
+// nothing else. It is NOT a declaration of the inputs to the build, the
+// typecheck, the repository-wide test run, control-plane validation or the
+// control-plane tests, the fixtures, the generated declarations, package pruning,
+// the C1-C9 artifact verification, or the remote proof workflow — and nothing
+// derives trigger completeness or proof completeness from it.
 //
-// This REPLACES the rejected model, in which the declaration lived in marked
-// comment blocks inside this file and a second suite EXTRACTED those blocks to
-// compare against the workflow. Three independent mutations survived that:
-// deleting a declared input (a smaller declaration satisfies `uncovered == []`
-// more easily), truncating the extractor, and — decisively — replacing the
-// extractor so it SYNTHESIZED a path the workflow no longer declared. No proof
-// may derive its authority from the extractor it validates, so there is no
-// extractor: the manifest is data, the workflow side is a bounded structural
-// parse of the workflow's own bytes, and neither is derived from the other.
+// That disclaimer is the correction. Two earlier models treated a manifest as the
+// enumeration of every input to the full proof and mirrored it into the workflow's
+// `on.pull_request.paths` filter; both were reopened, because the enumeration was
+// never complete and because coverage of what is DECLARED is satisfied more easily
+// by declaring less. The workflow's pull-request trigger is now UNCONDITIONAL, so
+// trigger completeness is a property of the trigger itself and needs no
+// enumeration at all. `tests/phase-50a/workflow-trigger-contract.test.ts` pins that
+// trigger directly over the workflow's own bytes.
 //
 // The roots are deliberately BROAD (`src/straylight`, not a file list): a broad
-// root also covers files that do not exist yet, so it cannot be defeated by
-// adding, renaming, or deleting a declaration. Adding a Phase 50A input means
-// adding a root to the MANIFEST — nowhere else.
+// root also covers files that do not exist yet, so this suite's scan cannot be
+// narrowed by adding, renaming, or deleting a declaration. Adding an input to THIS
+// SUITE's scan means adding a root to the MANIFEST — nowhere else.
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -104,7 +108,7 @@ describe('Phase 50A no-leak — the scanned set comes from the manifest and is n
     expect(files.length, 'the manifest must resolve to a substantial tracked set').toBeGreaterThan(
       40,
     );
-    // The manifest covers ITSELF, so a change to the coverage model is in scope of
+    // The manifest covers ITSELF, so a change to the scan-set model is in scope of
     // the very scan it configures.
     expect(files.map((f) => f.path)).toContain(MANIFEST_PATH);
   });
@@ -361,9 +365,9 @@ describe('Phase 50A neutrality — no provider-specific concept in the implement
   });
 
   it('an UNDECLARED input cannot be read through the manifest accessor', () => {
-    // The accessor is what keeps the declaration complete by construction: a read
-    // of something no root covers throws rather than quietly widening the input
-    // set behind the workflow's back.
+    // The accessor is what keeps THIS SUITE's declaration complete by
+    // construction: a read of something no root covers throws rather than quietly
+    // widening this suite's scan set behind its own declaration.
     expect(() => readManifestInput('src/straylight/no-such-undeclared-probe.ts')).toThrow(
       /not covered by any declared root/,
     );

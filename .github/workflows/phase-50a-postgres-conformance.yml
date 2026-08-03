@@ -12,41 +12,32 @@ name: Phase 50A PostgreSQL Conformance
 # Scope note: this is a NEW, self-contained workflow. It does not modify — and
 # holds no permission over — the Straylight control-plane workflows.
 
-# ── R3: the trigger set MIRRORS the checked-in proof-input manifest ──────
+# ── R3: the pull-request trigger is UNCONDITIONAL ────────────────────────
 #
-# `tests/phase-50a/proof-input-manifest.json` is the single declaration of every
-# path whose content can change this workflow's suites' verdicts. The filters
-# below cover exactly those roots, and
-# `tests/phase-50a/proof-input-coverage.test.ts` proves it by comparing the
-# manifest against a BOUNDED STRUCTURAL PARSE of this file's own bytes. The
-# required set of uncovered manifest roots is EMPTY, and there is no exception
-# mechanism of any kind.
+# This workflow runs for EVERY pull request. There is no `paths` key and no
+# `paths-ignore` key, so trigger completeness is a property of the TRIGGER
+# ITSELF: there is no enumeration of repository inputs to keep in step with the
+# tree, and therefore nothing that can drift out of step with it.
 #
-# The roots are BROAD (`src/straylight/**`, not a file list) on purpose: a broad
-# filter also covers files that do not exist yet, so coverage cannot be defeated
-# by adding, renaming, or deleting a declaration. `tests/phase-50a/**` covers the
-# manifest itself and every proof file that consumes it, so a change to the
-# coverage model cannot merge without running this workflow.
+# That replaces a model that mirrored a checked-in manifest of proof inputs into
+# a `paths` filter and compared the two sides. It was reopened twice. Coverage of
+# what is DECLARED says nothing about what must be declared, and the comparison
+# derived its authority from a parse of this very file — which a mutation could
+# make synthesize a trigger the file no longer carried. An unconditional trigger
+# removes the question instead of answering it more carefully.
 #
-# Adding a proof input means adding a root to the MANIFEST and a matching filter
-# here. Neither side is derived from the other; the test compares them.
+# The manual exact-head path stays BOUNDED: exactly one required input, the
+# 40-hex commit SHA to check out and assert. Nothing else is parameterizable, so
+# a dispatch cannot redirect the proof at a different repository, ref, or
+# configuration.
+#
+# `tests/phase-50a/workflow-trigger-contract.test.ts` pins the block below to its
+# exact bytes and fails closed on a filtered or parameterized `pull_request`, a
+# missing or broadened manual trigger, a renamed or optional input, a duplicate
+# or unsupported top-level trigger declaration, and the removal of any exact-head
+# safeguard further down this file.
 on:
   pull_request:
-    paths:
-      - 'src/straylight/**'
-      - 'migrations/postgres/**'
-      - 'scripts/phase-50a/**'
-      - 'tests/phase-50a/**'
-      - 'tests/storage-conformance.test.ts'
-      - 'docker-compose.phase-50a.yml'
-      - '.github/workflows/phase-50a-postgres-conformance.yml'
-      - 'package.json'
-      - 'package-lock.json'
-      - 'docs/PHASE-50A-PROVIDER-NEUTRAL-POSTGRESQL-CANONICAL-STORE-IMPLEMENTATION-AND-PROOF.md'
-      - 'docs/runbooks/**'
-  # A BOUNDED manual exact-head path: the only input is the 40-hex commit SHA to
-  # check out and assert. Nothing else is parameterizable, so a dispatch cannot
-  # redirect the proof at a different repository, ref, or configuration.
   workflow_dispatch:
     inputs:
       head_sha:

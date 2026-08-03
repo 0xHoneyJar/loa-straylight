@@ -1,25 +1,28 @@
 // Type declarations for `proof-input-manifest.mjs`.
 //
-// The module is plain ESM JavaScript so the proof suites and the workflow-coverage
-// suite can consume it without a build step. Same convention as
-// `prune-internal-postgres-types.d.mts` and `.straylight/lib/*.d.mts`.
+// The module is plain ESM JavaScript so the no-leak suite can consume it without a
+// build step. Same convention as `prune-internal-postgres-types.d.mts` and
+// `.straylight/lib/*.d.mts`.
+//
+// SCOPE: the manifest declares the SCAN SET OF ONE SUITE,
+// `tests/phase-50a/no-leak-and-neutrality.test.ts`. It is not a declaration of the
+// inputs to the build, the typecheck, the repository-wide tests, control-plane
+// validation or tests, the fixtures, the generated declarations, package pruning,
+// the C1-C9 artifact verification, or the remote workflow. See the module header.
 
 /** Absolute path of the repository root. */
 export declare const REPO_ROOT: string;
 
-/** Repository-relative path of the checked-in proof-input manifest. */
+/** Repository-relative path of the checked-in scan-set manifest. */
 export declare const MANIFEST_PATH: string;
 
-/** Repository-relative path of the workflow whose triggers are parsed. */
-export declare const WORKFLOW_PATH: string;
-
-/** One declared proof-input root. */
+/** One declared scan-set root. */
 export interface ManifestRoot {
   /** Repository-relative path. Clean and relative; never absolute or `..`-bearing. */
   path: string;
   /** `tree` covers every tracked file beneath it; `file` is exactly one path. */
   kind: 'tree' | 'file';
-  /** Why this path's content can change the proof's verdict. */
+  /** Why this path's content can change the no-leak suite's verdict. */
   why: string;
 }
 
@@ -44,25 +47,14 @@ export declare function manifestRootPaths(manifestPath?: string): string[];
  */
 export declare function trackedFilesUnder(root: string, kind: 'tree' | 'file'): string[];
 
-/** Every tracked file the manifest covers, deduplicated and sorted. */
+/**
+ * Every tracked file the manifest covers, deduplicated and sorted — exactly the
+ * no-leak suite's scan set.
+ */
 export declare function manifestTrackedFiles(manifestPath?: string): string[];
 
 /** Read one manifest-covered file's text. Throws for an undeclared path. */
 export declare function readManifestInput(path: string, manifestPath?: string): string;
-
-/**
- * Does a workflow `paths:` filter cover a repository-relative path? Only an exact
- * path and a `prefix/**` recursive prefix are interpreted; any other shape is
- * treated as NOT covering, which is the direction that fails closed.
- */
-export declare function filterCovers(glob: string, path: string): boolean;
-
-/**
- * Which of `roots` the parsed workflow filters do NOT cover, sorted. A `tree` root
- * counts as covered only when the root itself AND every tracked file under it are
- * covered, so a declared root cannot be narrowed while files remain under it.
- */
-export declare function uncoveredRoots(roots: ManifestRoot[], filters: string[]): string[];
 
 /** Repository-relative path of an absolute one, with POSIX separators. */
 export declare function repoRelative(abs: string): string;

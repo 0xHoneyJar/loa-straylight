@@ -1509,6 +1509,20 @@ nothing would otherwise look like a pass).
 
 ### 16.3 R3 — the heuristic proof is replaced by a closed coverage model
 
+> **SUPERSEDED — and reopened.** The model described in this subsection was
+> **rejected** at lane #122 sequence 35. Its coverage claim was not sound: the
+> parser-supplied byte offsets it verified were **not independently bound** to a
+> real `on.pull_request.paths` sequence item, so a benign
+> remove-then-synthesize-from-outside fixture stayed green; and the manifest
+> claimed authority over the complete remote proof while **omitting real inputs**
+> (`vitest.config.ts`, `tests/_global-setup.ts`, the tsconfigs,
+> `scripts/prune-dist-runtime.mjs`, `tests/control-plane/`, `.straylight/`,
+> `fixtures/`, the tracked `dist-types/` tree). **§17 supersedes this subsection.**
+> The parser, its offsets, and the offset-provenance assertion are **deleted**;
+> the trigger is **unconditional**; the manifest's scope is corrected to one
+> suite's scan set. This subsection is retained unaltered below as the durable
+> record of what was rejected.
+
 **What was unsound.** The rejected model declared the proof's input set inside the
 no-leak suite's own source (marked comment blocks) and **extracted** it from there
 to compare against the workflow's `pull_request.paths`. Three independent
@@ -1569,6 +1583,13 @@ package contract, and the workflow's authentication posture, credential handling
 exact-head assertion, and substantive-step completeness.
 
 ### 16.4 R3 — independent probe/mutation matrix
+
+> **SUPERSEDED.** P1, P8 and P9 in the table below probed the retired parser and
+> the retired `paths` filter, and are **deleted with them** — P1's
+> parser-replacement mutation is load-bearing for nothing, because no proof claim
+> derives from a parsed trigger value or offset any more. **§17.2 supersedes this
+> subsection** with the trigger probes T1–T11 (over the workflow's own bytes) and
+> the re-pointed scan-set probes. Retained unaltered as the durable record.
 
 `tests/phase-50a/proof-input-coverage-mutations.test.ts`, same disposable-copy
 discipline, same baseline and non-vacuity guards. Each copy is initialized as its
@@ -1659,6 +1680,17 @@ Verified after both corrections, under the runner's own conditions
 
 ### 16.6 Scope of this slice
 
+> **COUNT CORRECTED.** The inherited-path count this subsection previously
+> reported was **wrong** and has been **replaced** — the retired figure is not
+> restated anywhere, so it cannot be mistaken for a live claim. The operator
+> decision at lane #122 sequence 36 records the authoritative figures. The branch
+> point
+> `f1b5f0f3924eb4c8624c8b2efb1f3072fbfa92f4` carries **647** tracked paths, of
+> which this slice modified **13** and left **634** byte-identical, and it **added
+> 9** — for **656** tracked paths at `a720e946717f246ec4e646f85d549d92b49b9fb7`.
+> The figures are stated correctly in the body below and re-verified in §17.4. The
+> byte-identity claim itself was independently confirmed; only the count was wrong.
+
 Changed, and all inside the packet's seven allowed paths:
 
 * `src/straylight/storage/postgres/` — `rows.ts` (the shared caller-controlled
@@ -1676,7 +1708,9 @@ Changed, and all inside the packet's seven allowed paths:
 * this document.
 
 Deliberately **byte-unchanged** (blob-level comparison against the branch point,
-covering all 626 other inherited paths): `migrations/postgres/`,
+covering all **634** other inherited paths — of the **647** tracked at
+`f1b5f0f3924eb4c8624c8b2efb1f3072fbfa92f4`, **13** modified and **9** added):
+`migrations/postgres/`,
 `docker-compose.phase-50a.yml`, `docs/runbooks/`,
 `tests/storage-conformance.test.ts`, `src/straylight/storage/types.ts`,
 `src/straylight/index.ts`, the estate-domain files
@@ -1703,3 +1737,336 @@ durability, failover, network isolation, tenancy, availability, version policy, 
 incident recovery remain later obligations. Nothing here involves a provider, a
 production resource, a credential, or a living estate. The audit of this slice is
 Codex's; the implementer does not audit its own work.
+
+---
+
+## 17. R3 proof-harness-closure slice (fresh initial slice after the sequence-35 REJECT)
+
+Authority: the durable `operator.decision` `evt-phase-50a-operator-decision-036` on
+lane #122 (comment 5160506197), which disposed the Codex REJECT at sequence 35
+(audit comment 5160302733, audit digest
+`sha256:acb35e0649609b2d82b92790cdc5a4c069dcc583540ade87a4b017e6ba636fad`, reducer
+result 5160507741) and authorized **exactly one** fresh **initial**
+proof-harness-closure slice on a **fresh branch** with a **fresh pull request**.
+Task packet comment 5165577237, digest
+`sha256:e54eef5eed34fca8939dba56421975e6f01df90f8d5d87b2a73bccf234b238da`; packet
+event comment 5165583883 at sequence 37. `patch_cycle` stays **3**, the configured
+maximum (`automation-policy.json` `maximum_patch_cycles = 3`): this is an initial
+packet on a fresh branch, **not** an unauthorized patch cycle 4.
+
+Branch point: rejected SHA `a720e946717f246ec4e646f85d549d92b49b9fb7`, used **only**
+as inspectable substrate. **PR #125**, branch
+`phase-50a-r2-r3-architecture-correction`, and every earlier rejected branch, SHA,
+and pull request of this lane are **not** reopened, amended, extended, retargeted,
+or cited as merge evidence — for this lane or any successor.
+
+The REJECT reopened R3 for the third time. The operator decision was explicit that
+it must be closed by **removing the failed abstraction, not by repairing the parser
+again**. This slice does exactly that and nothing else.
+
+### 17.1 What was unsound, and what removing it means
+
+Three successive models tried to prove that every input to the Phase 50A proof
+could also **start** the workflow that runs it. Each **enumerated** those inputs,
+**mirrored** the enumeration into `on.pull_request.paths`, and **compared** the two
+sides. Each was reopened:
+
+1. the declaration lived in **marked comment blocks** inside the no-leak suite and
+   an **extractor** read it out. Deleting a declared input, truncating the
+   extractor, and replacing the extractor so it **synthesized** a path all left the
+   proof green;
+2. the declaration became a **checked-in manifest** and the workflow side became a
+   **bounded structural parser** returning each path with a **byte offset**, whose
+   provenance the proof verified. The audit found the offsets were **not
+   independently bound** to a real `on.pull_request.paths` sequence item, so a
+   benign remove-then-synthesize-from-outside fixture stayed green — the same
+   laundering defect, one layer deeper. The audit also found the manifest claimed
+   authority over the **complete remote proof** while omitting real inputs:
+   `vitest.config.ts`, `tests/_global-setup.ts`, the tsconfigs,
+   `scripts/prune-dist-runtime.mjs`, `tests/control-plane/`, `.straylight/`,
+   `fixtures/`, and the tracked `dist-types/` tree.
+
+Two failures are structural, not implementation defects, which is why a third
+repair was the wrong move:
+
+* **Coverage of what is DECLARED says nothing about what must be declared.**
+  `uncovered == []` is satisfied *more easily* by declaring less. No amount of
+  rigour inside the comparison fixes the direction of the claim.
+* **No proof may derive its authority from the artifact it validates.** As long as
+  the workflow side of the comparison is *produced by code*, a mutation of that code
+  can make the comparison agree about a trigger the workflow does not carry.
+
+**The closed design removes the question instead of answering it more carefully.**
+
+**(A) The pull-request trigger is UNCONDITIONAL.**
+`.github/workflows/phase-50a-postgres-conformance.yml` declares:
+
+```yaml
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      head_sha:
+        description: 'Exact 40-hex commit SHA to check out and assert (required)'
+        required: true
+        type: string
+```
+
+No `paths`. No `paths-ignore`. The workflow runs for **every** pull request, so
+trigger completeness is a property of the **trigger itself** — there is no
+enumeration of repository inputs to keep in step with the tree, and therefore
+nothing that can drift out of step with it. The inputs the previous manifest omitted
+are covered for the same reason every other path is: unconditionally. The bounded
+manual exact-head path is retained with exactly one **required string** input.
+
+**(B) A closed trigger contract, not another parser.**
+`tests/phase-50a/workflow-trigger-contract.test.ts` (33 tests) reads the workflow's
+**actual bytes** with `readFileSync` and asks no other module for anything — it
+imports only `node:fs`, `node:path`, `node:url` and `vitest`, which a test asserts
+over its own import statements. There is **no intermediate representation**, so
+there is nothing that could synthesize a value, a span, or an offset for the
+contract to trust. It is not a YAML parser and imports none.
+
+It **ACCEPTS** exactly one top-level `on:` declaration whose significant lines are
+**byte-identical** to a literal spelled out in the contract (`CANONICAL_ON_LINES`),
+and **REJECTS**, each with a distinct reason code:
+
+| Reason code | Rejects |
+|---|---|
+| `path-filter-present` | a `paths` **or** `paths-ignore` key anywhere in the file |
+| `on-declaration-absent` | no top-level `on:` |
+| `on-declaration-duplicated` | a **duplicate** top-level `on:` |
+| `trigger-block-not-canonical` | a missing, filtered, or parameterized `pull_request`; a missing or broadened `workflow_dispatch`; a renamed, optional, or non-string `head_sha`; an **unsupported** trigger; any other trigger content at all |
+| `head-sha-validation-absent` | removal of the exact `^[0-9a-f]{40}$` validation |
+| `pr-head-source-absent` | redirecting the PR head source to the synthetic merge SHA |
+| `checkout-ref-not-pinned` | removing or redirecting the exact checkout `ref` |
+| `head-equality-assertion-absent` | the compared value not being **read back** from `git rev-parse HEAD` |
+| `head-equality-comparison-absent` | removing the comparison, leaving only the print |
+| `head-equality-step-absent` | removing the identity-assertion step |
+| `head-equality-not-first` | a substantive command running **before** the assertion |
+| `substantive-command-absent` | removing any of the nine substantive step commands |
+| `tab-indentation` | a tab character |
+| `workflow-unreadable` | unusable input — never a vacuous pass |
+
+Two properties make this fail closed rather than merely strict. **Unrecognized
+content is a refusal, not an equivalence**: because the accepted set is one literal
+byte sequence, every enumerated trigger defect is the *same* mismatch, and a defect
+nobody enumerated is refused too. And **every safeguard and ordering check runs over
+the EXECUTABLE text** — the document with whole-line comments blanked out, line
+count and order preserved. That is load-bearing: the workflow's explanatory comments
+name several of the literals a safeguard is pinned to, so a check over the raw
+document would have been satisfied by the **prose about** a safeguard after the
+safeguard itself was deleted. Three of this slice's own fixtures failed until the
+distinction was made, which is how it was found.
+
+**(C) The manifest's scope is corrected to one suite's scan set.**
+`tests/phase-50a/proof-input-manifest.json` survives, and its `$schema_note`, its
+consumer's header, its `.d.mts`, the no-leak suite's header, and this section now
+say the same narrow thing: it declares the **read/scan set of exactly one suite**,
+`tests/phase-50a/no-leak-and-neutrality.test.ts`. It is **not** a declaration of the
+inputs to the build, the typecheck, the repository-wide test run, control-plane
+validation or the control-plane tests, the fixtures, the generated declarations,
+package pruning, the C1–C9 artifact verification, or the remote workflow — and
+nothing derives trigger, proof, or input completeness from it. The
+workflow-comparison helpers orphaned by (A) and (B) — `filterCovers`,
+`uncoveredRoots`, and `WORKFLOW_PATH` — are **deleted**; the manifest consumer no
+longer knows the workflow exists.
+
+The no-leak suite's genuine protections are **preserved**: `readManifestInput()`
+still refuses an **undeclared read**; `manifestTrackedFiles()` still throws on a
+manifest that is missing, empty, unreadable, malformed, wrongly versioned, rootless,
+or that names a root resolving to **no real tracked file**; the manifest still covers
+**itself**; and the domain-model scan is still **derived** from the broad
+`src/straylight` root rather than restated.
+
+**What was retired, and where authority moved:**
+
+| Retired | File | Disposition | Authority now |
+|---|---|---|---|
+| The workflow trigger parser | `scripts/phase-50a/workflow-trigger-parser.mjs` | **DELETED** | none — no proof claim derives from a parsed trigger |
+| Its type declarations | `scripts/phase-50a/workflow-trigger-parser.d.mts` | **DELETED** | — |
+| Byte offsets + the offset-provenance assertion | `tests/phase-50a/proof-input-coverage.test.ts` | **DELETED** (whole file — it *is* the defective proof) | `workflow-trigger-contract.test.ts`, over the file's own bytes, with no offsets at all |
+| The parser-replacement mutation (P1) | `tests/phase-50a/proof-input-coverage-mutations.test.ts` | **DELETED** with the parser | nothing — disclosed in §17.2, not silently dropped |
+| The per-trigger-path removal matrix (P8) | same | **DELETED** — there is no `paths` filter to remove | inverted: T1/T2 refuse *introducing* a filter |
+| `filterCovers`, `uncoveredRoots`, `WORKFLOW_PATH` | `scripts/phase-50a/proof-input-manifest.mjs` + `.d.mts` | **DELETED** as orphans | — |
+| Every over-broad manifest authority claim | manifest `$schema_note`, consumer header, `.d.mts`, no-leak header, §16.3/§16.4 | **CORRECTED** to no-leak-only scope | the unconditional trigger carries completeness |
+
+### 17.2 Independent probe/mutation matrix
+
+`tests/phase-50a/proof-input-coverage-mutations.test.ts`. Same discipline as the R2
+matrix: each mutation is applied to a **disposable copy** of the tree (initialized as
+its own git repository and staged, so the manifest consumer's `git ls-files`
+resolution sees the copy's mutated content), one named test runs against that copy,
+the copy is discarded, and the repository file is then **re-read and proven
+unmutated**. The repository tree is never mutated, and a final test asserts no probe
+directory survives.
+
+**Two baselines** prove the harness is sound before any result is trusted: an
+unmutated copy **passes** the trigger contract, and an unmutated copy **passes** the
+no-leak scan.
+
+**Trigger probes** — mutate the workflow, must fail a named test in the trigger
+contract:
+
+| # | Mutation | Named test that FAILS |
+|---|---|---|
+| T1 | **Filter** `pull_request` by introducing a `paths` key | `NO paths or paths-ignore key appears anywhere in the workflow` |
+| T2 | Introduce a `paths-ignore` key | `NO paths or paths-ignore key appears anywhere in the workflow` |
+| T3 | **Remove** `pull_request` | `the pull-request trigger is UNCONDITIONAL and the manual trigger is BOUNDED…` |
+| T4 | **Parameterize** `pull_request` with a `branches` filter | same |
+| T5 | **Remove** `workflow_dispatch` | same |
+| T6 | **Broaden** `workflow_dispatch` with an additional input | same |
+| T7 | **Rename** `head_sha` | same |
+| T8 | Make `head_sha` **optional** | same |
+| T9 | Remove the exact 40-hex validation (comment about it left in place) | `the exact 40-hex head-SHA validation is intact` |
+| T10 | **Redirect** the checkout `ref` away from the derived SHA | `the checkout pins the EXACT derived SHA as its ref` |
+| T11 | Remove the `git rev-parse HEAD` equality assertion (step name left in place) | `the git rev-parse HEAD equality assertion is intact and precedes every substantive step` |
+
+**Scan-set probes** — mutate the manifest or its consumer, must fail a named test in
+the no-leak suite:
+
+| # | Mutation | Named test that FAILS |
+|---|---|---|
+| P2 | **Delete** a declared scan-set root (`migrations/postgres`) | `the migrations reference no provider-managed role, database, or extension` |
+| P3 | **Truncate** the root list during reading (`roots.slice(1)`) | `the estate domain model is untouched by Phase 50A` |
+| P4 | **Rename** the declaration key (`roots` → `paths`) | `the manifest is readable, non-vacuous, and every declared root contributes tracked files` |
+| P5 | Make the declaration **vacuous** (empty root list) | same |
+| P6 | Declare a root with **no real tracked files** | same |
+| P7 | **Narrow** a root while real files remain under it | `the estate domain model is untouched by Phase 50A` |
+| P10 | **Read an undeclared input** — remove the accessor's refusal | `an UNDECLARED input cannot be read through the manifest accessor` |
+
+T9, T10 and T11 deliberately mutate the **executable** occurrence and leave the
+comment or step name that describes it in place, so each proves the
+executable-text scoping rather than assuming it.
+
+The trigger contract additionally carries **23 in-memory defect fixtures** of its
+own, each requiring a specific reason code, plus an unusable-input case and a
+**non-vacuity** test that requires the real bytes to be **accepted** and every
+fixture to be **rejected** — a checker that refused everything would make every
+other test pass while proving nothing.
+
+**Harness non-vacuity is itself proven.** Captured output is ANSI-**stripped** before
+every match (vitest colourizes its summary under CI's terminal settings, and a guard
+that only held locally would be no guard at all on the remote proof), and the
+stripper is asserted directly against both the colourized and the plain form. The
+guard was **extended** in this slice: a mutation that breaks a suite at
+**collection** time is real, and stronger, but vitest reports `Tests  no tests` —
+which the previous guard could not distinguish from a `-t` pattern that matched
+nothing. It now accepts a collection failure (`Test Files N failed` **with**
+`Tests  no tests`) while still rejecting a **skipped** summary, a zero-match run, and
+`no tests` without a failed file. All three shapes are asserted directly. Each inner
+run remains **time-bounded** (120 s, `SIGKILL`), so a hang fails loudly rather than
+silently passing, and the job carries `timeout-minutes: 45`.
+
+A test also asserts the retirement **mechanically**: none of the three deleted files
+is tracked, no code under `scripts/`, `tests/`, or `.github/` still references the
+parser, and the workflow declares no path filter — so no trigger parse is
+load-bearing for anything.
+
+### 17.3 Local proof results
+
+Run at the fresh head, against **two separately initialized local PostgreSQL 16
+instances** (`docker-compose.phase-50a.yml`, ports 55432 and 55433, distinct
+`system_identifier`s):
+
+| Command | Result |
+|---|---|
+| `npm ci` | clean |
+| `npm run build` | clean |
+| `npm run typecheck` | clean |
+| `npm test` | see §17.5 |
+| `npm run control-plane:validate` | clean |
+| `npm run control-plane:test` | clean |
+| `npm run phase-50a:test` (two hosts) | clean |
+| `npm run phase-50a:proof` (export/restore/replacement) | clean |
+| `npm run phase-50a:verify-artifact` (C1–C9) | clean |
+| `npm pack --dry-run --json` | no PostgreSQL declaration packed |
+| `git diff --check` | clean |
+
+The task packet and every event this slice posts were validated locally against
+`.straylight/lib/validate.mjs` and replayed through `.straylight/bin/reduce-issue.mjs`
+at base SHA `70d40058096455c6406d644183ac757a317ce159` **before** posting.
+
+### 17.4 Scope, and positive byte identity
+
+Changed — **12 paths, all inside the packet's 12 exact `allowed_paths`**, verified by
+set comparison (changed ∖ allowed = ∅):
+
+| Path | Disposition |
+|---|---|
+| `.github/workflows/phase-50a-postgres-conformance.yml` | **modified** — unconditional trigger; manifest-mirroring commentary retired |
+| `scripts/phase-50a/workflow-trigger-parser.mjs` | **DELETED** |
+| `scripts/phase-50a/workflow-trigger-parser.d.mts` | **DELETED** |
+| `scripts/phase-50a/proof-input-manifest.mjs` | **modified** — orphaned helpers deleted; scope corrected |
+| `scripts/phase-50a/proof-input-manifest.d.mts` | **modified** — same |
+| `tests/phase-50a/proof-input-manifest.json` | **modified** — `$schema_note` and two root rationales scoped honestly |
+| `tests/phase-50a/proof-input-coverage.test.ts` | **DELETED** — the defective proof |
+| `tests/phase-50a/proof-input-coverage-mutations.test.ts` | **modified in place** — T1–T11 added; P1/P8/P9 retired with disclosure; P2–P7 re-pointed; P10 added |
+| `tests/phase-50a/workflow-trigger-contract.test.ts` | **added** — the one permitted replacement |
+| `tests/phase-50a/artifact-and-workflow-contract.test.ts` | **modified** — parser narrative retired; the `workflow_dispatch` slice made structural |
+| `tests/phase-50a/no-leak-and-neutrality.test.ts` | **modified** — scope wording only |
+| `docs/…-IMPLEMENTATION-AND-PROOF.md` | **modified** — §16.3/§16.4/§16.6 superseded, counts corrected, this §17 |
+
+**Positive byte identity.** Every tracked path **outside** `allowed_paths` was
+compared by **git object id** between `a720e946717f246ec4e646f85d549d92b49b9fb7` and
+this slice's tree: **zero** differ, and none is missing. That covers **R1** (bounded
+callback-thenability refusal), **R2** (caller-controlled append-only declaration and
+placement classification), **R4** (the `assertNever` totality barrier),
+`src/straylight/` in its entirety, `migrations/`,
+`docker-compose.phase-50a.yml`, `docs/runbooks/`,
+`tests/storage-conformance.test.ts`, `fixtures/`, the tracked `dist-types/` tree, the
+TypeScript configuration (`tsconfig.json`, `tsconfig.build.json`,
+`tsconfig.runtime.json`), `vitest.config.ts`, `tests/_global-setup.ts`,
+`package.json`, `package-lock.json`, `.straylight/`, `.loa`, `.claude/`, `.npmrc`,
+`scripts/prune-dist-runtime.mjs`, every other `scripts/phase-50a/` file,
+`tests/control-plane/`, every other `tests/phase-50a/` suite, every ADR, and **every
+other workflow**. No dependency, lockfile, public API, package-contract,
+migration-semantic, transaction-semantic, audit-chain, sibling-repository, or
+domain-semantic change. No proof-only reference change to an otherwise
+byte-identical file was needed, so none was made.
+
+**Corrected evidence figures**, independently recomputed with `git ls-tree` and
+`git diff --name-status`:
+
+| Figure | Value |
+|---|---|
+| Branch-point (`f1b5f0f3…`) tracked paths | **647** |
+| Modified inherited paths (branch point → `a720e946…`) | **13** |
+| Added paths | **9** |
+| Byte-identical inherited paths | **634** (647 − 13) |
+| Tracked paths at `a720e946…` | **656** (647 + 9) |
+
+The previously reported inherited-path figure was wrong. It is **replaced**, not
+restated: it survives **nowhere** in the tree as a live count, and §16.6 records the
+correction. This slice's own counts against `a720e946…`: **12** changed — **8**
+modified, **1** added, **3** deleted — leaving **654** tracked paths.
+
+### 17.5 Preserved behaviour
+
+R1, R2 and R4 remain **closed**, with their pinning tests present and green —
+including R2's 24-permutation outcome matrix and its six-case mutation matrix, and
+R4's real compiler mutation with its positive control. No PostgreSQL production
+source, transaction semantic, session-invalidation behaviour, migration, migration
+checksum, or audit-chain behaviour changed. The internal-only package boundary,
+package exports, `npm pack` surface, generated-declaration pruning, and C1–C9
+artifact verification are unchanged and pass. The two-host proof, the synchronous
+public `StorageAdapter` seam, and provider neutrality are unchanged.
+
+### 17.6 What this slice does NOT establish
+
+It closes R3 by **removing** the failed abstraction and preserves everything else
+byte-identically. It authorizes and claims **no** acceptance, **no** readiness, **no**
+gate disposition, **no** Phase 50B work, **no** MVP-2 completion, and **no** merge.
+The fresh pull request is **not merged**; PR #125 and every earlier rejected branch
+and pull request of this lane were left **untouched**, and **nothing in this slice is
+offered as merge evidence**. Every residual unproven pre-production obligation in
+§10 stands undischarged: durability, failover, network isolation, tenancy,
+availability, version policy, and incident recovery remain later obligations.
+Nothing here involves a provider, a production resource, a credential, or a living
+estate.
+
+**Implementation provenance.** Exactly **one** Claude Opus xhigh implementer context
+did this work, under lease `lease-phase-50a-implementer-r3-closure-010` (lane #122
+sequence 38). **No** Ultracode, **no** `/batch`, **no** teams, **no** subagents, and
+**no** delegation of any kind. The audit of this slice is Codex's; the implementer
+does not audit its own work.

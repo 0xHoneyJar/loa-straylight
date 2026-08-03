@@ -25,22 +25,28 @@ const ROOT = resolve(HERE, '../..');
 const WORKFLOW = resolve(ROOT, '.github/workflows/phase-50a-postgres-conformance.yml');
 const PACKAGE_JSON = resolve(ROOT, 'package.json');
 
-// NOTE ON SCOPE. This suite used to also carry the workflow-COVERAGE proof, over
-// an extractor that read the no-leak suite's input declaration out of marked
-// comment blocks. The durable REJECT reopened that model: an independent mutation
-// removed a real trigger from the workflow AND made the extractor synthesize the
-// missing path, and every focused test stayed green — the proof could launder a
-// missing required trigger through the extractor it validated.
+// NOTE ON SCOPE. This suite once carried a workflow-COVERAGE proof: an extractor
+// read a declaration of the proof's inputs out of marked comment blocks and
+// compared it against the workflow's `on.pull_request.paths`. Two successive
+// versions of that model were reopened by audit — the enumeration was never
+// complete, "everything DECLARED is covered" is satisfied more easily by declaring
+// less, and a mutation could make the workflow-side reader SYNTHESIZE a trigger the
+// file no longer carried.
 //
-// The closed coverage model is `tests/phase-50a/proof-input-coverage.test.ts`,
-// over the checked-in manifest `tests/phase-50a/proof-input-manifest.json` and a
-// bounded structural parse of the workflow's own bytes. Its probe/mutation matrix
-// is `tests/phase-50a/proof-input-coverage-mutations.test.ts`. No extractor, no
-// marked block, and no exception mechanism of any kind remains.
+// The abstraction is RETIRED, not repaired. The workflow's pull-request trigger is
+// UNCONDITIONAL, so trigger completeness is a property of the trigger itself and
+// nothing enumerates repository inputs to establish it. The extractor, the
+// structural parser that replaced it, its byte offsets, the offset-provenance
+// assertion, and the parser-replacement mutation are all DELETED.
+// `tests/phase-50a/workflow-trigger-contract.test.ts` is the one remaining
+// authority on the trigger block, over the workflow's own bytes; its independent
+// probe matrix is `tests/phase-50a/proof-input-coverage-mutations.test.ts`.
 //
 // What this suite keeps is its own subject: the generated-artifact/package
-// contract, and the workflow's authentication posture, credential handling,
-// exact-head identity assertion, and substantive-step completeness.
+// contract, and the workflow's authentication posture and credential handling. Its
+// exact-head and substantive-step assertions remain here too — deliberately
+// duplicated with the trigger contract, since two independent readers of the same
+// safeguard is a strength, not drift.
 
 function readWorkflow(): string {
   return readFileSync(WORKFLOW, 'utf8');
@@ -203,27 +209,35 @@ describe('Phase 50A patch — the proof workflow authenticates and triggers corr
     expect(/--registry|registry\.npmjs\.org/.test(text)).toBe(false);
   });
 
-  // ── R3: the coverage model MOVED, and why ─────────────────────────────
+  // ── R3: the coverage model is RETIRED, not relocated ──────────────────
   //
-  // This suite used to carry the workflow-coverage proof: it EXTRACTED the
-  // no-leak suite's input declaration from marked comment blocks in that suite's
-  // source and compared the extracted set against the workflow's
-  // `pull_request.paths`. The durable REJECT reopened it — an independent
-  // mutation removed a real trigger from the workflow AND changed the extractor
-  // to synthesize that path, and all 24 focused tests stayed green. The proof
-  // could launder a missing required trigger through the extractor it validated.
+  // This suite used to carry the workflow-coverage proof: it EXTRACTED an input
+  // declaration from marked comment blocks and compared it against the workflow's
+  // `pull_request.paths`. That model was reopened twice. The second version
+  // replaced the extractor with a bounded structural PARSER of the workflow's
+  // bytes and verified each recovered path against a byte offset — and was
+  // reopened again, because the offsets were not independently bound to a real
+  // `on.pull_request.paths` sequence item and because the manifest claimed
+  // authority over inputs it never enumerated.
   //
-  // The closed model lives in `tests/phase-50a/proof-input-coverage.test.ts`,
-  // over a fixed CHECKED-IN MANIFEST (`tests/phase-50a/proof-input-manifest.json`)
-  // and a BOUNDED STRUCTURAL PARSE of the workflow's own bytes
-  // (`scripts/phase-50a/workflow-trigger-parser.mjs`). There is no extractor, no
-  // marked block, and no exception mechanism of any kind; its probe/mutation
-  // matrix is in `tests/phase-50a/proof-input-coverage-mutations.test.ts`.
+  // Repairing the abstraction failed twice, so the abstraction is GONE. The
+  // workflow declares an UNCONDITIONAL `on.pull_request` with no `paths` and no
+  // `paths-ignore`, so trigger completeness follows from the trigger and there is
+  // nothing to enumerate, mirror, parse, or compare. The parser, its offsets, the
+  // offset-provenance assertion, and the parser-replacement mutation are deleted.
+  //
+  // `tests/phase-50a/workflow-trigger-contract.test.ts` now pins the trigger block
+  // to its exact bytes and fails closed on a filtered or parameterized
+  // `pull_request`, a missing or broadened manual trigger, a renamed or optional
+  // input, a duplicate or unsupported top-level trigger, and the removal of any
+  // exact-head safeguard. `tests/phase-50a/proof-input-manifest.json` survives with
+  // its scope corrected to ONE suite's scan set — the no-leak/neutrality suite —
+  // and claims nothing about the workflow.
   //
   // What REMAINS here is this suite's own subject: the workflow's authentication
   // posture, its credential handling, its exact-head identity assertion, and the
-  // presence of every substantive proof step. Those are properties of the
-  // workflow file, not of the coverage comparison.
+  // presence of every substantive proof step. Those are properties of the workflow
+  // file, and this suite reads them independently of the trigger contract.
 
   it('derives and asserts an EXACT 40-hex head SHA before any substantive step', () => {
     const text = readWorkflow();
@@ -279,12 +293,48 @@ describe('Phase 50A patch — the proof workflow authenticates and triggers corr
     // proof at another repository, ref, or configuration.
     expect(text).toContain('workflow_dispatch:');
     expect(text).toContain('head_sha:');
-    const dispatchStart = text.indexOf('  workflow_dispatch:');
-    const dispatchEnd = text.indexOf('\n# Least privilege', dispatchStart);
-    expect(dispatchEnd).toBeGreaterThan(dispatchStart);
-    const block = text.slice(dispatchStart, dispatchEnd);
+    // The block's extent is located STRUCTURALLY — from `workflow_dispatch:` to the
+    // next top-level key — rather than by a literal offset into a neighbouring
+    // comment. The previous form sliced to `'\n# Least privilege'`, which pinned
+    // this test to the exact prose that happened to follow the trigger block; a
+    // reworded comment would have silently mis-sliced it.
+    const lines = text.split('\n');
+    const dispatchLine = lines.findIndex((l) => l === '  workflow_dispatch:');
+    expect(dispatchLine, 'workflow_dispatch must be declared at trigger depth').toBeGreaterThan(-1);
+    const nextTopLevel = lines.findIndex(
+      (l, i) => i > dispatchLine && /^[A-Za-z_]/.test(l) && !l.trim().startsWith('#'),
+    );
+    expect(nextTopLevel, 'a top-level key must follow the trigger block').toBeGreaterThan(
+      dispatchLine,
+    );
+    const block = lines.slice(dispatchLine, nextTopLevel).join('\n');
     const inputNames = [...block.matchAll(/^      ([a-z_][a-z0-9_]*):$/gm)].map((m) => m[1]);
     expect(inputNames, 'workflow_dispatch must declare exactly one input').toEqual(['head_sha']);
+    // And that one input is REQUIRED and a string.
+    expect(block).toContain('        required: true');
+    expect(block).toContain('        type: string');
+  });
+
+  it('the pull_request trigger is UNCONDITIONAL — no paths, no paths-ignore', () => {
+    // Read independently of the trigger contract, over the workflow's own lines:
+    // two readers of the same property is defence in depth, not duplication.
+    const significant = readWorkflow()
+      .split('\n')
+      .filter((l) => l.trim() !== '' && !l.trim().startsWith('#'));
+    expect(
+      significant.filter((l) => /^\s*paths(-ignore)?\s*:/.test(l)),
+      'the workflow must declare no path filter of any kind',
+    ).toEqual([]);
+    // `pull_request:` is declared and carries no nested key: the line after it is
+    // back at trigger depth.
+    const prIndex = significant.indexOf('  pull_request:');
+    expect(prIndex, 'pull_request must be declared at trigger depth').toBeGreaterThan(-1);
+    const following = significant[prIndex + 1];
+    expect(following, 'a trigger must follow pull_request').toBeDefined();
+    expect(
+      /^ {2}\S/.test(following!),
+      `pull_request must carry no nested key; found "${following}"`,
+    ).toBe(true);
   });
 
   it('the derived SHA reaches the script through the ENVIRONMENT, never shell interpolation', () => {
