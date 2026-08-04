@@ -129,7 +129,7 @@ describe('Phase 50A R3 envelope — the executor contains no interpreter', () =>
 // ── 2. Builtins only ───────────────────────────────────────────────────
 
 describe('Phase 50A R3 envelope — the executor depends on Node builtins alone', () => {
-  it('every import specifier is a node: builtin', () => {
+  it('the import set is EXACTLY the packet-enumerated set', () => {
     const src = executorSource();
     const specifiers = [...src.matchAll(/^import\s+[^'"]*from\s+["']([^"']+)["'];?$/gm)].map(
       (m) => m[1]!,
@@ -140,9 +140,30 @@ describe('Phase 50A R3 envelope — the executor depends on Node builtins alone'
     }
     // This is what lets `npm ci` be the FIRST entry of the schedule rather than
     // a precondition of running the executor at all.
+    //
+    // THE SET BELOW IS THE PACKET'S, transcribed from
+    // `fixed_executor_contract.permitted_imports` in coordinator packet comment
+    // 5178032683 — NOT a set observed from the executor and copied here. The
+    // sequence-46 audit reopened exactly that: the previous version of this
+    // assertion had been widened to admit `node:url` because the executor
+    // imported it, which proves local self-consistency instead of conformance
+    // to the authorized dependency contract. A test that amends the enumerated
+    // set to match the code cannot detect the code exceeding the set.
     expect(new Set(specifiers)).toEqual(
-      new Set(['node:child_process', 'node:crypto', 'node:fs', 'node:path', 'node:url']),
+      new Set(['node:child_process', 'node:crypto', 'node:fs', 'node:path']),
     );
+  });
+
+  it('no path-conversion builtin survives — the module locates itself natively', () => {
+    // The packet's four-specifier set is only reachable because the module's own
+    // directory and file path come from Node 22's `import.meta` rather than from
+    // a URL conversion. Asserted by absence AND by presence, so removing the
+    // import without adopting the replacement fails here rather than silently.
+    const src = executorSource();
+    expect(src, 'node:url must be gone').not.toContain('node:url');
+    expect(src, 'fileURLToPath must be gone').not.toContain('fileURLToPath');
+    expect(src).toContain('import.meta.dirname');
+    expect(src).toContain('import.meta.filename');
   });
 
   it('the executor runs with no node_modules present', () => {
@@ -158,9 +179,13 @@ describe('Phase 50A R3 envelope — the executor depends on Node builtins alone'
     for (const name of [
       'EXPECTED_WRAPPER_DIGEST',
       'EXPECTED_HEAD_ENV',
+      'NPM_TOKEN_INGRESS_ENV',
+      'NPM_TOKEN_CHILD_ENV',
+      'AUTHENTICATED_ENTRY_LABEL',
       'SCHEDULE',
       'IDENTITY_PROBE',
       'REFUSAL',
+      'childEnv',
       'runFixedProof',
       'renderReport',
       'renderReceipts',
@@ -168,6 +193,67 @@ describe('Phase 50A R3 envelope — the executor depends on Node builtins alone'
     ]) {
       expect(dts, `declarations must cover ${name}`).toContain(name);
     }
+  });
+});
+
+// ── 2b. One credential path, and no way around it ──────────────────────
+//
+// STRUCTURAL companion to the behavioural proofs in
+// `tests/phase-50a/fixed-proof-executor.test.ts`, which drive the PRODUCTION
+// seam and assert over the real options objects. These assertions establish the
+// weaker but independent claim that there is only ONE construction site to
+// audit in the first place — a second one would make the behavioural proof's
+// coverage of "every child" unverifiable by inspection.
+
+describe('Phase 50A R3 envelope — exactly one child environment is ever constructed', () => {
+  it('only childEnv assigns an env option, and only realRun calls the spawn seam', () => {
+    const src = executorSource();
+    // Exactly one function builds a child environment...
+    expect([...src.matchAll(/export function childEnv\(/g)], 'one constructor').toHaveLength(1);
+    // ...exactly one call site consumes it as a spawn option...
+    expect([...src.matchAll(/env: childEnv\(/g)], 'one env assignment').toHaveLength(1);
+    // ...and no other `env:` option is passed to any launch.
+    const envOptions = [...src.matchAll(/^\s+env: (.*)$/gm)].map((m) => m[1]!.trim());
+    expect(envOptions).toEqual(['childEnv(entry, token, baseEnv),']);
+    // The spawn seam is called exactly once in the whole file.
+    expect([...src.matchAll(/\bspawn\(entry\.file\b/g)], 'one spawn call').toHaveLength(1);
+  });
+
+  it('both token names are deleted unconditionally before either is set', () => {
+    const src = executorSource();
+    const deleteIngress = src.indexOf('delete env[NPM_TOKEN_INGRESS_ENV];');
+    const deleteChild = src.indexOf('delete env[NPM_TOKEN_CHILD_ENV];');
+    const setChild = src.indexOf('env[NPM_TOKEN_CHILD_ENV] = token;');
+    expect(deleteIngress, 'the ingress name is deleted').toBeGreaterThan(-1);
+    expect(deleteChild, 'the registry name is deleted').toBeGreaterThan(-1);
+    expect(setChild, 'the registry name is set').toBeGreaterThan(-1);
+    // ORDER IS LOAD-BEARING: both deletions precede the single conditional set,
+    // so the set is the only way either name can be present in a child.
+    expect(deleteIngress).toBeLessThan(setChild);
+    expect(deleteChild).toBeLessThan(setChild);
+    // The set is guarded by the authenticated LABEL, not by an argv or index guess.
+    expect(src).toContain('if (entry.label === AUTHENTICATED_ENTRY_LABEL) {');
+    // And it is the ONLY assignment of the registry name anywhere in the file.
+    expect(
+      [...src.matchAll(/env\[NPM_TOKEN_CHILD_ENV\] =/g)],
+      'exactly one registry-name assignment',
+    ).toHaveLength(1);
+  });
+
+  it('the ingress is read once, and no published text interpolates a token', () => {
+    const src = executorSource();
+    // Read from the environment in exactly one place — the gate. Matched as a
+    // READ specifically: the constructor also names the variable, but in a
+    // `delete`, which removes rather than reads it. Counting bare occurrences
+    // would conflate the two and could be satisfied by deleting the guard.
+    expect(
+      [...src.matchAll(/(?<!delete )env\[NPM_TOKEN_INGRESS_ENV\]/g)],
+      'the ingress is read once',
+    ).toHaveLength(1);
+    // The captured binding never reaches a template literal or a receipt field.
+    expect(src, 'no token interpolation').not.toContain('${token}');
+    expect(src, 'no token interpolation').not.toContain('${ingress}');
+    expect(src, 'the receipt carries no environment').not.toMatch(/env:\s*(?:env|token|ingress)\b/);
   });
 });
 

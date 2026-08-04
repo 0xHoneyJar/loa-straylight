@@ -1,9 +1,12 @@
 // Phase 50A R3 — THE FIXED WRAPPER / FIXED EXECUTOR CONTRACT.
 //
-// Authority: coordinator task packet comment 5169022573 (packet digest
-// sha256:b414497a055c0bfbd0519a0ea499de93387ae9794d087a31745805433385758b),
-// posted by event 5169042916 at lane sequence 43, under the operator.decision
-// at sequence 42 (comment 5168491994).
+// Authority: coordinator task packet comment 5178032683 (packet digest
+// sha256:86b0f7383241a850fb7dc79dde597f28db3c9bee7df24775fee7f8e498093d18),
+// posted by event 5178044860 at lane sequence 50, under the operator.decision
+// at sequence 49 (comment 5171890625). That decision authorized ONE fresh
+// INITIAL proof-closure slice retaining patch_cycle 3, and fixed NEW canonical
+// wrapper bytes; the previous authority was packet comment 5169022573 at
+// sequence 43, whose wrapper fingerprint this file no longer carries.
 //
 // ── WHAT THIS SUITE IS, AND WHY IT REPLACED A SEMANTIC CHECKER ──────────
 //
@@ -47,11 +50,16 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import {
+  AUTHENTICATED_ENTRY_LABEL,
   EXPECTED_HEAD_ENV,
   EXPECTED_WRAPPER_DIGEST,
   IDENTITY_PROBE,
+  NPM_TOKEN_CHILD_ENV,
+  NPM_TOKEN_INGRESS_ENV,
   REFUSAL,
   SCHEDULE,
+  childEnv,
+  realRun,
   renderReceipts,
   renderReport,
   runFixedProof,
@@ -70,12 +78,35 @@ const EXECUTOR_ABS = resolve(ROOT, EXECUTOR_REL);
  * `fixed_wrapper_contract`. Literal constants of this file, deliberately NOT
  * imported from the executor.
  */
-const PACKET_WRAPPER_BYTE_LENGTH = 5455;
+const PACKET_WRAPPER_BYTE_LENGTH = 6440;
 const PACKET_WRAPPER_SHA256 =
-  'ff91a255304fcadfba0d8397b91a63a6e24327817442f74497baac7031865e48';
+  '6fb6b2bd51b645a1e4c5884ca4a74b10a9d24da2ad2127bf76237dd90f117852';
 
 /** A valid-shaped SHA that is NOT this repository's HEAD. */
 const OTHER_SHA = '0123456789abcdef0123456789abcdef01234567';
+
+/**
+ * A stand-in credential. Deliberately NOT a real token shape: nothing here can
+ * authenticate anywhere, and the leak/neutrality scan must not see a
+ * credential-shaped literal in this file.
+ */
+const FAKE_INGRESS = 'ingress-value-for-tests-only';
+
+/**
+ * The complete environment the gate requires: the exact head SHA and the
+ * credential ingress. Both are mandatory, so every positive-path run must
+ * supply both — a run missing the ingress refuses before the probe.
+ *
+ * `null` means OMIT THE VARIABLE; `undefined` would be substituted by the
+ * default parameter, which would silently supply the credential to a test whose
+ * whole point is its absence.
+ */
+function gateEnv(head: string | null, ingress: string | null = FAKE_INGRESS) {
+  const env: Record<string, string | undefined> = {};
+  if (head !== null) env[EXPECTED_HEAD_ENV] = head;
+  if (ingress !== null) env[NPM_TOKEN_INGRESS_ENV] = ingress;
+  return env;
+}
 
 function sha256OfBytes(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
@@ -202,9 +233,20 @@ describe('Phase 50A R3 — the workflow wrapper has EXACTLY the packet-authorize
     // string assignment, and no environment/argv/config read feeds it.
     const src = readFileSync(EXECUTOR_ABS, 'utf8');
     expect(src).toContain(`"sha256:${PACKET_WRAPPER_SHA256}"`);
-    // The only environment read is the expected HEAD SHA.
+    // EVERY environment name the executor touches, enumerated exactly. The
+    // digest is not among them, which is the point of this assertion: an
+    // executor that read its expected digest from the environment would
+    // authorize whatever wrapper the caller pointed it at.
+    //
+    // The set grew by two under the credential narrowing — the ingress the gate
+    // reads, and the registry name the child-environment constructor removes and
+    // conditionally re-adds. Enumerated rather than pattern-matched so a THIRD
+    // name (a digest override, a schedule override, a fallback registry) fails
+    // here rather than passing unnoticed.
     const envReads = [...src.matchAll(/env\[([^\]]+)\]/g)].map((m) => m[1]);
-    expect(new Set(envReads)).toEqual(new Set(['EXPECTED_HEAD_ENV']));
+    expect(new Set(envReads)).toEqual(
+      new Set(['EXPECTED_HEAD_ENV', 'NPM_TOKEN_INGRESS_ENV', 'NPM_TOKEN_CHILD_ENV']),
+    );
     expect(src, 'the expected digest is never read from argv').not.toContain('process.argv[2]');
   });
 });
@@ -220,10 +262,18 @@ describe('Phase 50A R3 — the wrapper carries ONE run step and no proof schedul
     ]);
   });
 
-  it('the wrapper passes the expected head SHA and the ephemeral token, and nothing else', () => {
+  it('the wrapper passes the expected head SHA and the INGRESS name, and no registry name', () => {
     const text = readFileSync(WRAPPER_ABS, 'utf8');
     expect(text).toContain(`${EXPECTED_HEAD_ENV}: \${{ github.event.pull_request.head.sha || inputs.head_sha }}`);
-    expect(text).toContain('NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}');
+    // The credential arrives under the INGRESS name. The registry name npm reads
+    // appears NOWHERE in the workflow: it is set by the executor, for one child.
+    // That is the sequence-46 credential-narrowing finding, closed at the source
+    // rather than described — a name absent from the YAML cannot be inherited by
+    // a step's whole process tree.
+    expect(text).toContain(`${NPM_TOKEN_INGRESS_ENV}: \${{ secrets.GITHUB_TOKEN }}`);
+    expect(text, 'the registry name must not appear in the workflow at all').not.toContain(
+      NPM_TOKEN_CHILD_ENV,
+    );
     // No secret other than the ephemeral job token.
     expect(/secrets\.(?!GITHUB_TOKEN)[A-Z_]+/.test(text)).toBe(false);
   });
@@ -240,6 +290,15 @@ describe('Phase 50A R3 — the wrapper carries ONE run step and no proof schedul
     expect(text).toContain('        required: true\n');
     expect(text).toContain('        type: string\n');
   });
+
+  it('the wrapper leaves no checkout credential in the working tree', () => {
+    const text = readFileSync(WRAPPER_ABS, 'utf8');
+    // The other half of the sequence-46 least-privilege finding: checkout
+    // persisted its token into `.git/config` by default, so any later child
+    // could have used it. Same reading as above — the byte/digest assertion is
+    // the load-bearing proof; this states the property a reader cares about.
+    expect(text).toContain('persist-credentials: false');
+  });
 });
 
 // ── 3. Schedule coverage, fixed argv, and order ────────────────────────
@@ -248,7 +307,7 @@ describe('Phase 50A R3 — the closed schedule covers the proof and is fixed', (
   it('covers every substantive proof command the previous workflow ran', () => {
     const argvs = SCHEDULE.map((e) => [e.file, ...e.args].join(' '));
     expect(argvs).toEqual([
-      'npm ci',
+      'npm ci --ignore-scripts',
       'docker exec straylight-phase-50a-source psql -tA -U straylight_proof -d straylight_source -c SELECT system_identifier FROM pg_control_system()',
       'docker exec straylight-phase-50a-replacement psql -tA -U straylight_proof -d straylight_replacement -c SELECT system_identifier FROM pg_control_system()',
       'npm run build',
@@ -281,7 +340,7 @@ describe('Phase 50A R3 — the closed schedule covers the proof and is fixed', (
     const stub = makeStub(head);
     const result = runFixedProof({
       run: stub.run,
-      env: { [EXPECTED_HEAD_ENV]: head },
+      env: gateEnv(head),
       repoRoot: ROOT,
       selfPath: EXECUTOR_ABS,
     });
@@ -293,6 +352,33 @@ describe('Phase 50A R3 — the closed schedule covers the proof and is fixed', (
       expect(launch.shellFalse).toBe(true);
     }
     expect(result.launches).toBe(SCHEDULE.length);
+  });
+
+  it('ENTRY 1 IS THE GUARDED INSTALL, and the build is a separate later entry', () => {
+    // `--ignore-scripts` is the whole reason the credential can be confined to
+    // one child: without it `npm ci` runs the repository's `prepare` lifecycle,
+    // which runs `build`, INSIDE the authenticated process tree. Asserted as an
+    // exact argv, not a substring, so dropping the flag fails here.
+    expect([SCHEDULE[0]!.file, ...SCHEDULE[0]!.args]).toEqual(['npm', 'ci', '--ignore-scripts']);
+    expect(SCHEDULE[0]!.label).toBe(AUTHENTICATED_ENTRY_LABEL);
+
+    // The build did not disappear with the flag — it is its own entry, LATER in
+    // the schedule, and it is not the authenticated one.
+    const buildAt = SCHEDULE.findIndex((e) => e.label === 'build');
+    expect(buildAt, 'the explicit build survives').toBeGreaterThan(0);
+    expect([SCHEDULE[buildAt]!.file, ...SCHEDULE[buildAt]!.args]).toEqual(['npm', 'run', 'build']);
+    expect(SCHEDULE[buildAt]!.label).not.toBe(AUTHENTICATED_ENTRY_LABEL);
+
+    // And the thing the flag suppresses really does exist: `prepare` routes
+    // through `build`, so an unguarded install WOULD have built under the token.
+    const pkg = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')) as {
+      scripts: Record<string, string>;
+    };
+    expect(pkg.scripts['prepare'], 'prepare routes through build').toContain('build');
+
+    // Exactly ONE entry bears the authenticated label, so "the install alone" is
+    // a statement about the whole schedule rather than about one index.
+    expect(SCHEDULE.filter((e) => e.label === AUTHENTICATED_ENTRY_LABEL)).toHaveLength(1);
   });
 
   it('the identity banner is emitted BEFORE the first schedule launch', () => {
@@ -310,7 +396,7 @@ describe('Phase 50A R3 — the closed schedule covers the proof and is fixed', (
         events.push(`launch:${entry.label}`);
         return stub.run(entry);
       },
-      env: { [EXPECTED_HEAD_ENV]: head },
+      env: gateEnv(head),
       repoRoot: ROOT,
       selfPath: EXECUTOR_ABS,
       announce: (text) => events.push(`announce:${text}`),
@@ -336,7 +422,7 @@ describe('Phase 50A R3 — the closed schedule covers the proof and is fixed', (
     const events: string[] = [];
     const result = runFixedProof({
       run: makeStub(OTHER_SHA, { head: OTHER_SHA }).run,
-      env: { [EXPECTED_HEAD_ENV]: repoHead() },
+      env: gateEnv(repoHead()),
       repoRoot: ROOT,
       selfPath: EXECUTOR_ABS,
       announce: (text) => events.push(text),
@@ -351,7 +437,7 @@ describe('Phase 50A R3 — the closed schedule covers the proof and is fixed', (
     const stub = makeStub(head);
     runFixedProof({
       run: stub.run,
-      env: { [EXPECTED_HEAD_ENV]: head },
+      env: gateEnv(head),
       repoRoot: ROOT,
       selfPath: EXECUTOR_ABS,
     });
@@ -367,6 +453,285 @@ describe('Phase 50A R3 — the closed schedule covers the proof and is fixed', (
   });
 });
 
+// ── 3b. CREDENTIAL NARROWING, over the REAL production options ─────────
+//
+// WHY THIS SECTION LOOKS DIFFERENT FROM THE REST OF THE FILE.
+//
+// Everything above injects `run`, replacing the production seam entirely. That
+// is right for ordering and argv, which are properties of the SCHEDULE. It is
+// WRONG for the child environment, which is a property of `realRun` itself: a
+// stub that reports "I was given no token" proves only that the stub was written
+// that way. The sequence-46 audit recorded exactly this — the credential
+// assertions of the day inspected the YAML and a stub's own fields while the
+// real `spawnSync` call inherited the token for every child.
+//
+// So these tests run the PRODUCTION `realRun` and inject only the lowest seam
+// the packet authorizes: the `spawn` function. What they assert over is the
+// actual options object production builds and hands to `spawnSync` — the same
+// object the real run uses, captured rather than simulated.
+
+interface CapturedSpawn {
+  file: string;
+  args: string[];
+  options: {
+    cwd: string;
+    shell: boolean;
+    env: Record<string, string | undefined>;
+    timeout: number;
+    encoding: string;
+    stdio: unknown;
+  };
+}
+
+/**
+ * A spawn function that RECORDS what production asked for and returns a benign
+ * success. It fabricates no option: every recorded field is the one `realRun`
+ * built.
+ */
+function captureSpawn(head: string) {
+  const captured: CapturedSpawn[] = [];
+  const spawn = (file: string, args: readonly string[], options: CapturedSpawn['options']) => {
+    captured.push({ file, args: [...args], options });
+    // The probe's stdout IS the datum; everything else just succeeds.
+    const isProbe = file === IDENTITY_PROBE.file && args[0] === IDENTITY_PROBE.args[0];
+    return {
+      status: 0,
+      signal: null,
+      stdout: isProbe ? `${head}\n` : '',
+      error: null,
+    };
+  };
+  return { spawn, captured };
+}
+
+describe('Phase 50A R3 — only the install child is authenticated, proven over production options', () => {
+  it('PRODUCTION SEAM: exactly one captured environment carries the registry name', () => {
+    const head = repoHead();
+    const { spawn, captured } = captureSpawn(head);
+    const result = runFixedProof({
+      // NOTE: `run` is NOT injected. Production `realRun` builds every options
+      // object below, including every child environment.
+      env: gateEnv(head),
+      repoRoot: ROOT,
+      selfPath: EXECUTOR_ABS,
+      spawn,
+    });
+    expect(result.ok, `refused: ${result.refusal} ${result.detail}`).toBe(true);
+
+    // Probe + 12 schedule entries, in order.
+    expect(captured).toHaveLength(SCHEDULE.length + 1);
+    const withToken = captured.filter((c) => NPM_TOKEN_CHILD_ENV in c.options.env);
+    expect(withToken, 'exactly one child may hold the registry name').toHaveLength(1);
+
+    // ...and it is the install child, identified by its exact argv.
+    const authenticated = withToken[0]!;
+    expect([authenticated.file, ...authenticated.args]).toEqual(['npm', 'ci', '--ignore-scripts']);
+    expect(authenticated.options.env[NPM_TOKEN_CHILD_ENV]).toBe(FAKE_INGRESS);
+    // The INGRESS name is never forwarded, not even to the child that is allowed
+    // the credential — so nothing downstream can re-derive it under that name.
+    expect(NPM_TOKEN_INGRESS_ENV in authenticated.options.env).toBe(false);
+  });
+
+  it('PRODUCTION SEAM: the probe and entries 2-12 hold NEITHER token name', () => {
+    const head = repoHead();
+    const { spawn, captured } = captureSpawn(head);
+    const result = runFixedProof({
+      env: gateEnv(head),
+      repoRoot: ROOT,
+      selfPath: EXECUTOR_ABS,
+      spawn,
+    });
+    expect(result.ok).toBe(true);
+
+    // captured[0] is the identity probe; captured[1] is the install; the rest
+    // are schedule entries 2-12.
+    const probe = captured[0]!;
+    expect([probe.file, ...probe.args]).toEqual(['git', 'rev-parse', 'HEAD']);
+    expect(NPM_TOKEN_CHILD_ENV in probe.options.env, 'probe: no registry name').toBe(false);
+    expect(NPM_TOKEN_INGRESS_ENV in probe.options.env, 'probe: no ingress name').toBe(false);
+
+    for (const [i, c] of captured.slice(2).entries()) {
+      const label = SCHEDULE[i + 1]!.label;
+      expect(NPM_TOKEN_CHILD_ENV in c.options.env, `${label}: no registry name`).toBe(false);
+      expect(NPM_TOKEN_INGRESS_ENV in c.options.env, `${label}: no ingress name`).toBe(false);
+    }
+    // Absence is asserted as a MISSING KEY, not an empty string: an empty value
+    // would still be a name npm could read and misinterpret.
+    expect(
+      captured.filter((c) => NPM_TOKEN_INGRESS_ENV in c.options.env),
+      'the ingress reaches no child at all',
+    ).toHaveLength(0);
+  });
+
+  it('PRODUCTION SEAM: shell is false and the command is an argv ARRAY everywhere', () => {
+    const head = repoHead();
+    const { spawn, captured } = captureSpawn(head);
+    runFixedProof({ env: gateEnv(head), repoRoot: ROOT, selfPath: EXECUTOR_ABS, spawn });
+    for (const c of captured) {
+      expect(c.options.shell, `${c.file}: shell must be false`).toBe(false);
+      expect(Array.isArray(c.args), `${c.file}: argv must be an array`).toBe(true);
+      expect(typeof c.file, `${c.file}: file is a plain executable`).toBe('string');
+      expect(c.options.timeout, `${c.file}: bounded`).toBeGreaterThan(0);
+      expect(c.options.cwd).toBe(ROOT);
+    }
+  });
+
+  it('the AMBIENT registry name is stripped, not merely left unset', () => {
+    // A runner whose own environment already carries the registry name would
+    // otherwise leak it into every child by inheritance. `childEnv` deletes the
+    // name unconditionally BEFORE re-adding it for the install alone, so an
+    // ambient value cannot reach entries 2-12.
+    const head = repoHead();
+    const { spawn, captured } = captureSpawn(head);
+    const result = runFixedProof({
+      env: {
+        ...gateEnv(head),
+        [NPM_TOKEN_CHILD_ENV]: 'ambient-value-that-must-not-propagate',
+      },
+      repoRoot: ROOT,
+      selfPath: EXECUTOR_ABS,
+      spawn,
+    });
+    expect(result.ok).toBe(true);
+    for (const [i, c] of captured.entries()) {
+      if (i === 1) {
+        // The install child gets the CAPTURED INGRESS, never the ambient value.
+        expect(c.options.env[NPM_TOKEN_CHILD_ENV]).toBe(FAKE_INGRESS);
+        continue;
+      }
+      expect(NPM_TOKEN_CHILD_ENV in c.options.env, `launch ${i}: ambient value stripped`).toBe(
+        false,
+      );
+    }
+  });
+
+  it('the constructor used by production is the one exported, for every entry', () => {
+    // Ties the behavioural capture above to the single exported constructor: for
+    // the probe, the install, and a non-install entry, `childEnv`'s own output
+    // equals the environment production actually passed. One constructor, one
+    // behaviour, no second path.
+    const head = repoHead();
+    const { spawn, captured } = captureSpawn(head);
+    const baseEnv = gateEnv(head);
+    runFixedProof({ env: baseEnv, repoRoot: ROOT, selfPath: EXECUTOR_ABS, spawn });
+
+    const entries = [IDENTITY_PROBE, ...SCHEDULE];
+    for (const [i, entry] of entries.entries()) {
+      expect(captured[i]!.options.env).toEqual(childEnv(entry, FAKE_INGRESS, baseEnv));
+    }
+
+    // And the constructor's contract, exercised directly on the three shapes.
+    const probeEnv = childEnv(IDENTITY_PROBE, FAKE_INGRESS, baseEnv);
+    const installEnv = childEnv(SCHEDULE[0]!, FAKE_INGRESS, baseEnv);
+    const buildEnv = childEnv(
+      SCHEDULE.find((e) => e.label === 'build')!,
+      FAKE_INGRESS,
+      baseEnv,
+    );
+    expect(installEnv[NPM_TOKEN_CHILD_ENV]).toBe(FAKE_INGRESS);
+    expect(NPM_TOKEN_CHILD_ENV in probeEnv).toBe(false);
+    expect(NPM_TOKEN_CHILD_ENV in buildEnv).toBe(false);
+    for (const env of [probeEnv, installEnv, buildEnv]) {
+      expect(NPM_TOKEN_INGRESS_ENV in env, 'the ingress never survives').toBe(false);
+    }
+  });
+
+  it('realRun passes childEnv output straight through, with no later mutation', () => {
+    // `realRun` is called directly here, so the assertion covers the seam in
+    // isolation as well as inside a full run.
+    const baseEnv = { ...gateEnv(repoHead()), UNRELATED: 'kept' };
+    const seen: Array<Record<string, string | undefined>> = [];
+    const spawn = (_f: string, _a: readonly string[], o: { env: Record<string, string | undefined> }) => {
+      seen.push(o.env);
+      return { status: 0, signal: null, stdout: '', error: null };
+    };
+    realRun(SCHEDULE[0]!, { token: FAKE_INGRESS, baseEnv, spawn });
+    realRun(SCHEDULE[1]!, { token: FAKE_INGRESS, baseEnv, spawn });
+    expect(seen[0]).toEqual(childEnv(SCHEDULE[0]!, FAKE_INGRESS, baseEnv));
+    expect(seen[1]).toEqual(childEnv(SCHEDULE[1]!, FAKE_INGRESS, baseEnv));
+    // Unrelated environment is preserved: the constructor narrows credentials,
+    // it does not build a minimal environment the commands could not run in.
+    expect(seen[0]!['UNRELATED']).toBe('kept');
+    expect(seen[1]!['UNRELATED']).toBe('kept');
+  });
+
+  it('NO TOKEN IN ANY PUBLISHED TEXT: receipts, banner, and envelope are clean', () => {
+    const head = repoHead();
+    const banners: string[] = [];
+    const { spawn } = captureSpawn(head);
+    const result = runFixedProof({
+      env: gateEnv(head),
+      repoRoot: ROOT,
+      selfPath: EXECUTOR_ABS,
+      spawn,
+      announce: (text) => banners.push(text),
+    });
+    expect(result.ok).toBe(true);
+    const published = [renderReport(result), renderReceipts(result.receipts), ...banners].join('\n');
+    expect(published, 'no credential value is ever published').not.toContain(FAKE_INGRESS);
+    // Nor does any receipt carry an environment at all.
+    for (const receipt of result.receipts) {
+      expect(Object.keys(receipt).sort()).toEqual([
+        'argv',
+        'file',
+        'label',
+        'ordinal',
+        'signal',
+        'spawn_failed',
+        'status',
+        'timed_out',
+        'outcome',
+      ].sort());
+    }
+    // The banner names WHICH entry is authenticated — a fact about the schedule,
+    // not about the credential.
+    expect(banners.join('\n')).toContain(AUTHENTICATED_ENTRY_LABEL);
+  });
+});
+
+describe('Phase 50A R3 — a missing credential ingress launches NOTHING', () => {
+  for (const [name, value] of [
+    ['absent', null],
+    ['empty', ''],
+    ['whitespace only', '   '],
+  ] as Array<[string, string | null]>) {
+    it(`refuses an ${name} ingress before the identity probe runs`, () => {
+      const head = repoHead();
+      const stub = makeStub(head);
+      const result = runFixedProof({
+        run: stub.run,
+        env: gateEnv(head, value),
+        repoRoot: ROOT,
+        selfPath: EXECUTOR_ABS,
+      });
+      expect(result.ok).toBe(false);
+      expect(result.refusal).toBe(REFUSAL.npmTokenIngressMissing);
+      // STRONGER than "zero schedule launches": zero launches of ANY kind. The
+      // check precedes the probe, so not even the probe runs.
+      expect(stub.launches, 'not even the identity probe runs').toHaveLength(0);
+      expect(stub.scheduleLaunches).toHaveLength(0);
+      expect(result.launches).toBe(0);
+      // The refusal names the VARIABLE and never a value.
+      expect(result.detail).toContain(NPM_TOKEN_INGRESS_ENV);
+      if (value !== null && value !== '') {
+        expect(result.detail, 'the refusal quotes no value').not.toContain(value);
+      }
+    });
+  }
+
+  it('a missing ingress is a DISTINCT refusal from every other gate failure', () => {
+    // Four gate refusals, four codes. Collapsing any pair would make a missing
+    // credential indistinguishable from a wrong wrapper in the job log.
+    const codes = new Set([
+      REFUSAL.wrapperFingerprintMismatch,
+      REFUSAL.expectedShaMalformed,
+      REFUSAL.npmTokenIngressMissing,
+      REFUSAL.headMismatch,
+    ]);
+    expect(codes.size).toBe(4);
+  });
+});
+
 // ── 4. Deterministic receipts and the published envelope ───────────────
 
 describe('Phase 50A R3 — receipts are complete and deterministic', () => {
@@ -375,7 +740,7 @@ describe('Phase 50A R3 — receipts are complete and deterministic', () => {
     const stub = makeStub(head);
     const result = runFixedProof({
       run: stub.run,
-      env: { [EXPECTED_HEAD_ENV]: head },
+      env: gateEnv(head),
       repoRoot: ROOT,
       selfPath: EXECUTOR_ABS,
     });
@@ -397,13 +762,13 @@ describe('Phase 50A R3 — receipts are complete and deterministic', () => {
     const head = repoHead();
     const once = runFixedProof({
       run: makeStub(head).run,
-      env: { [EXPECTED_HEAD_ENV]: head },
+      env: gateEnv(head),
       repoRoot: ROOT,
       selfPath: EXECUTOR_ABS,
     });
     const twice = runFixedProof({
       run: makeStub(head).run,
-      env: { [EXPECTED_HEAD_ENV]: head },
+      env: gateEnv(head),
       repoRoot: ROOT,
       selfPath: EXECUTOR_ABS,
     });
@@ -419,7 +784,7 @@ describe('Phase 50A R3 — receipts are complete and deterministic', () => {
     const head = repoHead();
     const result = runFixedProof({
       run: makeStub(head).run,
-      env: { [EXPECTED_HEAD_ENV]: head },
+      env: gateEnv(head),
       repoRoot: ROOT,
       selfPath: EXECUTOR_ABS,
     });
@@ -441,7 +806,7 @@ describe('Phase 50A R3 — receipts are complete and deterministic', () => {
   it('a REFUSED run still publishes the envelope', () => {
     const result = runFixedProof({
       run: makeStub(OTHER_SHA).run,
-      env: { [EXPECTED_HEAD_ENV]: 'not-a-sha' },
+      env: gateEnv('not-a-sha'),
       repoRoot: ROOT,
       selfPath: EXECUTOR_ABS,
     });
@@ -472,7 +837,7 @@ describe('Phase 50A R3 — a failed identity gate launches ZERO schedule command
         const stub = makeStub(head);
         const result = runFixedProof({
           run: stub.run,
-          env: { [EXPECTED_HEAD_ENV]: head },
+          env: gateEnv(head),
           repoRoot: fakeRoot,
           selfPath: EXECUTOR_ABS,
         });
@@ -498,7 +863,7 @@ describe('Phase 50A R3 — a failed identity gate launches ZERO schedule command
     const stub = makeStub(OTHER_SHA, { head: OTHER_SHA });
     const result = runFixedProof({
       run: stub.run,
-      env: { [EXPECTED_HEAD_ENV]: repoHead() },
+      env: gateEnv(repoHead()),
       repoRoot: ROOT,
       selfPath: EXECUTOR_ABS,
     });
@@ -512,8 +877,8 @@ describe('Phase 50A R3 — a failed identity gate launches ZERO schedule command
 
   it('MALFORMED EXPECTED SHA: every bad shape refuses with zero launches', () => {
     const head = repoHead();
-    const bad: Array<string | undefined> = [
-      undefined,
+    const bad: Array<string | null> = [
+      null,
       '',
       head.slice(0, 39), // 39 hex
       `${head}a`, // 41 hex
@@ -525,8 +890,7 @@ describe('Phase 50A R3 — a failed identity gate launches ZERO schedule command
     ];
     for (const value of bad) {
       const stub = makeStub(head);
-      const env: Record<string, string | undefined> =
-        value === undefined ? {} : { [EXPECTED_HEAD_ENV]: value };
+      const env = gateEnv(value);
       const result = runFixedProof({
         run: stub.run,
         env,
@@ -545,7 +909,7 @@ describe('Phase 50A R3 — a failed identity gate launches ZERO schedule command
     const stub = makeStub(head, { probeStatus: 128 });
     const result = runFixedProof({
       run: stub.run,
-      env: { [EXPECTED_HEAD_ENV]: head },
+      env: gateEnv(head),
       repoRoot: ROOT,
       selfPath: EXECUTOR_ABS,
     });
@@ -557,9 +921,10 @@ describe('Phase 50A R3 — a failed identity gate launches ZERO schedule command
   it('NO FALLBACK: no refusal path exits zero or runs a shortened schedule', () => {
     const head = repoHead();
     const refusals = [
-      { env: {}, stubHead: head },
-      { env: { [EXPECTED_HEAD_ENV]: 'nope' }, stubHead: head },
-      { env: { [EXPECTED_HEAD_ENV]: head }, stubHead: OTHER_SHA },
+      { env: gateEnv(null), stubHead: head },
+      { env: gateEnv('nope'), stubHead: head },
+      { env: gateEnv(head, null), stubHead: head },
+      { env: gateEnv(head), stubHead: OTHER_SHA },
     ];
     for (const { env, stubHead } of refusals) {
       const stub = makeStub(head, { head: stubHead });
@@ -609,7 +974,7 @@ describe('Phase 50A R3 — a failed identity gate launches ZERO schedule command
       const stub = makeStub(head);
       const result = runFixedProof({
         run: stub.run,
-        env: { [EXPECTED_HEAD_ENV]: head },
+        env: gateEnv(head),
         repoRoot: fakeRoot,
         selfPath: EXECUTOR_ABS,
       });
@@ -680,7 +1045,7 @@ describe('Phase 50A R3 — ANY workflow byte change fails the fingerprint', () =
         const stub = makeStub(head);
         const result = runFixedProof({
           run: stub.run,
-          env: { [EXPECTED_HEAD_ENV]: head },
+          env: gateEnv(head),
           repoRoot: fakeRoot,
           selfPath: EXECUTOR_ABS,
         });
@@ -754,7 +1119,7 @@ describe('Phase 50A R3 — a failing command stops every successor', () => {
       const stub = makeStub(head, { failAt, failMode: mode });
       const result = runFixedProof({
         run: stub.run,
-        env: { [EXPECTED_HEAD_ENV]: head },
+        env: gateEnv(head),
         repoRoot: ROOT,
         selfPath: EXECUTOR_ABS,
       });
@@ -778,7 +1143,7 @@ describe('Phase 50A R3 — a failing command stops every successor', () => {
     const stub = makeStub(head, { failAt: 1, failMode: 'status' });
     const result = runFixedProof({
       run: stub.run,
-      env: { [EXPECTED_HEAD_ENV]: head },
+      env: gateEnv(head),
       repoRoot: ROOT,
       selfPath: EXECUTOR_ABS,
     });

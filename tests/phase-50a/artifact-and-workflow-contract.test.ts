@@ -38,15 +38,25 @@ const PACKAGE_JSON = resolve(ROOT, 'package.json');
 // nothing enumerates repository inputs to establish it. The extractor, the
 // structural parser that replaced it, its byte offsets, the offset-provenance
 // assertion, and the parser-replacement mutation are all DELETED.
-// `tests/phase-50a/workflow-trigger-contract.test.ts` is the one remaining
-// authority on the trigger block, over the workflow's own bytes; its independent
-// probe matrix is `tests/phase-50a/proof-input-coverage-mutations.test.ts`.
+//
+// AUTHORITY, CORRECTED (supersedes this header's previous claim). An earlier
+// version of this note named `tests/phase-50a/workflow-trigger-contract.test.ts`
+// "the one remaining authority on the trigger block" and described its checks as
+// duplicated here. That was stale from the moment it was written: that file is
+// the REJECTED semantic checker, DELETED at patch cycle 3, and it is not an
+// authority over anything. The sequence-46 audit recorded the contradiction.
+//
+// The authority over the wrapper is the RAW-BYTE FINGERPRINT in
+// `tests/phase-50a/fixed-proof-executor.test.ts`, which pins the wrapper's exact
+// byte length and SHA-256 against the operator-authorized coordinator packet.
+// Its independent probe matrix is
+// `tests/phase-50a/proof-input-coverage-mutations.test.ts`.
 //
 // What this suite keeps is its own subject: the generated-artifact/package
-// contract, and the workflow's authentication posture and credential handling. Its
-// exact-head and substantive-step assertions remain here too — deliberately
-// duplicated with the trigger contract, since two independent readers of the same
-// safeguard is a strength, not drift.
+// contract, and the workflow's authentication posture and credential handling. It
+// is an INDEPENDENT READER of those wrapper properties, not a trigger
+// recognizer — two readers of one safeguard is a strength, and neither is
+// load-bearing for the other's conclusion.
 
 function readWorkflow(): string {
   return readFileSync(WORKFLOW, 'utf8');
@@ -157,7 +167,9 @@ describe('Phase 50A patch — the internal PostgreSQL declarations are excluded,
 
 // ── Findings 1 & 6 — the proof workflow (R3: the FIXED WRAPPER) ────────
 //
-// SCOPE CHANGE, patch cycle 3 disposition (packet comment 5169022573).
+// SCOPE CHANGE, patch cycle 3 disposition; wrapper bytes and credential posture
+// re-fixed by packet comment 5178032683 (the v2 proof-closure slice), which
+// superseded packet comment 5169022573.
 //
 // The workflow is now a CANONICAL WRAPPER whose complete raw bytes are fixed by
 // the operator-authorized coordinator packet. Several assertions that used to
@@ -208,33 +220,61 @@ describe('Phase 50A R3 — the fixed wrapper authenticates and delegates correct
     expect(text).toContain("node-version: '22'");
   });
 
-  it('exposes an EPHEMERAL token to the single executor step ONLY', () => {
+  it('names NO registry-authentication variable at all', () => {
     const text = readWorkflow();
-    // Exactly one NODE_AUTH_TOKEN ASSIGNMENT. `npm ci` is now the first entry of
-    // the executor's closed schedule, so the token belongs to the step that
-    // invokes the executor — the child process inherits it.
+    // THE CREDENTIAL-NARROWING CORRECTION (sequence-46 finding). The previous
+    // wrapper set `NODE_AUTH_TOKEN` on the executor step, so the executor AND
+    // every child it spawned — twelve schedule commands and all of their own
+    // descendants — inherited it. The name is now absent from the workflow
+    // entirely: the executor sets it, for the single install child, and nothing
+    // else can inherit what the step never held.
+    //
+    // Asserted as ABSENCE over the whole file, so re-adding it anywhere fails.
+    expect(text, 'the registry variable must not appear in the YAML').not.toContain(
+      'NODE_AUTH_TOKEN',
+    );
+  });
+
+  it('hands the ephemeral token to the executor under the INGRESS name, once', () => {
+    const text = readWorkflow();
     const assignments = text
       .split('\n')
-      .filter((l) => /^\s*NODE_AUTH_TOKEN\s*:/.test(l));
+      .filter((l) => /^\s*PHASE_50A_NPM_TOKEN\s*:/.test(l));
     expect(assignments).toHaveLength(1);
     expect(assignments[0]).toMatch(
       /\$\{\{\s*secrets\.GITHUB_TOKEN\s*\}\}|\$\{\{\s*github\.token\s*\}\}/,
     );
+    // And it goes to the executor step alone.
     const steps = text.split(/\n      - name: /).slice(1);
-    const tokenSteps = steps.filter((s) => /^\s*NODE_AUTH_TOKEN\s*:/m.test(s));
+    const tokenSteps = steps.filter((s) => /^\s*PHASE_50A_NPM_TOKEN\s*:/m.test(s));
     expect(tokenSteps).toHaveLength(1);
     expect(tokenSteps[0]).toContain('node scripts/phase-50a/fixed-proof-executor.mjs');
   });
 
   it('never echoes, writes, or persists a credential, and adds no fallback registry', () => {
     const text = readWorkflow();
-    expect(/echo\s+.*NODE_AUTH_TOKEN|cat\s+.*NODE_AUTH_TOKEN/.test(text)).toBe(false);
+    expect(/echo\s+.*(?:NODE_AUTH_TOKEN|PHASE_50A_NPM_TOKEN)/.test(text)).toBe(false);
+    expect(/cat\s+.*(?:NODE_AUTH_TOKEN|PHASE_50A_NPM_TOKEN)/.test(text)).toBe(false);
     expect(/>>?\s*\.npmrc|npm\s+config\s+set\s+.*authToken/.test(text)).toBe(false);
     expect(/secrets\.(?!GITHUB_TOKEN)[A-Z_]+/.test(text)).toBe(false);
     expect(/ghp_|github_pat_/.test(text)).toBe(false);
     const registries = [...text.matchAll(/https:\/\/[a-z0-9.-]*npm[a-z0-9.-]*/gi)].map((m) => m[0]);
     expect([...new Set(registries)]).toEqual(['https://npm.pkg.github.com']);
     expect(/--registry|registry\.npmjs\.org/.test(text)).toBe(false);
+  });
+
+  it('leaves NO checkout credential behind in the working tree', () => {
+    const text = readWorkflow();
+    // The other half of the sequence-46 least-privilege finding: actions/checkout
+    // writes its token into `.git/config` unless told not to, so any later
+    // command in the job could have used it. `persist-credentials: false` is now
+    // part of the packet-fixed bytes.
+    expect(text).toContain('persist-credentials: false');
+    // Asserted against the checkout step specifically, not merely somewhere.
+    const steps = text.split(/\n      - name: /).slice(1);
+    const checkout = steps.find((s) => s.includes('actions/checkout@'));
+    expect(checkout, 'the checkout step exists').toBeDefined();
+    expect(checkout!).toContain('persist-credentials: false');
   });
 
   it('declares exactly ONE run step, and it invokes only the fixed executor', () => {

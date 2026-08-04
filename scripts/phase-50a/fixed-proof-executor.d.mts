@@ -8,6 +8,10 @@
 // one fact about the workflow wrapper — whether its raw bytes hash to the
 // digest fixed by the operator-authorized coordinator packet. It recognizes no
 // workflow content, and it holds no authority over anything else.
+//
+// It is also the only place a child-process environment is constructed, so the
+// registry credential's blast radius is a property of THIS module rather than
+// of the workflow file: see `childEnv`.
 
 /** Absolute path of the repository root, resolved from this module's location. */
 export declare const REPO_ROOT: string;
@@ -23,6 +27,26 @@ export declare const EXPECTED_WRAPPER_DIGEST: string;
 
 /** Name of the environment variable carrying the exact audited head SHA. */
 export declare const EXPECTED_HEAD_ENV: string;
+
+/**
+ * INGRESS variable name. The wrapper hands the ephemeral job token to the
+ * executor under this name, and NO child process ever receives it — `childEnv`
+ * deletes it from every child environment it builds.
+ */
+export declare const NPM_TOKEN_INGRESS_ENV: string;
+
+/**
+ * The registry-authentication variable npm itself reads. It appears in NO
+ * workflow file; `childEnv` sets it for the single authenticated entry alone.
+ */
+export declare const NPM_TOKEN_CHILD_ENV: string;
+
+/**
+ * The label of the ONE schedule entry permitted to receive registry
+ * authentication. The permission is bound to a named entry, never to a
+ * position or an argv guess.
+ */
+export declare const AUTHENTICATED_ENTRY_LABEL: string;
 
 /** One launch: an executable plus a fixed argv array and a fixed timeout. */
 export interface ScheduleEntry {
@@ -55,6 +79,7 @@ export declare const REFUSAL: {
   readonly wrapperUnreadable: string;
   readonly wrapperFingerprintMismatch: string;
   readonly expectedShaMalformed: string;
+  readonly npmTokenIngressMissing: string;
   readonly headUnreadable: string;
   readonly headMismatch: string;
   readonly commandFailed: string;
@@ -62,6 +87,21 @@ export declare const REFUSAL: {
   readonly commandTimedOut: string;
   readonly commandSpawnFailed: string;
 };
+
+/**
+ * THE ONE child-environment constructor, used for every child the production
+ * seam launches — the identity probe and all twelve schedule entries.
+ *
+ * It removes BOTH token names unconditionally, then sets `NPM_TOKEN_CHILD_ENV`
+ * from `token` if and only if `entry.label` is `AUTHENTICATED_ENTRY_LABEL`. For
+ * every other entry the returned object holds neither name at all, so no
+ * descendant of those children can read a credential either.
+ */
+export declare function childEnv(
+  entry: Pick<ScheduleEntry, 'label'>,
+  token: string,
+  baseEnv: Record<string, string | undefined>,
+): Record<string, string | undefined>;
 
 /** What a process-execution function returns. */
 export interface RunOutcome {
@@ -77,10 +117,51 @@ export interface RunOutcome {
   error?: string | null;
 }
 
-/** The injectable process-execution seam. */
-export type RunFn = (entry: ScheduleEntry) => RunOutcome;
+/** The complete options object `realRun` hands to the spawn function. */
+export interface SpawnOptions {
+  cwd: string;
+  /** Always false. There is no string-command form anywhere. */
+  shell: false;
+  /** Built by `childEnv` and by nothing else. */
+  env: Record<string, string | undefined>;
+  stdio: 'inherit' | readonly (string | number | null)[];
+  timeout: number;
+  encoding: string;
+}
 
-/** The real seam: spawnSync with shell:false and an argv array. */
+/**
+ * The spawn seam `realRun` calls. Injectable so a test can capture the ACTUAL
+ * options object production builds — the environment asserted over is the one
+ * production really uses, not a stub's report of itself.
+ */
+export type SpawnFn = (
+  file: string,
+  args: readonly string[],
+  options: SpawnOptions,
+) => {
+  status: number | null;
+  signal: string | null;
+  stdout?: string;
+  error?: { code?: string; message?: string } | null;
+};
+
+/** Per-launch context: the captured ingress value and the injectable seam. */
+export interface RunContext {
+  /** The captured ingress credential. Never read from the environment again. */
+  token: string;
+  /** Environment the child environment is derived FROM. Defaults to process.env. */
+  baseEnv?: Record<string, string | undefined>;
+  /** Injected spawn function. Defaults to node:child_process spawnSync. */
+  spawn?: SpawnFn;
+}
+
+/** The injectable process-execution seam. */
+export type RunFn = (entry: ScheduleEntry, context: RunContext) => RunOutcome;
+
+/**
+ * The real seam: spawnSync with shell:false, an argv array, and an environment
+ * built by `childEnv`.
+ */
 export declare const realRun: RunFn;
 
 /** One receipt per ATTEMPTED command. Deterministic: no run-varying value. */
@@ -126,6 +207,11 @@ export interface RunFixedProofOptions {
   /** Path whose bytes produce the executor self-digest. */
   selfPath?: string;
   /**
+   * Injected spawn function, threaded through to `realRun`. Lets a test drive
+   * the PRODUCTION seam and capture the real options objects.
+   */
+  spawn?: SpawnFn;
+  /**
    * Sink for the identity-gate banner, written at the moment the gate passes
    * and BEFORE the first schedule launch — so the job log itself carries the
    * ordering evidence rather than requiring the reader to trust code structure.
@@ -138,15 +224,17 @@ export interface RunFixedProofOptions {
  * Run the fixed proof: identity gate first, then the closed schedule.
  *
  * A gate failure returns `ok: false` with `launches === 0` — zero schedule
- * commands are launched and none will be. There is no fallback path and no
- * refusal that reports success.
+ * commands are launched and none will be. A missing credential ingress is
+ * detected BEFORE the identity probe, so it launches nothing at all. There is
+ * no fallback path and no refusal that reports success. No field of the result
+ * carries a credential value.
  */
 export declare function runFixedProof(options?: RunFixedProofOptions): ProofResult;
 
 /** SHA-256 of a file's raw bytes as `sha256:<hex>`, or null when unreadable. */
 export declare function digestOfFile(path: string): string | null;
 
-/** Deterministic receipt lines. */
+/** Deterministic receipt lines. Never carry an environment value. */
 export declare function renderReceipts(receipts: readonly CommandReceipt[]): string;
 
 /** The published envelope, emitted on every run including a refused one. */

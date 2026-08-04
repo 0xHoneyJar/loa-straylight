@@ -2339,3 +2339,292 @@ did this work, under lease `lease-phase-50a-impl-fixed-executor-012` (lane #122
 sequence 44). **No** Ultracode, **no** `/batch`, **no** teams, **no** subagents, and
 **no** delegation of any kind. The audit of this slice is Codex's; the implementer
 does not audit its own work.
+
+---
+
+## 19. R3 proof closure v2 — credential narrowing, builtin contract, and corrected report (fresh INITIAL slice, patch cycle 3)
+
+**This section is APPENDED. Nothing above it was rewritten, reordered, or
+deleted.** Where §18 or any earlier section states something this slice
+supersedes, the superseding statement is made **here, explicitly, naming what it
+replaces** — the stale text is deliberately left in place so the record shows
+what was believed and when.
+
+### 19.1 Packet authority
+
+| Field | Value |
+|---|---|
+| Coordinator task packet | issue #122 comment **5178032683** |
+| Packet canonical digest | `sha256:86b0f7383241a850fb7dc79dde597f28db3c9bee7df24775fee7f8e498093d18` |
+| Binding event | comment **5178044860**, `coordinator.task_packet_posted`, lane sequence **50** |
+| Reducer result | comment **5178050660** (`ready-for-claude`, next actor `implementer`) |
+| Operator disposition | `operator.decision` at lane sequence **49**, comment **5171890625** |
+| Implementer lease | `lease-phase-50a-implementer-closure-v2-014`, granted at sequence **51** |
+| `packet_kind` / `patch_cycle` | `initial` / **3** (retained; cycle 4 is **unauthorized**) |
+| `base_sha` | `70d40058096455c6406d644183ac757a317ce159` |
+| Working branch | `phase-50a-r3-fixed-proof-closure-v2` |
+| `merge_forbidden` | **true** |
+
+The packet digest was **recomputed** from the live packet comment with
+`.straylight/lib/canonical.mjs#payloadDigest` at the lane's base SHA and equals
+the digest the binding event declares. `operator:eileen` remains the sole
+product, semantic, architectural, acceptance, gate-disposition and MVP authority.
+
+### 19.2 Why this slice exists: the five sequence-46 findings
+
+The Codex audit at lane sequence 46 (audit comment **5170598957**, digest
+`sha256:d039dd3dfa7ef34b2451d240af3e981bf68b9e9ab043604a148017c31ffde941`)
+returned **PATCH** — not REJECT — on head `750144588996cc03e66a2dd1d160f620926ca556`.
+The raw-byte wrapper authorization, the identity gate, executor behaviour, the
+exact-head run, the nine-path scope, and the 648 outside-envelope blob identities
+all **passed**. Five bounded findings remained. Policy `maximum_patch_cycles` is
+**3** and the lane stood at `patch_cycle` 3, so no patch packet could carry them;
+the operator authorized one fresh **INITIAL** slice instead.
+
+| # | Finding | Disposition in this slice |
+|---|---|---|
+| (a) | The mandatory completion report was missing required facts in both locations, and the requirement was itself circular | Requirement **superseded** — §19.8 |
+| (b) | The appended report carried stale path and test counts | **Recomputed** — §19.6, §19.7 |
+| (c) | `node:url` exceeded the packet-enumerated builtin set, and the envelope test pinned the locally amended set | **Removed** — §19.4 |
+| (d) | The artifact-suite header still named the deleted semantic checker as remaining authority | **Corrected** — §19.5 |
+| (e) | `NODE_AUTH_TOKEN` was inherited by every schedule child, and checkout kept its persisted credential | **Narrowed** — §19.3 |
+
+### 19.3 Credential narrowing (finding e)
+
+**The wrapper no longer names a registry-authentication variable at all.**
+`NODE_AUTH_TOKEN` appears **nowhere** in
+`.github/workflows/phase-50a-postgres-conformance.yml`. The ephemeral job token
+reaches the executor under the ingress name `PHASE_50A_NPM_TOKEN`, and the
+executor decides which single child may see registry authentication:
+
+1. the gate **captures** the ingress value once, into a local binding, and
+   refuses with the distinct code `npm-token-ingress-missing` when it is absent
+   or blank — **before the identity probe**, so a missing credential launches
+   nothing at all, not even `git rev-parse HEAD`;
+2. **one** exported constructor, `childEnv`, builds the environment for **every**
+   child the production seam launches. It **deletes both** `PHASE_50A_NPM_TOKEN`
+   and `NODE_AUTH_TOKEN` unconditionally — so an *ambient* registry variable in
+   the runner's own environment cannot leak either — then sets
+   `NODE_AUTH_TOKEN`, from the captured value, **if and only if** the entry's
+   label is `npm-ci`;
+3. the identity probe and schedule entries **2–12** therefore hold **neither
+   name as a key at all**, and neither do their own descendants: a child
+   inherits only what its parent was given;
+4. schedule entry 1 is exactly `npm ci --ignore-scripts`, so the repository's
+   `prepare` lifecycle — which runs `build` — **cannot execute inside the one
+   authenticated process tree**. The build still happens, later, as schedule
+   entry 4, in a child holding neither name.
+
+`actions/checkout` now sets **`persist-credentials: false`**, so no credential is
+left behind in `.git/config` for a later command to find.
+
+**How this is proven, and why the proof looks different from the rest of the
+suite.** Every other test in `fixed-proof-executor.test.ts` injects `run`,
+replacing the production seam. That is right for ordering and argv, which are
+properties of the *schedule*. It is **wrong** for the child environment, which is
+a property of `realRun` itself — a stub that reports "I was given no token"
+proves only that the stub was written that way, which is precisely what finding
+(e) caught. So the credential tests run the **production `realRun`** and inject
+only the lowest seam the packet authorizes, the `spawn` function, then assert
+over **the actual options object production builds and hands to `spawnSync`**.
+
+### 19.4 Builtin contract (finding c)
+
+`node:url` and `fileURLToPath` are **gone**. The module locates itself with Node
+22's `import.meta.dirname` and `import.meta.filename`. The executor's import set
+is now **exactly** the packet's four specifiers:
+
+```
+node:child_process   node:crypto   node:fs   node:path
+```
+
+`tests/phase-50a/proof-executor-envelope.test.ts` asserts that set as a **literal
+of the test file, transcribed from the packet** — not observed from the executor
+and copied. That direction is the whole correction: the previous assertion had
+been widened to admit `node:url` *because the executor imported it*, which proves
+local self-consistency instead of conformance to the authorized contract. A test
+that amends the enumerated set to match the code cannot detect the code
+exceeding the set. The enumeration is also closed against a **third** name — a
+digest override, a schedule override, a fallback registry — because the set of
+environment names the executor touches is asserted exactly, not by pattern.
+
+### 19.5 Retirements and corrections (finding d)
+
+- `tests/phase-50a/artifact-and-workflow-contract.test.ts` — the header claim
+  that `tests/phase-50a/workflow-trigger-contract.test.ts` is "the one remaining
+  authority on the trigger block" is **CORRECTED BY SUPERSESSION**. That file is
+  the **rejected semantic checker, deleted at patch cycle 3**; it is an authority
+  over nothing. The authority over the wrapper is the **raw-byte fingerprint** in
+  `tests/phase-50a/fixed-proof-executor.test.ts`. The stale claim is quoted in
+  the corrected header so the contradiction the audit found stays legible.
+- The same suite's `NODE_AUTH_TOKEN`-assignment assertions are **replaced** by
+  the stronger claim that the name appears **nowhere** in the YAML, plus a check
+  that `PHASE_50A_NPM_TOKEN` is assigned exactly once, on the executor step,
+  only from `secrets.GITHUB_TOKEN`, plus a `persist-credentials: false`
+  assertion bound to the checkout step specifically.
+- The envelope suite's locally-amended import set is **replaced** by the packet's
+  set, and gains an explicit absence check for `node:url` / `fileURLToPath`
+  together with a presence check for the `import.meta` replacement — so removing
+  the import without adopting the replacement fails rather than passing.
+- **Nothing else was retired.** The rejected checker stays deleted; the T*/P*
+  mutation matrix and the no-leak scan-set manifest were **not edited at all**
+  (both are forbidden paths in this packet) and both pass **unmodified** against
+  the new wrapper bytes.
+
+### 19.6 The exact schedule, and the fixed contracts
+
+| Artifact | Digest / value |
+|---|---|
+| Wrapper byte length | **6440** — equals the packet's `fixed_wrapper_contract.byte_length` |
+| Wrapper raw-byte SHA-256 | `sha256:6fb6b2bd51b645a1e4c5884ca4a74b10a9d24da2ad2127bf76237dd90f117852` — equals the packet's declared digest |
+| Executor self-digest | `sha256:a8dcc6a8d77349d1dc4004902fea7d98ecc7b062c97fd31e454b014d1c1c4e79` |
+| Declarations digest | `sha256:721d95b4675415e534d6d27c9af53fe7807b248da2af6979752311e53ee2b5a2` |
+| Pinned wrapper digest in the executor | identical to the wrapper digest above, as a **literal committed constant** |
+
+The wrapper bytes were written by decoding the packet's `bytes_base64`
+**verbatim** — never authored, reformatted, or inferred from the previous
+wrapper — and verified twice: on disk before staging, and from the committed
+blob. Canonicality holds: strict UTF-8, LF only, no BOM, no tab byte, exactly one
+trailing LF.
+
+**The closed 12-entry schedule, with exact argv arrays.** Entry 1 is the only
+authenticated child; entries 2–12 and the identity probe receive neither token
+name.
+
+| # | Label | argv | Timeout | `NODE_AUTH_TOKEN` |
+|---|---|---|---|---|
+| — | `git-rev-parse-head` (probe) | `git rev-parse HEAD` | 60 s | **no** |
+| 1 | `npm-ci` | `npm ci --ignore-scripts` | 900 s | **yes** |
+| 2 | `confirm-source-instance` | `docker exec straylight-phase-50a-source psql -tA -U straylight_proof -d straylight_source -c "SELECT system_identifier FROM pg_control_system()"` | 120 s | no |
+| 3 | `confirm-replacement-instance` | `docker exec straylight-phase-50a-replacement psql -tA -U straylight_proof -d straylight_replacement -c "SELECT system_identifier FROM pg_control_system()"` | 120 s | no |
+| 4 | `build` | `npm run build` | 600 s | no |
+| 5 | `typecheck` | `npm run typecheck` | 600 s | no |
+| 6 | `repository-tests` | `npm test` | 1800 s | no |
+| 7 | `control-plane-validate` | `npm run control-plane:validate` | 300 s | no |
+| 8 | `control-plane-tests` | `npm run control-plane:test` | 900 s | no |
+| 9 | `phase-50a-postgres-suites` | `npm run phase-50a:test` | 900 s | no |
+| 10 | `phase-50a-two-host-proof` | `npm run phase-50a:proof` | 900 s | no |
+| 11 | `phase-50a-verify-artifact` | `npm run phase-50a:verify-artifact` | 600 s | no |
+| 12 | `no-whitespace-damage` | `git diff --check` | 120 s | no |
+
+Every launch is `shell: false` with an executable plus an argv **array**.
+Execution is serial and stops at the first nonzero exit, terminating signal,
+timeout, or spawn failure — four **distinct** refusal codes, never collapsed.
+
+### 19.7 Local results (recomputed for THIS slice)
+
+Run against two genuinely separate PostgreSQL 16 instances
+(`system_identifier` **7670145535968915495** and **7670145535969591335** — distinct,
+confirming two clusters rather than one server with two databases).
+
+| Check | Result |
+|---|---|
+| `npm ci --ignore-scripts` | **PASS** — 99 packages; `prepare`/`build` did **not** run |
+| `npm run build` | PASS (30 tracked `dist-types` declarations; 12 PostgreSQL declarations pruned) |
+| `npm run typecheck` | PASS |
+| `npm test` | **88 files, 2243 passed, 149 skipped** |
+| `npm run control-plane:validate` | PASS (policy, schemas, state machine, markers) |
+| `npm run control-plane:test` | **29 files, 1025 passed** |
+| `npm run phase-50a:test` | **14 files, 292 passed** |
+| `npm run phase-50a:proof` | PASS (two-host export/restore/replacement; chains verify; replacement stays live) |
+| `npm run phase-50a:verify-artifact` | PASS (C1–C9; 30/30/30 declarations, 44 packed files) |
+| `git diff --check` | clean |
+| Executor + envelope + artifact suites | **88 passed** (49 + 20 + 19) |
+| Mutation matrix (**unmodified**) | **21 passed** |
+| No-leak / neutrality (**unmodified**) | **15 passed** |
+
+**These figures supersede §18.7's.** That table reported **2222** repository tests
+and **271** Phase 50A tests; the correct figures for this slice are **2243** and
+**292**. §18.7's counts are left in place as the record of that slice.
+
+The refusal paths were exercised for real, outside the tests: with a
+valid-shaped but wrong expected SHA the executor exits **1** with
+`head-identity-mismatch`, `schedule_launches: 0`, `(none launched)`; with the
+ingress absent it exits **1** with `npm-token-ingress-missing`,
+`schedule_launches: 0`, and **`observed_head: (not read)`** — proving the probe
+itself never ran.
+
+**Path and blob evidence, recomputed.** Substrate
+`750144588996cc03e66a2dd1d160f620926ca556` tracks **657** paths. This packet
+allows **7**. The other **650** were compared to the substrate by **mode and
+blob object id**: **all 650 identical**, zero differences. Of the 7 allowed
+paths, **7** changed (six code/test files plus this document). No `package.json`,
+`package-lock.json`, `.npmrc`, tsconfig, vitest config, scan-set manifest, or
+mutation matrix was touched — all are forbidden paths, and all are among the 650
+proven identical.
+
+### 19.8 The reporting requirement, superseded
+
+**The sequence-43 packet's completion-report requirement was impossible to
+satisfy**, and this section supersedes it. It required a committed document to
+state its own final commit SHA and a CI run created only *after* that commit.
+Writing either changes the document, which changes the SHA, which invalidates
+what was written — an evidence loop, not a proof. The audit at sequence 46
+recorded the resulting gap as a missing report; the gap was in the requirement.
+
+The replacement, fixed by packet 5178032683, is two-staged:
+
+- **Stage 1 — this section.** Stable, committed, and carrying **no claim about
+  its own final commit SHA and no claim about any post-commit run**. Everything
+  above is verifiable from the committed tree and the lane's durable record.
+- **Stage 2 — after the final head and an exact-head run exist.** The fresh pull
+  request body and the `implementer.completed` event carry the fresh PR number,
+  the final head SHA, the remote run and job identifiers, confirmation the run
+  executed at that exact head, the run's published wrapper digest, executor
+  self-digest, expected SHA and observed HEAD, and all 12 receipt labels with
+  their outcomes. Those facts live where they can be written *after* the commit
+  they describe.
+
+### 19.9 Pre-commit failure disclosure
+
+Two failures occurred during this slice, both in **my own new test code**, both
+found before commit, both fixed. Disclosed because a slice that reports only
+successes is not disclosing.
+
+1. **The missing-ingress tests silently supplied the credential.** The `gateEnv`
+   helper used `undefined` to mean "omit this variable", but `undefined` is
+   exactly what JavaScript's *default parameter* substitutes — so
+   `gateEnv(head, undefined)` handed over `FAKE_INGRESS` and the three
+   "absent ingress" cases plus the no-fallback row asserted a refusal that could
+   never happen. Four tests failed. Fixed by using `null` as the omission
+   sentinel, so a default can never stand in for a deliberate absence.
+2. **An "ingress is read once" assertion counted deletions as reads.** The
+   regex matched bare occurrences of `env[NPM_TOKEN_INGRESS_ENV]`, which also
+   matched the constructor's `delete` statement, so it saw 2 where 1 was
+   correct. Worse than a false failure: as written it could have been satisfied
+   by *deleting the guard*. Fixed with a negative lookbehind so it counts reads
+   only.
+
+One pre-existing assertion also required a bounded update: the enumeration of
+environment names the executor touches grew from one to three (the head SHA, the
+ingress, and the registry name the constructor removes and conditionally
+re-adds). It is still an exact enumeration, so a fourth name fails.
+
+No other check failed at any point. No residue was left: the working tree
+contains only the seven allowed paths' changes, `git diff --check` is clean, and
+the build produces no artifact drift.
+
+### 19.10 What this slice does NOT establish
+
+It closes the five sequence-46 findings and **preserves everything else
+byte-identically**. It claims **no** acceptance, **no** readiness, **no** gate
+disposition, **no** Phase 50B work, **no** MVP-2 completion, and **no** merge.
+
+Substrate `750144588996cc03e66a2dd1d160f620926ca556` and **PR #127** remain
+**REJECTED for forward use** and are **not merge evidence and not acceptance
+evidence**; #127's own PATCH outcome confers nothing on this slice. PR **#127**,
+**#126** and **#125**, and every earlier rejected branch of this lane, were left
+**untouched** — not reopened, amended, extended, or closed. A green remote run is
+**not acceptance**: the byte comparison against the packet's fixed wrapper
+contract is authoritative, and only the auditor and then `operator:eileen`
+dispose. Every residual pre-production obligation in §10 stands undischarged:
+durability, failover, network isolation, tenancy, availability, version policy,
+and incident recovery. Nothing here involves a provider, a production resource, a
+credential of any consequence, or a living estate.
+
+**Implementation provenance.** Exactly **one** Claude Opus xhigh implementer
+context did this work, under lease
+`lease-phase-50a-implementer-closure-v2-014` (lane #122 sequence 51). **No**
+Ultracode, **no** `/batch`, **no** teams, **no** subagents, and **no** delegation
+of any kind. The audit of this slice is Codex's; the implementer does not audit
+its own work.

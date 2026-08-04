@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Phase 50A — THE FIXED PROOF EXECUTOR (R3, patch cycle 3 disposition).
+// Phase 50A — THE FIXED PROOF EXECUTOR (R3 proof closure v2, patch cycle 3).
 //
 // This program is the entire proof schedule. The workflow
 // `.github/workflows/phase-50a-postgres-conformance.yml` is a CANONICAL
@@ -49,36 +49,65 @@
 // `tests/phase-50a/proof-executor-envelope.test.ts`, and by the auditor
 // against the packet.
 //
+// ── CREDENTIAL NARROWING (v2) ───────────────────────────────────────────
+//
+// The sequence-46 audit recorded that every schedule child inherited the
+// registry credential, because the wrapper put it in the step environment and
+// nothing narrowed it afterwards. It is now narrowed HERE, where the schedule
+// actually lives:
+//
+//   * the wrapper names NO registry variable at all. It hands the ephemeral
+//     job token to this program under the INGRESS name PHASE_50A_NPM_TOKEN;
+//   * this program captures that value ONCE, into a local binding, during the
+//     identity gate — a missing or blank ingress is its own refusal, raised
+//     BEFORE the identity probe, so it launches nothing whatsoever;
+//   * ONE constructor, `childEnv`, builds the environment for EVERY child the
+//     production seam launches. It REMOVES both the ingress name and the
+//     registry name unconditionally, then re-adds the registry name from the
+//     captured value for the install entry ALONE;
+//   * the identity probe and schedule entries 2-12 therefore hold NEITHER
+//     name, and neither do their own descendants, since a child inherits only
+//     what its parent was given;
+//   * the install argv is `npm ci --ignore-scripts`, so the repository's
+//     `prepare` lifecycle (which runs `build`) cannot execute inside the one
+//     authenticated process tree. The explicit build runs later, as its own
+//     schedule entry, in a child holding neither name.
+//
+// No token value is ever placed in a receipt, in the identity banner, in the
+// published envelope, or in a refusal detail. Refusals name the VARIABLE.
+//
 // ── ORDER OF OPERATIONS (load-bearing) ──────────────────────────────────
 //
 //   1. Hash the wrapper's raw bytes; require the pinned digest.
 //   2. Require PHASE_50A_EXPECTED_HEAD_SHA to be exactly 40 lowercase hex.
-//   3. Read `git rev-parse HEAD` — the ONLY process launch permitted before
+//   3. Require PHASE_50A_NPM_TOKEN to be present and non-blank; capture it.
+//   4. Read `git rev-parse HEAD` — the ONLY process launch permitted before
 //      the gate completes, recorded as an identity probe, never as a schedule
 //      command.
-//   4. Require observed HEAD to equal the expected SHA exactly.
-//   5. ONLY THEN run the closed schedule, serially, each entry bounded by a
+//   5. Require observed HEAD to equal the expected SHA exactly.
+//   6. ONLY THEN run the closed schedule, serially, each entry bounded by a
 //      timeout, stopping at the first nonzero exit, signal, timeout, or spawn
 //      failure.
 //
-// A failure at any of 1-4 exits nonzero having launched ZERO schedule
+// A failure at any of 1-5 exits nonzero having launched ZERO schedule
 // commands. There is no fallback, no shortened schedule, and no refusal path
 // that exits zero.
 //
 // Node 22 builtins only — no package dependency, because this program runs
-// BEFORE `npm ci`. `npm ci` is the first entry of its own schedule.
+// BEFORE `npm ci`. `npm ci` is the first entry of its own schedule. The
+// module's own location comes from `import.meta.dirname` /
+// `import.meta.filename`, so no path-conversion builtin is needed.
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { resolve } from "node:path";
 
 // ---------------------------------------------------------------------------
 // Fixed constants
 // ---------------------------------------------------------------------------
 
-const HERE = dirname(fileURLToPath(import.meta.url));
+const HERE = import.meta.dirname;
 export const REPO_ROOT = resolve(HERE, "..", "..");
 
 /** The wrapper this executor is invoked by, and the only file it inspects. */
@@ -86,21 +115,42 @@ export const WRAPPER_PATH = ".github/workflows/phase-50a-postgres-conformance.ym
 
 /**
  * The operator-authorized wrapper fingerprint, fixed by the coordinator task
- * packet (comment 5169022573, packet digest
- * sha256:b414497a055c0bfbd0519a0ea499de93387ae9794d087a31745805433385758b).
+ * packet (comment 5178032683, packet digest
+ * sha256:86b0f7383241a850fb7dc79dde597f28db3c9bee7df24775fee7f8e498093d18).
  *
  * LITERAL AND COMMITTED. Never derived at runtime from any input. Changing the
  * wrapper REQUIRES a new operator-authorized packet that fixes new bytes and a
  * new digest — that reviewed step is the whole point of this constant.
  */
 export const EXPECTED_WRAPPER_DIGEST =
-  "sha256:ff91a255304fcadfba0d8397b91a63a6e24327817442f74497baac7031865e48";
+  "sha256:6fb6b2bd51b645a1e4c5884ca4a74b10a9d24da2ad2127bf76237dd90f117852";
 
 /** Environment variable carrying the exact audited head SHA. */
 export const EXPECTED_HEAD_ENV = "PHASE_50A_EXPECTED_HEAD_SHA";
 
+/**
+ * INGRESS name. The wrapper hands the ephemeral job token to this program
+ * under this name, and NO child process ever receives it: `childEnv` deletes
+ * it from every child environment it builds.
+ */
+export const NPM_TOKEN_INGRESS_ENV = "PHASE_50A_NPM_TOKEN";
+
+/**
+ * The registry-authentication name npm itself reads. It appears in NO workflow
+ * file. `childEnv` deletes it from every child environment and re-adds it for
+ * the install entry alone.
+ */
+export const NPM_TOKEN_CHILD_ENV = "NODE_AUTH_TOKEN";
+
 /** Exactly 40 lowercase hex characters. Anchored; no leading/trailing slack. */
 const EXACT_SHA_RE = /^[0-9a-f]{40}$/;
+
+/**
+ * The label of the ONE schedule entry permitted to receive registry
+ * authentication. Compared against `entry.label`, so the permission is bound
+ * to a named schedule entry rather than to a position or an argv guess.
+ */
+export const AUTHENTICATED_ENTRY_LABEL = "npm-ci";
 
 /** The fixed identity probe. A literal argv array, like every other launch. */
 export const IDENTITY_PROBE = Object.freeze({
@@ -122,12 +172,18 @@ export const IDENTITY_PROBE = Object.freeze({
  * as separate workflow steps, in the same order — the correction moves them
  * out of interpretable markup into this fixed table without losing proof
  * coverage.
+ *
+ * Entry 1 carries `--ignore-scripts`. That flag is LOAD-BEARING, not tidiness:
+ * it is what keeps the repository's `prepare` lifecycle — and therefore the
+ * whole build — from running inside the one child that can see registry
+ * authentication. The build still happens, later, as its own entry, in a child
+ * that holds neither token name.
  */
 export const SCHEDULE = Object.freeze([
   {
     label: "npm-ci",
     file: "npm",
-    args: Object.freeze(["ci"]),
+    args: Object.freeze(["ci", "--ignore-scripts"]),
     timeout_ms: 900_000,
   },
   {
@@ -225,6 +281,7 @@ export const REFUSAL = Object.freeze({
   wrapperUnreadable: "wrapper-unreadable",
   wrapperFingerprintMismatch: "wrapper-fingerprint-mismatch",
   expectedShaMalformed: "expected-head-sha-malformed",
+  npmTokenIngressMissing: "npm-token-ingress-missing",
   headUnreadable: "observed-head-unreadable",
   headMismatch: "head-identity-mismatch",
   commandFailed: "command-failed",
@@ -234,23 +291,58 @@ export const REFUSAL = Object.freeze({
 });
 
 // ---------------------------------------------------------------------------
+// The ONE child-environment constructor
+// ---------------------------------------------------------------------------
+
+/**
+ * Build the environment for ONE child process. THE ONLY place any child
+ * environment is constructed — the production seam calls this for the identity
+ * probe and for all twelve schedule entries, so there is no second path a
+ * credential could travel by.
+ *
+ * Two removals, then one narrow addition:
+ *
+ *   * the INGRESS name is deleted unconditionally, so no child — and no
+ *     descendant of a child — can read the value the wrapper handed in;
+ *   * the REGISTRY name is deleted unconditionally, so an ambient value in the
+ *     runner's own environment cannot leak into any child either;
+ *   * the REGISTRY name is then set, from the captured value, if and only if
+ *     this entry's label is the single authenticated label.
+ *
+ * `token` is the captured ingress value. For the probe and entries 2-12 the
+ * result holds neither name at all — asserted by the tests over the ACTUAL
+ * options object this constructor's caller passes to the spawn function.
+ */
+export function childEnv(entry, token, baseEnv) {
+  const env = { ...baseEnv };
+  delete env[NPM_TOKEN_INGRESS_ENV];
+  delete env[NPM_TOKEN_CHILD_ENV];
+  if (entry.label === AUTHENTICATED_ENTRY_LABEL) {
+    env[NPM_TOKEN_CHILD_ENV] = token;
+  }
+  return env;
+}
+
+// ---------------------------------------------------------------------------
 // Process execution seam
 // ---------------------------------------------------------------------------
 
 /**
  * The ONE way this program launches anything. shell:false is explicit, the
  * command is an executable plus an argv ARRAY, and there is no string-command
- * form anywhere — so no argument is ever interpreted by a shell.
+ * form anywhere — so no argument is ever interpreted by a shell. The child
+ * environment comes from `childEnv` and from nowhere else.
  *
- * Injectable so the tests can prove ordering, argv identity, and the
- * zero-launch guarantees in ordinary Node control flow over a call log,
- * rather than by reading the workflow or any command text. Production passes
- * nothing and gets spawnSync.
+ * `spawn` is injectable so the tests can capture the ACTUAL options object
+ * this function builds and hands to `spawnSync` — the environment they assert
+ * over is the one production really uses, not a stub's report of itself.
+ * Production passes nothing and gets `spawnSync`.
  */
-export function realRun(entry) {
-  const result = spawnSync(entry.file, [...entry.args], {
+export function realRun(entry, { token, baseEnv = process.env, spawn = spawnSync } = {}) {
+  const result = spawn(entry.file, [...entry.args], {
     cwd: REPO_ROOT,
     shell: false,
+    env: childEnv(entry, token, baseEnv),
     // The identity probe's output IS the datum, so it is captured. Schedule
     // commands stream straight to the job log, where a human reads them.
     stdio: entry.capture === true ? ["ignore", "pipe", "inherit"] : "inherit",
@@ -303,7 +395,8 @@ function classify(outcome) {
  * DETERMINISTIC BY CONSTRUCTION: label, file, exact argv, status, signal,
  * timed_out, ordinal. No timestamp, no duration, no hostname, no absolute
  * path, no environment value — so two runs of the same schedule produce
- * byte-identical receipt text.
+ * byte-identical receipt text, and no credential can reach the log through a
+ * receipt.
  */
 function receiptOf(ordinal, entry, outcome, verdict) {
   return {
@@ -348,13 +441,14 @@ export function renderReceipts(receipts) {
  * Returns { ok, refusal, wrapper_digest, executor_digest, expected_sha,
  *           observed_head, receipts, launches } — a pure-ish result the tests
  * assert over. `launches` counts SCHEDULE launches only; the identity probe is
- * never counted as one.
+ * never counted as one. No field of the result carries a token value.
  */
 export function runFixedProof({
   run = realRun,
   env = process.env,
   repoRoot = REPO_ROOT,
-  selfPath = fileURLToPath(import.meta.url),
+  selfPath = import.meta.filename,
+  spawn = spawnSync,
   announce = () => {},
 } = {}) {
   const receipts = [];
@@ -414,12 +508,31 @@ export function runFixedProof({
   }
   base.expected_sha = expectedRaw;
 
-  // ── GATE STEP 3: the observed HEAD. ───────────────────────────────────
+  // ── GATE STEP 3: the registry-credential INGRESS. ─────────────────────
+  // Captured ONCE, here, and passed only to the seam. Checked BEFORE the
+  // identity probe, so a missing credential launches NOTHING AT ALL — not even
+  // the probe. The refusal names the VARIABLE and never its value.
+  const ingress = env[NPM_TOKEN_INGRESS_ENV];
+  if (typeof ingress !== "string" || ingress.trim() === "") {
+    return {
+      ...base,
+      ok: false,
+      refusal: REFUSAL.npmTokenIngressMissing,
+      detail:
+        `${NPM_TOKEN_INGRESS_ENV} must be present and non-blank; the install ` +
+        `entry cannot resolve the private dependency without it, and there is ` +
+        `no fallback registry`,
+    };
+  }
+  const token = ingress;
+
+  // ── GATE STEP 4: the observed HEAD. ───────────────────────────────────
   // The ONLY launch permitted before the gate completes. It is a fixed argv
-  // array with shell:false like every other launch, and it is recorded as an
-  // identity probe — never as a schedule command, and never counted in
-  // `launches`.
-  const probe = run({ ...IDENTITY_PROBE, capture: true });
+  // array with shell:false like every other launch, its environment comes from
+  // the same single constructor (so it holds NEITHER token name), and it is
+  // recorded as an identity probe — never as a schedule command, and never
+  // counted in `launches`.
+  const probe = run({ ...IDENTITY_PROBE, capture: true }, { token, baseEnv: env, spawn });
   const observed = typeof probe.stdout === "string" ? probe.stdout.trim() : "";
   if (probe.error || probe.status !== 0 || !EXACT_SHA_RE.test(observed)) {
     return {
@@ -433,7 +546,7 @@ export function runFixedProof({
   }
   base.observed_head = observed;
 
-  // ── GATE STEP 4: exact identity. ──────────────────────────────────────
+  // ── GATE STEP 5: exact identity. ──────────────────────────────────────
   if (observed !== expectedRaw) {
     return {
       ...base,
@@ -451,6 +564,9 @@ export function runFixedProof({
   // written before the loop starts. The closing envelope repeats these facts,
   // but a reader would have to trust the code's structure to know the envelope
   // was not assembled after the fact. This line is checkable on its own.
+  //
+  // The banner states WHICH entry is authenticated, by label. It never states
+  // the credential, because the credential is not a fact about identity.
   announce(
     [
       "── Phase 50A identity gate: PASSED ─────────────────────────────────",
@@ -459,6 +575,7 @@ export function runFixedProof({
       `expected_head_sha : ${expectedRaw}`,
       `observed_head     : ${observed}`,
       `schedule_length   : ${SCHEDULE.length}`,
+      `authenticated     : ${AUTHENTICATED_ENTRY_LABEL} only (${NPM_TOKEN_CHILD_ENV} set for that child alone)`,
       "No schedule command has been launched yet. Launching now, in order.",
       "────────────────────────────────────────────────────────────────────",
     ].join("\n"),
@@ -468,7 +585,7 @@ export function runFixedProof({
     const entry = SCHEDULE[i];
     const ordinal = i + 1;
     base.launches += 1;
-    const outcome = run(entry);
+    const outcome = run(entry, { token, baseEnv: env, spawn });
     const verdict = classify(outcome);
     receipts.push(receiptOf(ordinal, entry, outcome, verdict));
     if (verdict.spawnFailed) {
@@ -500,7 +617,8 @@ export function digestOfFile(path) {
 /**
  * The published envelope. Emitted on EVERY run, including a refused one, so a
  * refusal is as inspectable as a success: the identity facts always precede
- * the receipts.
+ * the receipts. Every line here is a fact about identity, the schedule, or an
+ * outcome — never about a credential's value.
  */
 export function renderReport(result) {
   const lines = [
@@ -513,6 +631,7 @@ export function renderReport(result) {
     `observed_head           : ${result.observed_head ?? "(not read)"}`,
     `schedule_length         : ${SCHEDULE.length}`,
     `schedule_launches       : ${result.launches}`,
+    `authenticated_entry     : ${AUTHENTICATED_ENTRY_LABEL}`,
     `outcome                 : ${result.ok ? "PASS" : "REFUSED"}`,
     `refusal                 : ${result.refusal ?? "(none)"}`,
     `detail                  : ${result.detail ?? "(none)"}`,
@@ -524,7 +643,7 @@ export function renderReport(result) {
 }
 
 // Entry point. Kept minimal: the logic above is what the tests exercise.
-if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
+if (process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename)) {
   const result = runFixedProof({
     announce: (text) => process.stdout.write(text + "\n"),
   });
