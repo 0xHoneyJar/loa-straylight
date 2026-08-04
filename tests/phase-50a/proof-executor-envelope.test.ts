@@ -1,6 +1,10 @@
 // Phase 50A R3 — THE ENVELOPE: the proof path contains no interpreter.
 //
-// Authority: coordinator task packet comment 5169022573.
+// Authority: coordinator task packet comment 5184357042 (packet digest
+// sha256:012433fec0b46ef7fdaea0444165fb986c086145507c3da38c7b352958b4fd25),
+// posted by event 5184414449 at lane sequence 60. The sequence-54 audit
+// recorded that this header still named superseded packet 5169022573; it now
+// names the packet actually in force.
 //
 // The sequence-41 REJECT was not caused by a bug inside a recognizer; it was
 // caused by there BEING a recognizer. Every version of the trigger proof had
@@ -102,6 +106,65 @@ describe('Phase 50A R3 envelope — the executor contains no interpreter', () =>
       }
     });
   }
+
+  it('SPAWNSYNC IS GONE from the production launch path', () => {
+    // THE SEQUENCE-54 BLOCKER, asserted as an absence. The synchronous primitive
+    // cannot express whole-tree containment: its own bound terminates the DIRECT
+    // child only, which is how six real descendants survived into runner
+    // cleanup. It is REPLACED, not wrapped — so it must appear nowhere, not as a
+    // primary mechanism, not as a fallback, and not as an injectable default.
+    const src = executorSource();
+    expect(src, 'no synchronous launch primitive').not.toContain('spawnSync');
+    expect(src, 'no synchronous launch import').not.toContain('execFileSync');
+    // The asynchronous primitive is imported under an explicit local alias, and
+    // it is the ONLY default the launch seam can fall back to.
+    expect(src).toContain('import { spawn as nodeSpawn } from "node:child_process";');
+    expect(
+      [...src.matchAll(/spawn = nodeSpawn/g)],
+      'the async primitive is the only injection default',
+    ).toHaveLength(2);
+  });
+
+  it('every launch creates its OWN process group, and no bound is delegated', () => {
+    const src = executorSource();
+    // `detached` is what makes one group id name the whole tree; without it the
+    // descendants land in the parent's group and cannot be signalled separately.
+    expect(src).toContain('detached: true');
+    // THE BOUND IS NOT DELEGATED. A `timeout` option on the launch would reach
+    // the direct child alone — the exact defect being replaced — so the module
+    // owns the clock instead.
+    expect(src, 'no delegated bound option').not.toMatch(/^\s+timeout: entry\.timeout_ms,$/m);
+    expect(src, 'the module owns the clock').toContain('setTimeout(() => {');
+    // Termination and the liveness probe both address the GROUP, by negative pid.
+    expect(src).toContain('process.kill(-pgid, sig)');
+    expect(src).toContain('process.kill(-pgid, 0)');
+  });
+
+  it('containment is VERIFIED before anything is reported, and fails closed', () => {
+    const src = executorSource();
+    // Escalation exists and is uncatchable.
+    expect(src).toContain('"SIGKILL"');
+    expect(src).toContain('"SIGTERM"');
+    // Reaping is OBSERVED from the child's own exit, never inferred from time.
+    expect(src).toContain('reaped = true;');
+    // The absence probe fails closed: only a definite "no such process group"
+    // proves absence, so an unknown error reports "still present".
+    expect(src).toContain('if (e && e.code === "ESRCH") return false;');
+    expect(src).toContain('return true;');
+    // SIX distinct outcome classes, each with its own refusal code.
+    for (const field of [
+      'spawnFailed',
+      'terminationFailed',
+      'containmentFailed',
+      'timedOut',
+      'signalled',
+      'failed',
+    ]) {
+      expect(src, `the ${field} class exists`).toContain(field);
+    }
+    expect(src).toContain('commandTerminationFailed');
+    expect(src).toContain('commandContainmentUnverified');
+  });
 
   it('reads the wrapper as RAW BYTES and only hashes them', () => {
     const src = executorSource();
@@ -219,18 +282,36 @@ describe('Phase 50A R3 envelope — exactly one child environment is ever constr
     expect([...src.matchAll(/\bspawn\(entry\.file\b/g)], 'one spawn call').toHaveLength(1);
   });
 
-  it('both token names are deleted unconditionally before either is set', () => {
+  it('both token names are SKIPPED BY NAME before either value is read', () => {
+    // CHANGED SHAPE, AND WHY. This previously asserted a copy-then-delete
+    // construction. The sequence-54 audit proved that shape re-read BOTH
+    // credential properties on every one of the thirteen constructions, because
+    // the copy happened first — so the "read once" claim was false even though
+    // the spawn boundary was safe. The constructor now enumerates NAMES and
+    // skips the two credential names BEFORE reading any value, and this
+    // assertion pins that shape instead.
     const src = executorSource();
-    const deleteIngress = src.indexOf('delete env[NPM_TOKEN_INGRESS_ENV];');
-    const deleteChild = src.indexOf('delete env[NPM_TOKEN_CHILD_ENV];');
+    const skipIngress = src.indexOf('if (name === NPM_TOKEN_INGRESS_ENV) continue;');
+    const skipChild = src.indexOf('if (name === NPM_TOKEN_CHILD_ENV) continue;');
+    const copy = src.indexOf('env[name] = baseEnv[name];');
     const setChild = src.indexOf('env[NPM_TOKEN_CHILD_ENV] = token;');
-    expect(deleteIngress, 'the ingress name is deleted').toBeGreaterThan(-1);
-    expect(deleteChild, 'the registry name is deleted').toBeGreaterThan(-1);
+    expect(skipIngress, 'the ingress name is skipped').toBeGreaterThan(-1);
+    expect(skipChild, 'the registry name is skipped').toBeGreaterThan(-1);
+    expect(copy, 'every other name is forwarded').toBeGreaterThan(-1);
     expect(setChild, 'the registry name is set').toBeGreaterThan(-1);
-    // ORDER IS LOAD-BEARING: both deletions precede the single conditional set,
-    // so the set is the only way either name can be present in a child.
-    expect(deleteIngress).toBeLessThan(setChild);
-    expect(deleteChild).toBeLessThan(setChild);
+    // ORDER IS LOAD-BEARING: both skips precede the value read, so neither
+    // credential property is ever read while building a child...
+    expect(skipIngress).toBeLessThan(copy);
+    expect(skipChild).toBeLessThan(copy);
+    // ...and both precede the single conditional set, so that set is the only
+    // way either name can be present in a child at all.
+    expect(skipIngress).toBeLessThan(setChild);
+    expect(skipChild).toBeLessThan(setChild);
+    // NO WHOLESALE COPY of the source environment anywhere: that construct is
+    // precisely what made the previous read-once claim false.
+    expect(src, 'no spread of the source environment').not.toContain('{ ...baseEnv }');
+    expect(src, 'no copy-then-remove of the ingress').not.toContain('delete env[NPM_TOKEN_INGRESS_ENV]');
+    expect(src, 'no copy-then-remove of the registry name').not.toContain('delete env[NPM_TOKEN_CHILD_ENV]');
     // The set is guarded by the authenticated LABEL, not by an argv or index guess.
     expect(src).toContain('if (entry.label === AUTHENTICATED_ENTRY_LABEL) {');
     // And it is the ONLY assignment of the registry name anywhere in the file.
@@ -240,15 +321,23 @@ describe('Phase 50A R3 envelope — exactly one child environment is ever constr
     ).toHaveLength(1);
   });
 
-  it('the ingress is read once, and no published text interpolates a token', () => {
+  it('the ingress has ONE lexical read site, and no published text interpolates a token', () => {
+    // SCOPE OF THIS ASSERTION, STATED HONESTLY. A source-text count CANNOT see a
+    // property read performed by a spread or by `Object.assign`, which is exactly
+    // how the previous slice's "read once" claim survived while being false
+    // (sequence-54: fourteen real reads observed). So this assertion no longer
+    // carries that claim. It establishes only the weaker structural fact that
+    // there is ONE lexical read site to audit.
+    //
+    // THE CLAIM ITSELF is proven at RUNTIME, by counting real property accesses
+    // against the production seam, in
+    // `tests/phase-50a/fixed-proof-executor.test.ts` — see "RUNTIME credential
+    // access counts", which also demonstrates that a spread-based constructor
+    // fails that proof.
     const src = executorSource();
-    // Read from the environment in exactly one place — the gate. Matched as a
-    // READ specifically: the constructor also names the variable, but in a
-    // `delete`, which removes rather than reads it. Counting bare occurrences
-    // would conflate the two and could be satisfied by deleting the guard.
     expect(
-      [...src.matchAll(/(?<!delete )env\[NPM_TOKEN_INGRESS_ENV\]/g)],
-      'the ingress is read once',
+      [...src.matchAll(/env\[NPM_TOKEN_INGRESS_ENV\]/g)],
+      'one lexical ingress read site',
     ).toHaveLength(1);
     // The captured binding never reaches a template literal or a receipt field.
     expect(src, 'no token interpolation').not.toContain('${token}');

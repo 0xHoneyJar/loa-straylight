@@ -2628,3 +2628,311 @@ context did this work, under lease
 Ultracode, **no** `/batch`, **no** teams, **no** subagents, and **no** delegation
 of any kind. The audit of this slice is Codex's; the implementer does not audit
 its own work.
+
+## 20. Process-tree proof closure — verified containment and runtime credential evidence (fresh INITIAL slice, patch cycle 3)
+
+**This section is a PURE APPEND.** Every byte of this document before this
+heading is unchanged from substrate `7e13e14a36501aad3119395925a72a003b354db1`
+(161,739 bytes,
+`sha256:d362f736ad252889bb17c60842afa7db266f47b9fd09d947c7cb750a16910052`).
+Nothing above is rewritten, re-counted, or corrected in place; where an earlier
+section's numbers are superseded, this section says so explicitly and the
+earlier text stands as history.
+
+**A committed document cannot contain its own final commit SHA**, nor a workflow
+run created after that commit. Those post-commit identities live in the pull
+request body and in the `implementer.completed` lane event, both written after
+the final head and its exact-head run exist.
+
+### 20.1 Authority
+
+Coordinator task packet comment **5184357042**, packet digest
+`sha256:012433fec0b46ef7fdaea0444165fb986c086145507c3da38c7b352958b4fd25`,
+posted by event **5184414449** at lane #122 sequence **60**, under operator
+decision `evt-phase-50a-operator-decision-059` (comment **5183886488**,
+sequence 59; reducer result **5183891989**). Lane base SHA
+`70d40058096455c6406d644183ac757a317ce159`; `patch_cycle` **3** retained.
+
+That decision **refused** packet 5182125244 for an internally unsatisfiable
+evidence contract, and authorized this replacement fresh INITIAL slice. The
+refused packet is neither edited nor amended: it stands as durable history at
+sequence 56. **Patch cycle 4 remains unauthorized**, and PR #128 is not amended.
+
+### 20.2 What was wrong, precisely
+
+The **sequence-54 audit** (comment 5180070231, digest
+`sha256:455e9f0fe3ee58dbfbe142f216a954c8d6881d609f57f7c4fb1dfef49298ec17`)
+REJECTED the previous slice for one blocker and two substantive concerns.
+
+**Blocker — the bound reached the direct child only.** The previous executor
+handed its timeout to the synchronous launch primitive. That primitive
+terminates the process it started; it knows nothing of that process's own
+descendants. In automatic run **30907873453** / job **91987141482** schedule
+entry 6 (`repository-tests`) exceeded its 1,800,000 ms bound. The direct
+receipt was classified correctly — `status=null`, `signal=SIGTERM`,
+`timed_out=true` — and no successor entry launched. Yet **six real descendants**
+(Vitest, esbuild, `npm run demo:recall-wedge`, a shell, Node, a second esbuild)
+stayed alive until the hosted runner's cleanup killed them, free to keep
+consuming resources or mutating the workspace and the service containers after
+the executor had already returned. **Stopping successors is not containment.**
+
+**Why the old suites could not catch it.** They *synthesized* timeout outcomes
+and asserted only the successor-launch count. A synthesized outcome cannot
+exhibit the defect, because the defect was that a real grandchild outlived a
+terminated direct child. This is now proven with real processes (§20.5).
+
+**Concern — the read-once credential claim was false.** The old child-environment
+constructor spread the entire source environment and only then deleted the two
+credential names, so both credential properties were re-read on every one of the
+thirteen constructions. An independent Proxy-backed probe observed the ingress
+read **14** times and the ambient registry name **13** times. The spawn boundary
+was safe; the *claim about it* was not — and a source-text count can never
+falsify that claim, because it cannot see a read performed by a spread.
+
+**Concern — misclassified evidence.** The prior report called the failed
+automatic run a runner-side flake. It was not: the surviving-tree evidence was
+real, and the later same-head manual success proved intermittence, not
+harmlessness. That failure is disclosed and adjudicated in §20.8, not
+recharacterized.
+
+### 20.3 The new wrapper (v3), fixed by raw bytes
+
+The canonical wrapper is now exactly the packet's decoded bytes: **7,287 bytes**,
+`sha256:b95509fb82142d647e425d8c9a0ca10a7cf289d5fbfedc4573193a20c499fd7b`,
+strict UTF-8, LF only, no BOM, no tab, exactly one trailing LF. The superseded
+digest `sha256:6fb6b2bd…f117852` appears nowhere as a current expectation.
+
+**Raw-byte identity alone authorizes it.** The executor's only fact about the
+wrapper is whether its bytes hash to a digest committed in the executor as a
+literal — never computed from the file under inspection, never read from an
+environment variable, argument, or configuration file. Preserved unchanged from
+v2: the unconditional `pull_request` trigger with no `paths`/`paths-ignore`; one
+required string `workflow_dispatch.head_sha` input; read-only
+`contents`/`packages` permissions; SHA-pinned `checkout` and `setup-node`;
+`persist-credentials: false`; exact-head checkout (never the merge ref); two
+`postgres:16` services on distinct ports; the `PHASE_50A_NPM_TOKEN` ingress; and
+exactly one `run:` step invoking only the executor. `NODE_AUTH_TOKEN` appears
+nowhere in the YAML.
+
+### 20.4 Process control REPLACED, not patched
+
+`spawnSync` is gone from the production launch path — not as a primary
+mechanism, not as a fallback, not as an injectable default. The envelope suite
+asserts its absence over the executor's raw source text.
+
+The replacement is a finite Node 22 / Linux design:
+
+1. **Own process group per launch.** Every child is spawned asynchronously with
+   `shell: false`, a fixed executable, a fixed argv array, and `detached: true`,
+   so the child leads its own process group and every descendant inherits it.
+   One integer names the whole tree.
+2. **The executor owns the clock.** No bound is delegated to the launch
+   primitive, whose kill reaches the direct child alone.
+3. **Whole-group termination.** On a lapse the group is signalled by negative
+   pid — `SIGTERM` to the group, never to the child alone.
+4. **Fixed grace, then uncatchable escalation.** After `GRACE_MS` (5,000 ms) a
+   still-live group receives `SIGKILL`, so a member that trapped the first
+   signal still dies.
+5. **Observed reaping.** The direct child's exit is actually seen; it is never
+   inferred from elapsed time.
+6. **Verified absence before any report.** The group is probed until it is gone,
+   within `VERIFY_MS` (15,000 ms), *before* a receipt is written or a refusal
+   returned. The probe **fails closed**: only a definite `ESRCH` proves absence,
+   so a permission error or an unrecognized error reports "still present".
+7. **Fail-closed containment.** Unobserved reaping or unproven absence is its
+   own distinct refusal, `command-containment-unverified` — never reported as an
+   ordinary lapse, never as success.
+
+**Six mutually exclusive outcome classes**, in precedence order: spawn failure,
+**termination failure** (`command-termination-failed`, the OS refused the group
+signal), **containment failure**, lapse, ordinary signal death, nonzero exit.
+The two bold classes are new. Receipts carry four new containment fields —
+`group_signalled`, `escalated`, `direct_child_reaped`, `group_verified_absent` —
+and remain free of timestamps, durations, hostnames, absolute paths, pids, and
+environment values, so two runs of the same schedule still produce
+byte-identical receipt text.
+
+**Preserved:** the exact serial 12-entry schedule, its order, labels,
+executables and argv, with `npm ci --ignore-scripts` as entry 1 (load-bearing:
+it keeps the repository's `prepare`→`build` lifecycle out of the one
+authenticated process tree) and the explicit unauthenticated `build` as entry 4.
+
+### 20.5 The real fixture is load-bearing
+
+`tests/phase-50a/fixtures/process-tree-timeout-fixture.mjs` is a genuine process
+that spawns a genuine child which spawns a genuine grandchild — three real
+processes, three real pids, each recording its identity and its process-group id
+so the test can probe liveness itself. Two modes: `hang` (ordinary termination)
+and `trap` (every generation installs a handler for the polite signal, so only
+escalation can end it).
+
+`tests/phase-50a/process-tree-containment.test.ts` drives it through the
+**production** `realRun` and proves, against the operating system rather than
+against the executor's own report:
+
+- three real generations exist, and the child and grandchild report the
+  **leader's** group id — group inheritance is what makes one id name the tree;
+- after a lapse, **every** pid is already gone at the instant the runner
+  resolves, and the group is gone — the exact assertion the rejected design
+  would fail;
+- a trapping tree still dies, with `escalated=true` — a design sending only the
+  first signal fails here;
+- an unprovable absence yields `command-containment-unverified`, **not** a
+  lapse;
+- a refused group signal yields `command-termination-failed`, outranking the
+  containment failure it also causes;
+- a real lapsed first entry launches **no** successor and its receipt carries
+  the containment facts.
+
+**The fixture demonstrably has teeth.** Reproducing the rejected design against
+the same fixture — synchronous launch, its own timeout, direct child only —
+leaves the child and grandchild alive (2 survivors) after the direct child is
+terminated. The new design leaves 0. Synthetic outcomes remain supplementary
+only.
+
+### 20.6 Runtime credential evidence replaces the source-regex claim
+
+The child-environment constructor no longer copies wholesale. It **enumerates
+the source environment's names and skips both credential names before reading
+any value**, then adds the registry name from the captured binding for the
+`npm-ci` entry alone, bound to that entry's **label**.
+
+The claim is proven by **counting real property accesses** against the
+production seam, with instrumented accessors the executor cannot detect:
+
+| Measurement | Old design (audited) | This slice |
+|---|---|---|
+| `PHASE_50A_NPM_TOKEN` reads, whole run | 14 | **1** |
+| ambient `NODE_AUTH_TOKEN` reads | 13 | **0** |
+| child environments carrying the ingress | 0 | **0** |
+| child environments carrying the registry name | 1 (`npm-ci`) | **1** (`npm-ci`) |
+
+The suite also reproduces the spread-based constructor locally and shows it
+re-reads both properties, so the method can detect the defect it was written
+for. The source-text assertion survives, explicitly demoted to the weaker
+structural claim that there is one lexical read site to audit, and it now points
+at the runtime proof that carries the real claim.
+
+### 20.7 Phase 31F — bounded subprocess, semantics preserved
+
+`tests/phase-31f-operator-recall-wedge-demo.test.ts` called `execFileSync` with
+**no `timeout` option**, so the call was a synchronous, unbounded block. Its
+`60_000` argument is Vitest's per-test budget, which cannot preempt a
+synchronous blocking call: Vitest can neither interrupt the blocked worker nor
+reap the descendants the command started. That is why this file was the **sole
+file of 88** that failed to complete in run 30907873453, and why runner cleanup
+named exactly that tree.
+
+**Only the mechanism changed.** The subprocess is now bounded and
+process-tree-safe: fixed executable and argv, `shell: false`, its own process
+group, an explicit 45,000 ms bound inside the test's own 60,000 ms budget,
+whole-group termination with escalation, and nothing left alive when the call
+returns. The command is still the documented `npm run --silent
+demo:recall-wedge`, the package script is still not bypassed, stdout is
+collected the same way, and **every assertion and semantic is untouched**. A
+lapse, a signal death, or a nonzero exit now fail the test loudly instead of
+hanging it.
+
+### 20.8 Disclosed failures — every one, adjudicated
+
+**Automatic run 30907873453 / job 91987141482** (substrate head
+`7e13e14a36501aad3119395925a72a003b354db1`) — **REAL FAILURE**. Entries 1-5
+passed; entry 6 lapsed at 1,800,000 ms; 87 of 88 test files completed; the
+stalled file was the Phase 31F suite; runner cleanup terminated six surviving
+descendants. Cause: the executor bounded only the direct child, and the Phase
+31F suite's synchronous unbounded subprocess was the proximate stall. **Not a
+runner-side flake.** Both causes are fixed in this slice (§20.4, §20.7). Manual
+run **30910916330** / job **91997177777** at the identical head later passed;
+that establishes intermittence, and does **not** erase the failed run.
+
+**Local attempts during this slice**, disclosed in full:
+
+- The containment suite failed on first execution: `process.getpgrp` is not a
+  Node API, so the fixture died before recording, and the worktree's `.git` is a
+  *file* rather than a directory so the HEAD helper threw `ENOTDIR`. Both were
+  real defects in the new test code, fixed by reading the process-group id from
+  `/proc/self/stat` and by resolving the `gitdir:` pointer. No production code
+  changed as a result.
+- The executor suite's environment-name enumeration failed once: the
+  enumerate-and-skip loop introduces `baseEnv[name]`, which the existing
+  assertion's pattern did not model. The assertion was **strengthened** rather
+  than loosened — constant-named subscripts are still enumerated exactly, the
+  only two dynamic subscripts are pinned by exact text, and the absence of a
+  wholesale copy is now asserted directly.
+- The envelope suite's copy-then-delete assertion failed by design, because that
+  construction is what this slice removes. It was retargeted to the
+  skip-before-read shape and additionally forbids the old construct.
+- `tsc` rejected the stubbed `run` seam until it was made `async`, since the
+  production seam is now asynchronous.
+
+No failure was hidden, retried into silence, or reclassified.
+
+### 20.9 Local evidence
+
+All commands run in a clean worktree checked out at the exact substrate, with an
+offline `npm ci --ignore-scripts` from the local cache (no external credential
+or package-access probe).
+
+| Gate | Result |
+|---|---|
+| `npm run typecheck` | PASS |
+| `npm run build` | PASS |
+| `npm test` | **89 files, 2,261 passed, 149 skipped** — all 89 completed |
+| `npm run control-plane:validate` | PASS |
+| `npm run control-plane:test` | **29 files, 1,025 passed** |
+| `npm run phase-50a:test` | **15 files, 310 passed** |
+| `npm run phase-50a:proof` | **PASS** — distinct hosts, chains verify, cold load, continued write |
+| `npm run phase-50a:verify-artifact` | **PASS** — C1..C9, 30/30/30, 44 packed files |
+
+Focused suite counts: executor **55**, envelope **23**, artifact/workflow **20**,
+process-tree containment **8**, Phase 31F **6**.
+
+The complete 12-entry schedule was also run end-to-end through the real executor
+against a real HEAD: gate passed, **12 launches, 12 receipts, all
+`outcome=ok`**, and every receipt `reaped=true group_absent=true`. The prior
+slice's automatic run completed 87 of 88 repository test files; this slice
+completes **89 of 89**.
+
+### 20.10 Two-baseline path evidence
+
+Per the packet's `evidence_contract`, the two comparisons are **separate** and
+serve different purposes. The full enumeration, with per-path classification and
+stats, is in the pull request body; the contract is restated here.
+
+**A — CUMULATIVE (lane base → final head).** Historical composition evidence.
+It includes every inherited Phase 50A path arriving with the substrate as well
+as this slice's closure changes, each classified `INHERITED`,
+`CLOSURE-MODIFIED`, or `CLOSURE-ADDED`. **This is not the authorization
+boundary**, and an inherited path is never an unauthorized closure change. Its
+count is not bounded at ten and is not expected to be.
+
+**B — CLOSURE-ONLY (substrate `7e13e14a…354db1` → final head).** The **sole**
+authorization boundary: exactly the packet's ten allowed paths may differ, and
+every other substrate-tracked path is byte-identical by file mode, git object
+type, and blob SHA-1. An eleventh substrate-relative change fails closed.
+
+Conflating A and B is precisely what made packet 5182125244 unsatisfiable.
+
+### 20.11 What this slice does NOT claim
+
+No merge, no product acceptance, no readiness, no gate closure, no Phase 50B
+progression, no MVP-2 completion. No provider was contacted, no production
+resource provisioned, no living estate touched, no sibling repository modified,
+and no credential of consequence handled — the only credential is the ephemeral,
+job-scoped workflow token, and it reaches exactly one child process. Every
+residual pre-production obligation in §10 stands undischarged: durability,
+failover, network isolation, tenancy, availability, version policy, and incident
+recovery. PostgreSQL production code, migrations, the audit chain, the package
+boundary, the public seam, R1/R2/R4 evidence, and the two-host proof logic are
+unchanged by this slice.
+
+PRs #128, #127, #126, and #125 remain open, unmerged, and untouched. PR #128 and
+its head `7e13e14a36501aad3119395925a72a003b354db1` remain **REJECTED** and are
+inspectable substrate only — the branch origin of this slice, never its
+authority.
+
+**Implementation provenance.** Exactly **one** Claude agent at high effort did
+this work, under lease `lease-phase-50a-implementer-process-tree-017` (lane #122
+sequence 61). **No** Ultracode, **no** `/batch`, **no** teams, **no** subagents,
+and **no** delegation of any kind. The audit of this slice is Codex's; the
+implementer does not audit its own work.

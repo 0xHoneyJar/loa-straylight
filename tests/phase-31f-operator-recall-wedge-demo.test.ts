@@ -11,14 +11,36 @@
 // We exercise the demo two ways:
 //   1. directly via buildRecallWedgeDemoReport() — keeps the structural
 //      assertions fast and lets us inspect the report shape in-process.
-//   2. via execFileSync running `npm run --silent demo:recall-wedge` —
-//      proves the actual operator command (the one documented for humans
-//      and machines) emits a single parseable JSON document on stdout.
-//      `--silent` is required because npm otherwise prints lifecycle
-//      banner lines ("> @loa/straylight@... demo:recall-wedge") to stdout
-//      that would corrupt the JSON document when redirected.
+//   2. by running `npm run --silent demo:recall-wedge` as a BOUNDED,
+//      PROCESS-TREE-SAFE subprocess — proves the actual operator command (the
+//      one documented for humans and machines) emits a single parseable JSON
+//      document on stdout. `--silent` is required because npm otherwise prints
+//      lifecycle banner lines ("> @loa/straylight@... demo:recall-wedge") to
+//      stdout that would corrupt the JSON document when redirected.
+//
+// ── WHY THE SUBPROCESS MECHANISM CHANGED (Phase 50A, sequence-54 audit) ──
+//
+// This suite previously ran the operator command with the SYNCHRONOUS
+// `execFileSync` and no `timeout` option, so the call was an unbounded block.
+// The `60_000` argument below is Vitest's per-test budget, and Vitest cannot
+// preempt a synchronous blocking call: it can neither interrupt the blocked
+// worker nor reap the npm/shell/Node/esbuild descendants the command starts.
+//
+// In Phase 50A automatic run 30907873453 / job 91987141482 this file was the
+// SOLE file of 88 that failed to complete, and the hosted runner's cleanup
+// named exactly that descendant tree. The Phase 50A proof harness has since
+// replaced its own direct-child-only bounding with real process-group
+// containment; this test is corrected the same way, so the repository test run
+// can no longer be stalled from here.
+//
+// ONLY THE MECHANISM CHANGED. The command is the same documented operator
+// command with the same `--silent`, stdout is collected the same way, and every
+// assertion and semantic below is untouched: the same single-parseable-JSON
+// property, the same report-shape, membrane, audit-chain, and private-
+// fingerprint expectations. The package script is still NOT bypassed — the
+// operator-command path itself is what must stay parseable.
 
-import { execFileSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
@@ -35,6 +57,96 @@ const REPO_ROOT = resolve(HERE, '..');
 const NPM_BIN = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 
 const PRIVATE_RECEIPT_ID_RE = /^rcpt_/;
+
+/**
+ * Run one command as a BOUNDED, process-tree-safe subprocess and resolve its
+ * stdout.
+ *
+ * Fixed executable plus a fixed argv array, `shell: false`, and `detached: true`
+ * so the child leads its OWN process group which every descendant inherits.
+ * THIS FUNCTION owns the clock — the bound is not delegated to the launch
+ * primitive, whose kill would reach the direct child alone and leave the npm /
+ * shell / Node / esbuild descendants behind. On a lapse the WHOLE GROUP is
+ * signalled, escalated after a fixed grace, and the direct child's exit is
+ * awaited, so nothing outlives this call.
+ *
+ * A lapse, a signal death, or a nonzero exit all REJECT, so the test fails
+ * loudly rather than parsing a truncated document.
+ */
+async function runBounded(
+  file: string,
+  args: readonly string[],
+  options: { cwd: string; timeoutMs: number; graceMs?: number },
+): Promise<string> {
+  const graceMs = options.graceMs ?? 2_000;
+  const child = spawn(file, [...args], {
+    cwd: options.cwd,
+    shell: false,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
+  });
+  const pgid = typeof child.pid === 'number' && child.pid > 0 ? child.pid : null;
+
+  let stdout = '';
+  let stderr = '';
+  child.stdout?.setEncoding('utf8');
+  child.stdout?.on('data', (chunk: string) => {
+    stdout += chunk;
+  });
+  child.stderr?.setEncoding('utf8');
+  child.stderr?.on('data', (chunk: string) => {
+    stderr += chunk;
+  });
+
+  let timedOut = false;
+  const settled = new Promise<{ code: number | null; signal: string | null }>((done, fail) => {
+    child.on('error', fail);
+    child.on('close', (code, signal) => done({ code, signal }));
+  });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    if (pgid !== null) {
+      try {
+        process.kill(-pgid, 'SIGTERM');
+      } catch {
+        /* group already gone */
+      }
+      setTimeout(() => {
+        try {
+          process.kill(-pgid, 'SIGKILL');
+        } catch {
+          /* group already gone */
+        }
+      }, graceMs).unref();
+    }
+  }, options.timeoutMs);
+
+  try {
+    const { code, signal } = await settled;
+    if (timedOut) {
+      throw new Error(
+        `${file} ${args.join(' ')} exceeded ${options.timeoutMs}ms; process group terminated`,
+      );
+    }
+    if (signal !== null) {
+      throw new Error(`${file} ${args.join(' ')} terminated by ${signal}`);
+    }
+    if (code !== 0) {
+      throw new Error(`${file} ${args.join(' ')} exited ${code}: ${stderr.slice(0, 400)}`);
+    }
+    return stdout;
+  } finally {
+    clearTimeout(timer);
+    // Nothing may outlive this call, whichever way it ended.
+    if (pgid !== null) {
+      try {
+        process.kill(-pgid, 'SIGKILL');
+      } catch {
+        /* the expected case: already gone */
+      }
+    }
+  }
+}
 
 describe('Phase 31F — operator recall wedge demo', () => {
   it('buildRecallWedgeDemoReport() returns a valid demo report with both frame summaries over the same estate', () => {
@@ -131,7 +243,7 @@ describe('Phase 31F — operator recall wedge demo', () => {
     }
   });
 
-  it('the documented operator command `npm run --silent demo:recall-wedge` emits a single parseable JSON report on stdout', () => {
+  it('the documented operator command `npm run --silent demo:recall-wedge` emits a single parseable JSON report on stdout', async () => {
     // This test exercises the exact command operators are told to run
     // (`npm run --silent demo:recall-wedge`). `--silent` suppresses the
     // npm lifecycle banner ("> @loa/straylight@... demo:recall-wedge")
@@ -140,15 +252,16 @@ describe('Phase 31F — operator recall wedge demo', () => {
     // deliberately do NOT bypass the package script by invoking
     // node_modules/.bin/vite-node directly here — the operator-command
     // path itself is what must stay parseable.
-    const stdout = execFileSync(
-      NPM_BIN,
-      ['run', '--silent', 'demo:recall-wedge'],
-      {
-        cwd: REPO_ROOT,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
-    );
+    //
+    // BOUNDED AND PROCESS-TREE-SAFE. `runBounded` owns the clock and puts the
+    // command in its own process group, so a hung npm/Node/esbuild tree is
+    // terminated here instead of stalling the whole repository test run until
+    // the CI runner's cleanup — the Phase 50A sequence-54 finding. The bound
+    // sits inside this test's own budget so a lapse fails this test loudly.
+    const stdout = await runBounded(NPM_BIN, ['run', '--silent', 'demo:recall-wedge'], {
+      cwd: REPO_ROOT,
+      timeoutMs: 45_000,
+    });
 
     const parsed = JSON.parse(stdout) as RecallWedgeDemoReport;
     expect(parsed.demo).toBe('straylight_recall_wedge');

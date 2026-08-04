@@ -12,6 +12,13 @@
 // It is also the only place a child-process environment is constructed, so the
 // registry credential's blast radius is a property of THIS module rather than
 // of the workflow file: see `childEnv`.
+//
+// PROCESS-TREE CONTAINMENT. Every launch is asynchronous and detached into its
+// OWN process group, this module owns the clock, and a lapsed bound terminates
+// the WHOLE GROUP, escalates after a fixed grace, observes the direct child's
+// reaping, and VERIFIES the group's absence before any receipt is written. An
+// unprovable containment is its own refusal — never an ordinary lapse, and
+// never a pass. See `realRun`, `signalGroup`, `groupAlive`, and `classify`.
 
 /** Absolute path of the repository root, resolved from this module's location. */
 export declare const REPO_ROOT: string;
@@ -31,7 +38,7 @@ export declare const EXPECTED_HEAD_ENV: string;
 /**
  * INGRESS variable name. The wrapper hands the ephemeral job token to the
  * executor under this name, and NO child process ever receives it — `childEnv`
- * deletes it from every child environment it builds.
+ * skips it BY NAME while enumerating, so its value is never even read there.
  */
 export declare const NPM_TOKEN_INGRESS_ENV: string;
 
@@ -48,7 +55,19 @@ export declare const NPM_TOKEN_CHILD_ENV: string;
  */
 export declare const AUTHENTICATED_ENTRY_LABEL: string;
 
-/** One launch: an executable plus a fixed argv array and a fixed timeout. */
+/**
+ * CONTAINMENT PARAMETERS — fixed committed constants, deliberately not
+ * configurable from outside the module.
+ *
+ * `GRACE_MS`  grace given to a signalled group before uncatchable escalation.
+ * `VERIFY_MS` bounded window in which the group's absence must be established.
+ * `PROBE_MS`  polling interval of the absence probe.
+ */
+export declare const GRACE_MS: number;
+export declare const VERIFY_MS: number;
+export declare const PROBE_MS: number;
+
+/** One launch: an executable plus a fixed argv array and a fixed bound. */
 export interface ScheduleEntry {
   /** Stable, human-readable identifier used in receipts. */
   readonly label: string;
@@ -56,7 +75,7 @@ export interface ScheduleEntry {
   readonly file: string;
   /** The complete fixed argv array. */
   readonly args: readonly string[];
-  /** Hard upper bound for this launch, in milliseconds. */
+  /** Hard upper bound for this launch, in milliseconds, enforced by the module. */
   readonly timeout_ms: number;
   /** True only for the identity probe, whose stdout is the datum. */
   readonly capture?: boolean;
@@ -86,16 +105,23 @@ export declare const REFUSAL: {
   readonly commandSignalled: string;
   readonly commandTimedOut: string;
   readonly commandSpawnFailed: string;
+  /** Signalling the process group was refused by the operating system. */
+  readonly commandTerminationFailed: string;
+  /** Reaping was not observed, or the tree's absence could not be proven. */
+  readonly commandContainmentUnverified: string;
 };
 
 /**
  * THE ONE child-environment constructor, used for every child the production
  * seam launches — the identity probe and all twelve schedule entries.
  *
- * It removes BOTH token names unconditionally, then sets `NPM_TOKEN_CHILD_ENV`
- * from `token` if and only if `entry.label` is `AUTHENTICATED_ENTRY_LABEL`. For
- * every other entry the returned object holds neither name at all, so no
- * descendant of those children can read a credential either.
+ * It ENUMERATES the source environment's names and SKIPS both credential names
+ * BEFORE reading any value, then sets `NPM_TOKEN_CHILD_ENV` from `token` if and
+ * only if `entry.label` is `AUTHENTICATED_ENTRY_LABEL`. For every other entry
+ * the returned object holds neither name at all, so no descendant of those
+ * children can read a credential either — and building a child never reads
+ * either credential property, which is what makes the read-once claim provable
+ * at runtime rather than merely asserted over source text.
  */
 export declare function childEnv(
   entry: Pick<ScheduleEntry, 'label'>,
@@ -103,7 +129,32 @@ export declare function childEnv(
   baseEnv: Record<string, string | undefined>,
 ): Record<string, string | undefined>;
 
-/** What a process-execution function returns. */
+/** Result of signalling a whole process group. */
+export interface SignalResult {
+  /** True when the group was signalled OR was already entirely gone. */
+  ok: boolean;
+  /** True only when a signal was actually delivered to a live group. */
+  delivered?: boolean;
+  /** OS error code when the signal was refused. Present only when `ok` is false. */
+  code?: string;
+}
+
+/**
+ * Signal an ENTIRE process group by group id (the negative-pid form). An
+ * already-absent group is success with nothing delivered; an OS refusal is a
+ * termination FAILURE, never quietly treated as success.
+ */
+export declare function signalGroup(pgid: number, sig: string): SignalResult;
+
+/**
+ * Is ANY member of the group still present? FAIL CLOSED: only an explicit
+ * "no such process group" proves absence — a permission error or an
+ * unrecognized error reports "still present", so an unprovable absence becomes
+ * a refusal rather than an assumption.
+ */
+export declare function groupAlive(pgid: number): boolean;
+
+/** What the process-execution seam resolves to. */
 export interface RunOutcome {
   /** Exit status, or null when the process was signalled or never started. */
   status: number | null;
@@ -111,58 +162,116 @@ export interface RunOutcome {
   signal: string | null;
   /** Captured stdout — populated only for a capturing entry. */
   stdout?: string;
-  /** True only for a timeout kill, distinct from an ordinary signal death. */
+  /** True when THIS MODULE's bound lapsed, distinct from a signal death. */
   timed_out?: boolean;
-  /** Spawn-failure code (ENOENT, EACCES, ...), or null. Never a timeout. */
+  /** Launch-failure code (ENOENT, EACCES, ...), or null. Never a lapse. */
   error?: string | null;
+  /** True when the whole group was signalled after a lapse. */
+  group_signalled?: boolean;
+  /** True when the uncatchable escalation was needed after the grace period. */
+  escalated?: boolean;
+  /** True only when the direct child's exit was OBSERVED, never inferred. */
+  direct_child_reaped?: boolean;
+  /** True only when the group's absence was VERIFIED within the window. */
+  group_verified_absent?: boolean;
+  /** Set when signalling the group was refused, or no group id existed. */
+  termination_error?: string | null;
 }
 
-/** The complete options object `realRun` hands to the spawn function. */
+/** The complete options object the launch helper hands to the spawn function. */
 export interface SpawnOptions {
   cwd: string;
   /** Always false. There is no string-command form anywhere. */
   shell: false;
   /** Built by `childEnv` and by nothing else. */
   env: Record<string, string | undefined>;
-  stdio: 'inherit' | readonly (string | number | null)[];
-  timeout: number;
-  encoding: string;
+  stdio: readonly (string | number | null)[];
+  /**
+   * Always true: the child leads its OWN process group, which every descendant
+   * inherits, so one group id names the whole tree.
+   */
+  detached: true;
+}
+
+/** A live child handle: the subset of it this module uses. */
+export interface SpawnedChild {
+  /** The child's pid, which is also its process-group id when detached. */
+  pid?: number;
+  stdout?: {
+    setEncoding(encoding: string): void;
+    on(event: string, listener: (chunk: string) => void): void;
+  } | null;
+  on(event: string, listener: (...args: never[]) => void): void;
 }
 
 /**
- * The spawn seam `realRun` calls. Injectable so a test can capture the ACTUAL
- * options object production builds — the environment asserted over is the one
- * production really uses, not a stub's report of itself.
+ * The spawn seam the launch helper calls. Injectable so a test can capture the
+ * ACTUAL options object production builds — the environment asserted over is
+ * the one production really uses, not a stub's report of itself.
  */
 export type SpawnFn = (
   file: string,
   args: readonly string[],
   options: SpawnOptions,
-) => {
-  status: number | null;
-  signal: string | null;
-  stdout?: string;
-  error?: { code?: string; message?: string } | null;
-};
+) => SpawnedChild;
 
-/** Per-launch context: the captured ingress value and the injectable seam. */
+/** Per-launch context: the captured ingress value and the injectable seams. */
 export interface RunContext {
   /** The captured ingress credential. Never read from the environment again. */
   token: string;
   /** Environment the child environment is derived FROM. Defaults to process.env. */
   baseEnv?: Record<string, string | undefined>;
-  /** Injected spawn function. Defaults to node:child_process spawnSync. */
+  /** Injected spawn function. Defaults to node:child_process spawn. */
   spawn?: SpawnFn;
+  /** Injected group-signal primitive. Defaults to `signalGroup`. */
+  signal?: (pgid: number, sig: string) => SignalResult;
+  /** Injected group-liveness probe. Defaults to `groupAlive`. */
+  alive?: (pgid: number) => boolean;
+  /** Grace before escalation. Defaults to `GRACE_MS`. */
+  graceMs?: number;
+  /** Bounded absence-verification window. Defaults to `VERIFY_MS`. */
+  verifyMs?: number;
+  /** Absence-probe interval. Defaults to `PROBE_MS`. */
+  probeMs?: number;
 }
 
-/** The injectable process-execution seam. */
-export type RunFn = (entry: ScheduleEntry, context: RunContext) => RunOutcome;
+/** The injectable process-execution seam. Asynchronous: it owns the clock. */
+export type RunFn = (entry: ScheduleEntry, context: RunContext) => Promise<RunOutcome>;
 
 /**
- * The real seam: spawnSync with shell:false, an argv array, and an environment
- * built by `childEnv`.
+ * The real seam: an asynchronous, detached, group-bounded launch with
+ * shell:false and an argv array, an environment built by `childEnv`, whole-group
+ * termination on a lapse, fixed grace then uncatchable escalation, OBSERVED
+ * reaping, and VERIFIED group absence — all established before it resolves.
  */
 export declare const realRun: RunFn;
+
+/** The six mutually exclusive outcome classes, in precedence order. */
+export interface Verdict {
+  /** The process never started; there is no tree. */
+  spawnFailed: boolean;
+  /** Signalling the group was refused, or no group id existed. */
+  terminationFailed: boolean;
+  /** Reaping unobserved, or absence unproven within the window. */
+  containmentFailed: boolean;
+  /** The bound lapsed AND the tree was proven gone. */
+  timedOut: boolean;
+  /** An ordinary signal death, no lapse involved. */
+  signalled: boolean;
+  /** A real, observed nonzero exit status. */
+  failed: boolean;
+}
+
+/**
+ * Classify one outcome into exactly one verdict. No pair of classes may
+ * collapse; in particular a null status never falls through an exit-code
+ * comparison as success, and a containment failure is never folded into the
+ * lapse that led to it.
+ */
+export declare function classify(outcome: RunOutcome): Verdict;
+
+/** The refusal code for a verdict, or null when the launch was clean. */
+export declare function refusalFor(verdict: Verdict): string | null;
 
 /** One receipt per ATTEMPTED command. Deterministic: no run-varying value. */
 export interface CommandReceipt {
@@ -175,7 +284,22 @@ export interface CommandReceipt {
   signal: string | null;
   timed_out: boolean;
   spawn_failed: boolean;
-  outcome: 'ok' | 'failed' | 'signalled' | 'timed-out' | 'spawn-failed';
+  /** Whether the whole group was signalled after a lapse. */
+  group_signalled: boolean;
+  /** Whether uncatchable escalation was needed. */
+  escalated: boolean;
+  /** Whether the direct child's exit was OBSERVED. */
+  direct_child_reaped: boolean;
+  /** Whether the group's absence was VERIFIED. */
+  group_verified_absent: boolean;
+  outcome:
+    | 'ok'
+    | 'failed'
+    | 'signalled'
+    | 'timed-out'
+    | 'spawn-failed'
+    | 'termination-failed'
+    | 'containment-unverified';
 }
 
 /** The complete result of one proof run, refused or passed. */
@@ -211,6 +335,16 @@ export interface RunFixedProofOptions {
    * the PRODUCTION seam and capture the real options objects.
    */
   spawn?: SpawnFn;
+  /** Injected group-signal primitive, threaded through to `realRun`. */
+  signal?: (pgid: number, sig: string) => SignalResult;
+  /** Injected group-liveness probe, threaded through to `realRun`. */
+  alive?: (pgid: number) => boolean;
+  /** Grace before escalation, threaded through to `realRun`. */
+  graceMs?: number;
+  /** Bounded absence-verification window, threaded through to `realRun`. */
+  verifyMs?: number;
+  /** Absence-probe interval, threaded through to `realRun`. */
+  probeMs?: number;
   /**
    * Sink for the identity-gate banner, written at the moment the gate passes
    * and BEFORE the first schedule launch — so the job log itself carries the
@@ -223,13 +357,13 @@ export interface RunFixedProofOptions {
 /**
  * Run the fixed proof: identity gate first, then the closed schedule.
  *
- * A gate failure returns `ok: false` with `launches === 0` — zero schedule
+ * A gate failure resolves with `ok: false` and `launches === 0` — zero schedule
  * commands are launched and none will be. A missing credential ingress is
  * detected BEFORE the identity probe, so it launches nothing at all. There is
  * no fallback path and no refusal that reports success. No field of the result
  * carries a credential value.
  */
-export declare function runFixedProof(options?: RunFixedProofOptions): ProofResult;
+export declare function runFixedProof(options?: RunFixedProofOptions): Promise<ProofResult>;
 
 /** SHA-256 of a file's raw bytes as `sha256:<hex>`, or null when unreadable. */
 export declare function digestOfFile(path: string): string | null;

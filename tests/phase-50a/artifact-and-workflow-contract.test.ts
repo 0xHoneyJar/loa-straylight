@@ -7,6 +7,7 @@
 // every `npm test` run — a regression in the package contract or the workflow
 // trigger set would otherwise only surface in the gated proof.
 
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -168,8 +169,10 @@ describe('Phase 50A patch — the internal PostgreSQL declarations are excluded,
 // ── Findings 1 & 6 — the proof workflow (R3: the FIXED WRAPPER) ────────
 //
 // SCOPE CHANGE, patch cycle 3 disposition; wrapper bytes and credential posture
-// re-fixed by packet comment 5178032683 (the v2 proof-closure slice), which
-// superseded packet comment 5169022573.
+// re-fixed by packet comment 5184357042 (the process-tree proof-closure slice,
+// packet digest
+// sha256:012433fec0b46ef7fdaea0444165fb986c086145507c3da38c7b352958b4fd25),
+// which supersedes packet comments 5182125244, 5178032683, and 5169022573.
 //
 // The workflow is now a CANONICAL WRAPPER whose complete raw bytes are fixed by
 // the operator-authorized coordinator packet. Several assertions that used to
@@ -204,6 +207,29 @@ describe('Phase 50A patch — the internal PostgreSQL declarations are excluded,
 // strength rather than drift.
 
 describe('Phase 50A R3 — the fixed wrapper authenticates and delegates correctly', () => {
+  it('INDEPENDENT READER: the wrapper has exactly the packet-authorized bytes', () => {
+    // A SECOND, INDEPENDENTLY COMMITTED COPY of the packet's fingerprint. The
+    // executor carries its own literal and `fixed-proof-executor.test.ts`
+    // carries a third; comparing independently transcribed copies against the
+    // packet is what makes drift detectable, where a single shared constant
+    // would only prove self-consistency.
+    const bytes = readFileSync(WORKFLOW);
+    expect(bytes.length, 'the packet-fixed byte length').toBe(7287);
+    expect(
+      createHash('sha256').update(bytes).digest('hex'),
+      'the packet-fixed raw-byte digest',
+    ).toBe('b95509fb82142d647e425d8c9a0ca10a7cf289d5fbfedc4573193a20c499fd7b');
+    // Canonical byte form, so a reformatting editor cannot pass unnoticed.
+    const text = bytes.toString('utf8');
+    expect(Buffer.from(text, 'utf8').equals(bytes), 'strictly valid UTF-8').toBe(true);
+    expect(bytes.includes(0x0d), 'no CR anywhere').toBe(false);
+    expect(bytes.includes(0x09), 'no tab anywhere').toBe(false);
+    expect(bytes[0], 'no BOM').not.toBe(0xef);
+    expect(text.endsWith('\n') && !text.endsWith('\n\n'), 'exactly one trailing LF').toBe(true);
+    // The SUPERSEDED digest must appear nowhere as a current expectation.
+    expect(text).not.toContain('6fb6b2bd51b645a1e4c5884ca4a74b10a9d24da2ad2127bf76237dd90f117852');
+  });
+
   it('grants least-privilege packages:read alongside contents:read, and nothing more', () => {
     const text = readWorkflow();
     const block = /\npermissions:\n((?:[ \t]+\S.*\n|\n)*)/.exec(text)?.[1] ?? '';
