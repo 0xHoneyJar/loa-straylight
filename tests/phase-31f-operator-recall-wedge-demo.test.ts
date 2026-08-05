@@ -470,8 +470,14 @@ describe('Phase 31F — runBounded bounds the WHOLE TREE and owns every timer', 
     }
     expect(message).toMatch(/exited 3|left process group/);
 
-    // The grandchild pid was written to stderr, which the rejection carries.
-    const pid = Number(/(\d+)/.exec(message)?.[1] ?? '0');
+    // The grandchild pid was written to stderr, which the rejection carries
+    // AFTER the "exited 3:" marker. Anchoring there matters: an unanchored
+    // \d+ would match the first number anywhere in the message — on a hosted
+    // runner that is the "22" inside the Node toolcache path
+    // (/opt/hostedtoolcache/node/22.x/...), and pid 22 belongs to a live
+    // system process, so the assertion would misfire on a pid this test
+    // never spawned.
+    const pid = Number(/exited 3: (\d+)/.exec(message)?.[1] ?? '0');
     if (Number.isInteger(pid) && pid > 1) {
       expect(pidAlive(pid), `descendant ${pid} outlived a failing runBounded`).toBe(false);
     }
