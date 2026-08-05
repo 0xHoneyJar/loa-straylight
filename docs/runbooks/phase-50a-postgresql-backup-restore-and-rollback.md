@@ -274,28 +274,41 @@ leaking a credential.
 
 Retrying an operation whose commit outcome was uncertain is safe **only when the
 complete immutable durable row matches** — not merely when the canonical payload
-does. Every column the insert wrote must be identical:
+does. Every **caller-controlled** column must be identical:
 
 - the **immutable id** (the row's primary identity);
-- the promoted **`estate_id`** and **`append_position`**;
+- the promoted **`estate_id`**;
 - the promoted **`audit_hash`** and **`previous_audit_hash`**, and the
   normalized **`previous_audit_hash_key`**;
 - the **canonical payload**.
 
+`append_position` is **not** in that comparison, and must not be added to it. It
+is **store-assigned**: `appendTransition`, `upsertTransitionReceipt`,
+`upsertRecallReceipt` and `appendAuditEvent` supply no append position, so no
+caller-supplied position exists to compare against and none may be invented. Its
+placement is **validated separately**, against the store's own invariants — the
+per-estate dense-prefix invariant and the shipped database constraints — never
+against a caller claim. The authoritative set is `CALLER_CONTROLLED_COLUMNS` in
+`src/straylight/storage/postgres/rows.ts`, from which `append_position` is
+deliberately absent; a test pins that absence, so re-adding it fails.
+
 Given that:
 
-- every column identical, already durable → converges on the existing row,
-  creates no duplicate, takes no second append position;
-- **any** column different under the same immutable id → refused
-  (`immutable_id_conflict`) and rolled back.
+- every caller-controlled column identical, already durable → converges on the
+  existing row, creates no duplicate, takes no second append position;
+- **any** caller-controlled column different under the same immutable id →
+  refused (`immutable_id_conflict`) and rolled back.
 
 **Payload equality alone is not a safe retry condition.** A row carrying the same
-id and the same canonical payload but a different promoted `estate_id`,
-`append_position`, or chain link is a *different durable row*: it is not visible
-to the estate the operation was writing, so accepting it as an idempotent
-convergence would report success for a write that produced no visible row. Do not
-reason "same payload, therefore a safe retry" — compare the whole row, and treat a
-promoted-column mismatch as the conflict it is.
+id and the same canonical payload but a different promoted `estate_id` or chain
+link is a *different durable row*: it is not visible to the estate the operation
+was writing, so accepting it as an idempotent convergence would report success for
+a write that produced no visible row. Do not reason "same payload, therefore a safe
+retry" — compare every caller-controlled column, and treat a mismatch in one as the
+conflict it is. A differing `append_position` is **not** such a mismatch: comparing
+a store-assigned position against a caller-side ordinal falsely refuses a
+byte-identical replay of an independently committed operation, which is the defect
+the shipped classifier exists to avoid.
 
 Note also the distinction the suites make explicit: replaying the *same records*
 is a retry, while *re-executing* an operation against advanced state derives a

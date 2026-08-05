@@ -371,6 +371,9 @@ describe('Phase 31F — operator recall wedge demo', () => {
 // already returned. Both are fixed, and both are proven here with REAL
 // processes — the helper that bounds every other Phase 31F subprocess must
 // itself be bounded.
+//
+// This block proves TREE containment. Timer cancellation is proven separately
+// and observably, on all five exit paths, in the suite that follows.
 describe('Phase 31F — runBounded bounds the WHOLE TREE and owns every timer', () => {
   /** Is this single process still present? Signal 0 checks without delivering. */
   const pidAlive = (pid: number): boolean => {
@@ -417,33 +420,6 @@ describe('Phase 31F — runBounded bounds the WHOLE TREE and owns every timer', 
     expect(pidAlive(grandchildPid), `descendant ${grandchildPid} outlived runBounded`).toBe(false);
   }, 60_000);
 
-  it('the escalation timer is cancelled, so no delayed signal fires after return', async () => {
-    // A tree that ignores SIGTERM forces the escalation path: SIGTERM, grace,
-    // then SIGKILL. The escalation timer is created inside the timeout handler
-    // — the one the previous design left orphaned with `.unref()`.
-    const script = [
-      'process.on("SIGTERM", () => {});',
-      'setTimeout(() => {}, 600000);',
-    ].join('\n');
-
-    await expect(
-      runBounded(process.execPath, ['-e', script], {
-        cwd: REPO_ROOT,
-        timeoutMs: 600,
-        graceMs: 150,
-        verifyMs: 5_000,
-        probeMs: 25,
-      }),
-    ).rejects.toThrow(/exceeded 600ms|left process group/);
-
-    // If any timer survived the call, the event loop would still hold it. Node
-    // exposes no timer census, so this asserts the observable consequence: the
-    // process stays quiet well past the grace window, and an uncaught delayed
-    // `process.kill` inside a cleared timer would have crashed this test.
-    await new Promise((done) => setTimeout(done, 600));
-    expect(true).toBe(true);
-  }, 60_000);
-
   it('a nonzero exit still bounds the tree before rejecting', async () => {
     // Failure paths must contain the tree too — the `finally` block and the
     // absence proof both run before the rejection escapes.
@@ -481,5 +457,429 @@ describe('Phase 31F — runBounded bounds the WHOLE TREE and owns every timer', 
     if (Number.isInteger(pid) && pid > 1) {
       expect(pidAlive(pid), `descendant ${pid} outlived a failing runBounded`).toBe(false);
     }
+  }, 60_000);
+});
+
+// ── runBounded cancels EVERY timer on ALL FIVE exit paths ────────────────
+//
+// The sequence-77 Phase 50A audit found the previous proof VACUOUS: deleting
+// the sole `clearTimeout` loop in runBounded's `finally` left no failure
+// mechanism, because the timeout case ended in `expect(true).toBe(true)`, the
+// timer callbacks swallowed their errors, and the signal-death and spawn-error
+// paths had no case at all. That verdict is accepted; this suite replaces the
+// tautology with OBSERVATION.
+//
+// THE SEAM. `process.kill` and `setTimeout` are wrapped for the duration of one
+// call, so every signal the call issues and every timer it creates is RECORDED
+// — pid, signal and timestamp for signals; the delay and the firing order for
+// timers. Nothing is inferred from the fact that runBounded returned.
+//
+// THE BOUNDARY IS AN INDEX, NOT A CLOCK. `finally` runs BEFORE the promise
+// settles, so runBounded's own last group SIGKILL is already on the seam when
+// the awaiting continuation resumes; a timestamp comparison cannot separate the
+// two (both land in the same millisecond). Taking the seam LENGTH as a mark the
+// instant the await returns partitions the record exactly: everything before
+// the mark is in-band, and ANY later entry is a post-return escape.
+//
+// THE WAIT OUTLASTS THE DEADLINES. Each case then waits strictly longer than
+// every deadline that path could have armed — the outer `timeoutMs`, plus the
+// nested `graceMs` escalation measured from the moment the timeout fired — using
+// the same numbers the test itself passed to runBounded. A surviving timer has
+// therefore had its full delay in which to fire before anything is asserted.
+//
+// NEGATIVE CONTROL. Deleting the timer-clear loop makes each of the five cases
+// FAIL: the outer timer fires late and signals a group whose id has since been
+// recycled, or the escalation timer fires after return. The mutation is run and
+// reported, not assumed.
+describe('Phase 31F — runBounded cancels every timer on all five exit paths', () => {
+  /** One recorded `process.kill` call. `signal: '0'` only probes; it delivers nothing. */
+  type KillRecord = { readonly pid: number; readonly signal: string; readonly at: number };
+  /** One recorded `setTimeout` created by the code under test. */
+  type TimerRecord = { readonly delayMs: number; firedAt: number | null };
+
+  /** What one observed runBounded call recorded. */
+  type Observation = {
+    /** Every kill call, in issue order, across the whole observation window. */
+    readonly kills: readonly KillRecord[];
+    /** Every timer runBounded created, in creation order. */
+    readonly timers: readonly TimerRecord[];
+    /** `kills.length` sampled the instant the call returned or rejected. */
+    readonly mark: number;
+    /** Timers that had already fired at the mark, by creation index. */
+    readonly firedAtMark: readonly boolean[];
+    /** The process-group ids runBounded signalled, recovered from the seam. */
+    readonly pgids: readonly number[];
+    /** Group ids still present at the mark — before any cleanup hook runs. */
+    readonly groupsAliveAtMark: readonly number[];
+    /** The resolved stdout, when the call resolved. */
+    readonly resolved: string | null;
+    /** The rejection message, when the call rejected. */
+    readonly rejection: string | null;
+  };
+
+  const realKill = process.kill.bind(process);
+  const realSetTimeout = globalThis.setTimeout;
+
+  /** Sleep on the UNWRAPPED timer, so the harness never records its own waits. */
+  const waitReal = (ms: number): Promise<void> =>
+    new Promise((done) => {
+      realSetTimeout(done, ms);
+    });
+
+  /** Is this pid or group present? Asked through the UNWRAPPED kill: the
+   *  question must not appear on the record it is used to interpret. */
+  const isPresent = (target: number): boolean => {
+    try {
+      realKill(target, 0);
+      return true;
+    } catch (e) {
+      // Fail closed exactly as runBounded does: only ESRCH proves absence.
+      return (e as NodeJS.ErrnoException | null)?.code !== 'ESRCH';
+    }
+  };
+
+  /**
+   * Run `call` with the seam installed, mark the record the instant it settles,
+   * then wait `waitBeyondMs` — which every caller computes to exceed every
+   * deadline the path could have armed.
+   *
+   * The seam is REMOVED in `finally`, so a failing expectation can never leave
+   * `process.kill` wrapped for another test.
+   */
+  const observe = async (
+    call: () => Promise<string>,
+    waitBeyondMs: number,
+  ): Promise<Observation> => {
+    const kills: KillRecord[] = [];
+    const timers: TimerRecord[] = [];
+    let recording = true;
+
+    process.kill = ((pid: number, signal?: string | number): true => {
+      if (recording) {
+        kills.push({ pid, signal: String(signal ?? 'SIGTERM'), at: Date.now() });
+      }
+      return realKill(pid, signal as NodeJS.Signals) as true;
+    }) as typeof process.kill;
+
+    globalThis.setTimeout = ((fn: unknown, ms?: number, ...rest: unknown[]): unknown => {
+      // Only real callbacks from the code under test are tracked. A string
+      // callback (the legacy eval form) and anything created while not
+      // recording pass straight through, untouched and unrecorded.
+      if (!recording || typeof fn !== 'function') {
+        return (realSetTimeout as (...a: unknown[]) => unknown)(fn, ms, ...rest);
+      }
+      const record: TimerRecord = { delayMs: ms ?? 0, firedAt: null };
+      timers.push(record);
+      return (realSetTimeout as (...a: unknown[]) => unknown)(
+        (...args: unknown[]): unknown => {
+          // Stamped BEFORE the callback body, so a callback that throws is
+          // still recorded as having fired. Nothing here swallows an error:
+          // the callback's own exception propagates exactly as it would
+          // without the seam.
+          record.firedAt = Date.now();
+          return (fn as (...a: unknown[]) => unknown)(...args);
+        },
+        ms,
+        ...rest,
+      );
+    }) as typeof globalThis.setTimeout;
+
+    try {
+      let resolved: string | null = null;
+      let rejection: string | null = null;
+      try {
+        resolved = await call();
+      } catch (e) {
+        rejection = (e as Error).message;
+      }
+
+      // ── THE MARK ──────────────────────────────────────────────────────────
+      // runBounded's `finally` has already run (it precedes settlement), so
+      // every in-band signal — including its closing group SIGKILL — is on the
+      // record. Any entry appended from here on escaped the call.
+      const mark = kills.length;
+      const firedAtMark = timers.map((t) => t.firedAt !== null);
+
+      // The group ids runBounded signalled, recovered from the seam itself
+      // rather than from a pid the test guessed. Group sends are negative.
+      const pgids = [...new Set(kills.slice(0, mark).filter((k) => k.pid < 0).map((k) => -k.pid))];
+      // Asked HERE, at the mark, before any afterEach or runner cleanup could
+      // reap the tree: absence must be established by the code under test.
+      const groupsAliveAtMark = pgids.filter((g) => isPresent(g));
+
+      await waitReal(waitBeyondMs);
+
+      return {
+        kills,
+        timers,
+        mark,
+        firedAtMark,
+        pgids,
+        groupsAliveAtMark,
+        resolved,
+        rejection,
+      };
+    } finally {
+      recording = false;
+      process.kill = realKill;
+      globalThis.setTimeout = realSetTimeout;
+    }
+  };
+
+  /** Signals that DELIVER. A `0` probe asks a question and is not a signal. */
+  const delivering = (records: readonly KillRecord[]): readonly KillRecord[] =>
+    records.filter((k) => k.signal !== '0');
+
+  const describeKills = (records: readonly KillRecord[]): string =>
+    records.map((k) => `${k.signal}->${k.pid}`).join(', ') || '(none)';
+
+  /**
+   * The assertions every exit path shares: nothing crossed the mark.
+   *
+   * A post-mark delivering signal is a delayed SIGTERM/SIGKILL from a timer
+   * that outlived the call — the exact defect. A post-mark timer firing is the
+   * same defect observed one step earlier, and catches a leaked timer whose
+   * signal happened to hit an already-absent group.
+   */
+  const expectNothingEscaped = (o: Observation, label: string): void => {
+    const postKills = delivering(o.kills.slice(o.mark));
+    expect(
+      postKills.length,
+      `${label}: ${postKills.length} signal(s) issued AFTER runBounded returned: ` +
+        `${describeKills(postKills)} (in-band: ${describeKills(o.kills.slice(0, o.mark))})`,
+    ).toBe(0);
+
+    const lateTimers = o.timers.filter((t, i) => o.firedAtMark[i] === false && t.firedAt !== null);
+    expect(
+      lateTimers.length,
+      `${label}: ${lateTimers.length} timer callback(s) ran AFTER runBounded returned ` +
+        `(delays: ${lateTimers.map((t) => `${t.delayMs}ms`).join(', ')})`,
+    ).toBe(0);
+
+    // No SIGTERM and no SIGKILL after return, named explicitly — the two
+    // signals the audit requires be proven absent.
+    for (const signal of ['SIGTERM', 'SIGKILL'] as const) {
+      const late = o.kills.slice(o.mark).filter((k) => k.signal === signal);
+      expect(late.length, `${label}: ${signal} issued after return to ${describeKills(late)}`).toBe(0);
+    }
+
+    // The seam must have observed SOMETHING for this call, or every absence
+    // assertion above is vacuous. Every path arms at least the outer timer.
+    expect(o.timers.length, `${label}: the seam recorded no timers at all`).toBeGreaterThan(0);
+  };
+
+  /** Every group runBounded created is gone at the mark, before any cleanup. */
+  const expectGroupsGone = (o: Observation, label: string): void => {
+    expect(
+      o.groupsAliveAtMark,
+      `${label}: process group(s) ${o.groupsAliveAtMark.join(', ')} outlived runBounded`,
+    ).toEqual([]);
+  };
+
+  // Timings. Deliberately short so the whole suite stays inside its budget,
+  // and every post-return wait is derived from these same numbers.
+  const OUTER_MS = 1_200;   // the outer timeoutMs for the four non-timeout paths
+  const GRACE_MS = 200;     // the escalation grace for those paths
+  const SLACK_MS = 400;     // margin past the last deadline
+  const TIMEOUT_OUTER_MS = 600;   // the timeout path's own outer deadline
+  const TIMEOUT_GRACE_MS = 900;   // its escalation grace — deliberately LONG
+
+  // For a path that never times out, the only armed deadline is the outer
+  // timer (the escalation timer exists only inside the timeout handler). The
+  // wait starts at the mark, and the outer timer was armed at most OUTER_MS
+  // before it, so OUTER_MS + slack strictly outlasts it. GRACE_MS is added
+  // because a leaked outer timer would itself arm an escalation timer.
+  const WAIT_NON_TIMEOUT_MS = OUTER_MS + GRACE_MS + SLACK_MS;
+
+  it('SUCCESS PATH: after runBounded resolves, no timer fires and no signal is issued', async () => {
+    // The child writes its own pid and exits 0 straight away. No descendant, so
+    // the absence proof is about the CALL's timers, not about a surviving tree.
+    const o = await observe(
+      () =>
+        runBounded(process.execPath, ['-e', 'process.stdout.write(String(process.pid));'], {
+          cwd: REPO_ROOT,
+          timeoutMs: OUTER_MS,
+          graceMs: GRACE_MS,
+          verifyMs: 5_000,
+          probeMs: 25,
+        }),
+      // Waits OUTER_MS + GRACE_MS + SLACK_MS past the mark: strictly beyond the
+      // outer deadline (armed ≤ OUTER_MS before the mark) and beyond the
+      // escalation a leaked outer timer would arm.
+      WAIT_NON_TIMEOUT_MS,
+    );
+
+    expect(o.rejection, `runBounded rejected on the success path: ${o.rejection}`).toBeNull();
+    expect(Number(String(o.resolved).trim())).toBeGreaterThan(0);
+    expectGroupsGone(o, 'success');
+    expectNothingEscaped(o, 'success');
+  }, 60_000);
+
+  it('NON-ZERO EXIT PATH: after runBounded rejects on exit 3, no timer fires and no signal is issued', async () => {
+    const o = await observe(
+      () =>
+        runBounded(
+          process.execPath,
+          ['-e', 'process.stderr.write("child " + process.pid);setTimeout(() => process.exit(3), 50);'],
+          { cwd: REPO_ROOT, timeoutMs: OUTER_MS, graceMs: GRACE_MS, verifyMs: 5_000, probeMs: 25 },
+        ),
+      WAIT_NON_TIMEOUT_MS,
+    );
+
+    expect(o.rejection, 'runBounded did not reject on a nonzero exit').toMatch(
+      /exited 3|left process group/,
+    );
+    expectGroupsGone(o, 'nonzero-exit');
+    expectNothingEscaped(o, 'nonzero-exit');
+  }, 60_000);
+
+  it('SIGNAL-DEATH PATH: after runBounded rejects on a signal-killed child, no timer fires and no signal is issued', async () => {
+    // The child SIGKILLs itself, so `close` reports a signal and no exit code —
+    // the `signal !== null` rejection branch. It also holds a long timer, so it
+    // would still be alive had it not killed itself.
+    const o = await observe(
+      () =>
+        runBounded(
+          process.execPath,
+          [
+            '-e',
+            'setTimeout(() => process.kill(process.pid, "SIGKILL"), 50);setTimeout(() => {}, 600000);',
+          ],
+          { cwd: REPO_ROOT, timeoutMs: OUTER_MS, graceMs: GRACE_MS, verifyMs: 5_000, probeMs: 25 },
+        ),
+      WAIT_NON_TIMEOUT_MS,
+    );
+
+    expect(o.rejection, 'runBounded did not reject on a signal death').toMatch(
+      /terminated by SIG|left process group/,
+    );
+    expectGroupsGone(o, 'signal-death');
+    expectNothingEscaped(o, 'signal-death');
+  }, 60_000);
+
+  it('TIMEOUT PATH: after the lapse rejection, the nested escalation timer never fires and no late SIGKILL is issued', async () => {
+    // THE CASE THE AUDIT CALLED VACUOUS, now observed.
+    //
+    // The child OBEYS SIGTERM, so it dies during the timeout handler's grace
+    // window and runBounded returns while the nested escalation timer is STILL
+    // PENDING — precisely the timer whose cancellation is in question. (A
+    // SIGTERM-ignoring child would let that timer fire in band, proving
+    // nothing about cancellation.) TIMEOUT_GRACE_MS is 900ms, comfortably
+    // longer than the time the call needs to observe absence and return.
+    const o = await observe(
+      () =>
+        runBounded(process.execPath, ['-e', 'setTimeout(() => {}, 600000);'], {
+          cwd: REPO_ROOT,
+          timeoutMs: TIMEOUT_OUTER_MS,
+          graceMs: TIMEOUT_GRACE_MS,
+          verifyMs: 5_000,
+          probeMs: 25,
+        }),
+      // The outer timer fired at TIMEOUT_OUTER_MS and armed the escalation
+      // TIMEOUT_GRACE_MS later; the mark comes after the outer firing, so
+      // waiting TIMEOUT_OUTER_MS + TIMEOUT_GRACE_MS + SLACK_MS past the mark
+      // strictly outlasts BOTH deadlines.
+      TIMEOUT_OUTER_MS + TIMEOUT_GRACE_MS + SLACK_MS,
+    );
+
+    expect(o.rejection, 'runBounded did not reject on the lapse').toMatch(
+      new RegExp(`exceeded ${TIMEOUT_OUTER_MS}ms|left process group`),
+    );
+
+    // The escalation timer was armed and was still PENDING at the mark — the
+    // premise of this case. Without it the test would prove nothing, so it is
+    // asserted rather than assumed.
+    const escalation = o.timers.filter((t) => t.delayMs === TIMEOUT_GRACE_MS);
+    expect(
+      escalation.length,
+      `expected the ${TIMEOUT_GRACE_MS}ms escalation timer to be armed; saw delays ` +
+        `${o.timers.map((t) => t.delayMs).join(', ')}`,
+    ).toBeGreaterThan(0);
+    const pendingEscalation = escalation.filter(
+      (t) => o.firedAtMark[o.timers.indexOf(t)] === false,
+    );
+    expect(
+      pendingEscalation.length,
+      'the escalation timer had already fired in band, so its cancellation is untested here',
+    ).toBeGreaterThan(0);
+
+    expectGroupsGone(o, 'timeout');
+    expectNothingEscaped(o, 'timeout');
+  }, 60_000);
+
+  it('SPAWN-ERROR PATH: after a spawn failure rejects, the outer timer never fires and no signal is issued', async () => {
+    // The executable does not exist, so the child emits 'error' and runBounded
+    // rejects within milliseconds — while the outer timer is freshly armed and
+    // has its whole delay still ahead of it. Proves `finally` cancels even when
+    // the child never started and there is no group to signal.
+    const missing = resolve(REPO_ROOT, 'phase-31f-no-such-executable-a4f1c7');
+
+    const o = await observe(
+      () =>
+        runBounded(missing, [], {
+          cwd: REPO_ROOT,
+          timeoutMs: OUTER_MS,
+          graceMs: GRACE_MS,
+          verifyMs: 5_000,
+          probeMs: 25,
+        }),
+      WAIT_NON_TIMEOUT_MS,
+    );
+
+    expect(o.rejection, 'runBounded did not reject on a spawn failure').toMatch(/ENOENT|spawn/);
+    // No group was ever created, so there is nothing to signal — and the seam
+    // must show exactly that, for the whole window.
+    expect(
+      delivering(o.kills).length,
+      `a failed spawn issued signals: ${describeKills(delivering(o.kills))}`,
+    ).toBe(0);
+    expectNothingEscaped(o, 'spawn-error');
+  }, 60_000);
+
+  it('POSITIVE CONTROL: the seam RECORDS the in-band SIGTERM and SIGKILL escalation runBounded legitimately issues', async () => {
+    // Without this, every absence assertion above could be satisfied by a seam
+    // that observes nothing. Here the child IGNORES SIGTERM, so the timeout
+    // handler must escalate in band: SIGTERM, grace, then SIGKILL — and the
+    // seam is required to have SEEN both, plus the timers that drove them.
+    const o = await observe(
+      () =>
+        runBounded(
+          process.execPath,
+          ['-e', 'process.on("SIGTERM", () => {});setTimeout(() => {}, 600000);'],
+          {
+            cwd: REPO_ROOT,
+            timeoutMs: TIMEOUT_OUTER_MS,
+            graceMs: 150,
+            verifyMs: 5_000,
+            probeMs: 25,
+          },
+        ),
+      TIMEOUT_OUTER_MS + 150 + SLACK_MS,
+    );
+
+    expect(o.rejection, 'the SIGTERM-ignoring child did not force a lapse').toMatch(
+      new RegExp(`exceeded ${TIMEOUT_OUTER_MS}ms|left process group`),
+    );
+
+    const inBand = o.kills.slice(0, o.mark);
+    // The seam is LIVE: it saw the real escalation, addressed to the group.
+    expect(
+      inBand.some((k) => k.signal === 'SIGTERM' && k.pid < 0),
+      `seam recorded no in-band group SIGTERM; saw ${describeKills(inBand)}`,
+    ).toBe(true);
+    expect(
+      inBand.some((k) => k.signal === 'SIGKILL' && k.pid < 0),
+      `seam recorded no in-band group SIGKILL; saw ${describeKills(inBand)}`,
+    ).toBe(true);
+    // And it saw the timers that drove them fire, in band.
+    const firedInBand = o.timers.filter((_, i) => o.firedAtMark[i] === true);
+    expect(
+      firedInBand.length,
+      'seam recorded no timer callbacks firing in band on the escalation path',
+    ).toBeGreaterThanOrEqual(2);
+
+    // The escalation was in band, so the post-mark record must STILL be clean.
+    expectGroupsGone(o, 'positive-control');
+    expectNothingEscaped(o, 'positive-control');
   }, 60_000);
 });

@@ -3050,3 +3050,204 @@ this work, under lease `lease-phase-50a-implementer-complete-containment-021`
 (lane #122 sequence 74). **No** Ultracode, **no** `/batch`, **no** teams,
 **no** subagents, and **no** delegation of any kind. The audit of this slice
 is Codex's; the implementer does not audit its own work.
+
+---
+
+## Phase 50A — timer-proof closure (patch cycle 3, replacement packet 5197927963)
+
+**PURE END-OF-FILE APPEND.** Everything above the `---` separator preceding this
+section is byte-identical to the substrate: the file's first **186,057 bytes**
+hash to `sha256:64c8ad1b5e4c8d48159e540faf30299a8894579c93ebd923334e70976b55eebe`,
+the substrate file's exact full hash and full length at
+`cc781176292bc346cff1719a67c097978ff7d140`. No prior line was reflowed, deleted,
+renumbered or modified — including the sentence corrected below, which is
+superseded in place-by-reference rather than edited.
+
+**Authority.** Coordinator task packet comment **5197927963** (canonical digest
+`sha256:fa2b8d1c69dfcaf2149daa0aaa6f9764601f2789dd805a76c271cc10185b02bc`),
+posted at lane #122 sequence 79 under operator decision **5197252558**
+(sequence 78), which disposed of the sequence-77 `REJECT`. Implementer lease
+`lease-phase-50a-implementer-timer-proof-023` (sequence 80, comment
+**5198105840**). Branch `phase-50a-r3-timer-proof-closure`, cut from the exact
+rejected substrate `cc781176292bc346cff1719a67c097978ff7d140`. PR #130 was not
+amended, force-pushed, retargeted, closed or merged; it remains rejected
+substrate, readable and branchable only.
+
+### Correction — the unchanged-entry count is 651, not 652
+
+The sentence at **line 3038** of this document states, of the complete
+containment closure's Evidence B:
+
+> all other tree entries — 652 of 659 — are identical by mode, type and blob
+> object id
+
+**That count is wrong, and this statement supersedes it: the correct figure is
+651 of 659.** The sequence-77 audit's MEDIUM finding is accepted as stated.
+
+The arithmetic and the mechanical check agree. Comparing the two trees entry by
+entry — substrate `032cec5dfdbfa114239ace43d00891764b817bc9` against that
+closure's head `cc781176292bc346cff1719a67c097978ff7d140` — yields:
+
+| Quantity | Value |
+|---|---|
+| Entries at the substrate | 659 |
+| Entries at the head | 659 |
+| Added | 0 |
+| Deleted | 0 |
+| **Differing** by mode, type or blob object id | **8** |
+| **Identical** by mode, type and blob object id | **651** |
+
+All eight differing paths are modifications (`M`), so no entry was added or
+removed and the totals are equal on both sides: 659 − 8 = **651**. The eight are
+`docs/PHASE-50A-PROVIDER-NEUTRAL-POSTGRESQL-CANONICAL-STORE-IMPLEMENTATION-AND-PROOF.md`,
+`scripts/phase-50a/fixed-proof-executor.mjs`,
+`scripts/phase-50a/fixed-proof-executor.d.mts`,
+`tests/phase-31f-operator-recall-wedge-demo.test.ts`,
+`tests/phase-50a/fixed-proof-executor.test.ts`,
+`tests/phase-50a/fixtures/process-tree-timeout-fixture.mjs`,
+`tests/phase-50a/process-tree-containment.test.ts` and
+`tests/phase-50a/proof-executor-envelope.test.ts` — the packet's eight allowed
+paths, exactly as that closure claimed. Only the count of the untouched
+remainder was misstated; the scope claim itself was, and remains, correct.
+
+The error was a transcription slip, not a scope error: eight paths were
+enumerated and eight differ, but the complement was written as 652. It is
+corrected here by supersession because this document is authorized for a pure
+end-of-file append and nothing else.
+
+### The timer-cancellation proof is now observable, not asserted
+
+The sequence-77 audit's BLOCKER finding is accepted as stated: the previous
+proof at `tests/phase-31f-operator-recall-wedge-demo.test.ts:420` was **vacuous**.
+That is not merely conceded — it was **reproduced** before being repaired.
+Deleting the sole timer-clear loop from `runBounded`'s `finally` block on the
+untouched substrate left all **9** tests passing, so no failure mechanism
+existed.
+
+`runBounded`'s timer machinery and containment semantics are **unchanged** — the
+remit was to prove the audited behavior, not to alter it. The proof replaces one
+tautological test with six observing ones, and the file now carries **14** tests.
+
+**The seam.** For the duration of one call, `process.kill` and `setTimeout` are
+wrapped, recording every signal issued (pid, signal, timestamp) and every timer
+created (delay, whether and when it fired). Timer records are stamped *before*
+the callback body runs, so a callback that throws is still recorded as having
+fired, and no error is swallowed: the callback's own exception propagates exactly
+as it would without the seam. The seam is removed in `finally`, so a failing
+expectation cannot leave `process.kill` wrapped for another test. Absence
+questions are asked through the *unwrapped* `process.kill`, so the question never
+appears on the record it is used to interpret.
+
+**The boundary is an index, not a clock.** `finally` runs before the promise
+settles, so `runBounded`'s own closing group `SIGKILL` is already on the seam
+when the awaiting continuation resumes — both land in the same millisecond, and a
+timestamp comparison cannot separate them. Sampling the seam's **length** the
+instant the await returns partitions the record exactly: everything before the
+mark is in-band, and any later entry escaped the call. This is what makes the
+absence assertions decidable rather than approximate.
+
+**Every wait outlasts every deadline the path could arm**, computed from the
+`timeoutMs`/`graceMs` the test itself passed:
+
+| Test (all in `tests/phase-31f-operator-recall-wedge-demo.test.ts`) | `timeoutMs` | `graceMs` | Post-return wait | Why it strictly exceeds |
+|---|---|---|---|---|
+| `SUCCESS PATH: after runBounded resolves, no timer fires and no signal is issued` | 1200 | 200 | 1800 ms | Outer timer was armed ≤1200 ms before the mark; +200 ms covers the escalation a leaked outer timer would itself arm; +400 ms slack |
+| `NON-ZERO EXIT PATH: after runBounded rejects on exit 3, no timer fires and no signal is issued` | 1200 | 200 | 1800 ms | Same bound; the child exits 3 after ~50 ms, so the outer timer is still pending at return |
+| `SIGNAL-DEATH PATH: after runBounded rejects on a signal-killed child, no timer fires and no signal is issued` | 1200 | 200 | 1800 ms | Same bound; the child `SIGKILL`s itself after ~50 ms |
+| `TIMEOUT PATH: after the lapse rejection, the nested escalation timer never fires and no late SIGKILL is issued` | 600 | 900 | 1900 ms | The outer timer fired at 600 ms and armed the escalation 900 ms later; the mark follows the outer firing, so 600+900+400 outlasts **both** |
+| `SPAWN-ERROR PATH: after a spawn failure rejects, the outer timer never fires and no signal is issued` | 1200 | 200 | 1800 ms | Rejects in ~2 ms with the outer timer's full 1200 ms still ahead of it |
+| `POSITIVE CONTROL: the seam RECORDS the in-band SIGTERM and SIGKILL escalation runBounded legitimately issues` | 600 | 150 | 1150 ms | Outlasts the outer deadline and the in-band escalation it drives |
+
+In every one of the five exit-path cases the recorded post-return set is
+**empty**: zero delivering signals, zero `SIGTERM`, zero `SIGKILL`, and zero
+timer callbacks after the mark.
+
+**The timeout case tests what it claims.** The child **obeys** `SIGTERM`, so it
+dies inside the grace window and `runBounded` returns while the nested escalation
+timer is **still pending** — precisely the timer whose cancellation is in
+question. (A `SIGTERM`-ignoring child would let that timer fire in band, proving
+nothing about cancellation.) The test asserts that premise rather than assuming
+it: the 900 ms escalation timer must be present and must be unfired at the mark,
+or the case fails as untested.
+
+**Group absence is established by the code under test, questioned before any
+cleanup.** Each case recovers the process-group ids from the seam's own negative-
+pid sends — not from a pid the test guessed — and asserts, at the mark, that none
+is still present. No test kills a pid and then asserts its absence; nothing waits
+on `afterEach`, the runner's cleanup, or the OS to reap a tree. The spawn-error
+case creates no group at all, and the seam is required to show exactly that for
+the whole window.
+
+**The positive control proves the seam is live.** A `SIGTERM`-ignoring child
+forces the in-band escalation, and the seam must have recorded a group `SIGTERM`,
+a group `SIGKILL`, and at least two timer callbacks firing in band. Without it, a
+seam that observed nothing would satisfy every absence assertion vacuously. Each
+exit-path case additionally requires that the seam recorded at least one timer,
+for the same reason.
+
+### Negative control — the mutation was run, and it fails
+
+**Mutation 1 (mandatory).** The timer-clear loop was deleted from `runBounded`'s
+`finally` block — the two lines at 214–215 of the substrate:
+
+```
+-    for (const t of timers) clearTimeout(t);
+-    timers.clear();
+```
+
+`npx vitest run tests/phase-31f-operator-recall-wedge-demo.test.ts` then reports
+**5 failed | 9 passed (14)**. All five exit-path tests fail, each for the intended
+delayed-signal or delayed-callback reason:
+
+| Failing test | Observed failure |
+|---|---|
+| `SUCCESS PATH` | `success: 2 signal(s) issued AFTER runBounded returned: SIGTERM->-233244, SIGKILL->-233244` |
+| `NON-ZERO EXIT PATH` | `nonzero-exit: 2 signal(s) issued AFTER runBounded returned: SIGTERM->-233265, SIGKILL->-233265` |
+| `SIGNAL-DEATH PATH` | `signal-death: 2 signal(s) issued AFTER runBounded returned: SIGTERM->-233272, SIGKILL->-233272` |
+| `TIMEOUT PATH` | `timeout: 1 signal(s) issued AFTER runBounded returned: SIGKILL->-233279` |
+| `SPAWN-ERROR PATH` | `spawn-error: 1 timer callback(s) ran AFTER runBounded returned (delays: 1200ms)` |
+
+The failures are the leak itself, observed: the uncancelled outer timer fires
+after return and signals a group whose id may since have been recycled, and on
+the timeout path the uncancelled escalation timer delivers a late `SIGKILL`.
+
+**Mutation 2 (assertion provenance).** With the timer-clear loop **still**
+deleted, the post-return absence assertions were replaced by the substrate's
+tautology `expect(true).toBe(true)`. The suite returns to **14 passed** — the
+deleted loop goes undetected again. This establishes that the new assertions,
+not the surrounding structure, carry the proof.
+
+**Positive control.** The unmutated file passes: **14 passed (14)**. Both
+mutations were reverted; the committed file is byte-identical to the intended
+one (`sha256:6d4a9906ed9a7cdda601b76f6286375493d3424b09d4dcb71c05e13728da132f`),
+and no mutation artifact is committed. A mechanical scan of the file's
+**executable** text (block and line comments blanked) finds **zero** occurrences
+of `expect(true).toBe(true)`; the one textual occurrence that remains is inside
+the comment recording what the audit found.
+
+### Preserved, and re-proven
+
+`runBounded`'s timer machinery and containment semantics are untouched. The
+pre-existing natural-exit/live-descendant test and the non-zero-exit containment
+test are preserved verbatim, including the anchored `/exited 3: (\d+)/` pid
+extraction that must not regress to an unanchored match — the hosted-runner trap
+where an unanchored `\d+` matched the `22` inside `/opt/hostedtoolcache/node/22.x/`.
+
+The containment implementation, its tests and fixtures, the wrapper workflow, the
+package manifest and lockfile, the proof-input manifest, the PostgreSQL
+production code and migrations, the public exports, the control-plane files and
+every sibling repository are **unmodified** — preserved byte-identical by blob
+object id and re-proven, not changed.
+
+### What this closure does NOT claim
+
+No provider, production, living-estate, sibling-repository or external-API
+authority. No Phase 50B progression, no gate closure, no MVP-2 completion, and
+no acceptance or readiness claim. Merge remains **operator-only**
+(`operator:eileen`, ADR-049 §6). The audit of this slice is Codex's; the
+implementer does not audit its own work.
+
+**Implementation provenance.** Exactly **one** Claude agent at high effort did
+this work, under lease `lease-phase-50a-implementer-timer-proof-023` (lane #122
+sequence 80). **No** Ultracode, **no** `/batch`, **no** teams, **no** subagents,
+and **no** delegation of any kind.
