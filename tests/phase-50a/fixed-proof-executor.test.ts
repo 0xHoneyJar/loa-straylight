@@ -133,6 +133,19 @@ interface StubOptions {
   head?: string;
   /** Make the probe itself fail. */
   probeStatus?: number;
+  /**
+   * Override the identity probe's CONTAINMENT facts while leaving its status
+   * and stdout perfectly valid. This is how the gate is tested against a probe
+   * that read the right SHA out of a process whose tree cannot be proven gone.
+   */
+  probeContainment?: Partial<{
+    group_signalled: boolean;
+    escalated: boolean;
+    direct_child_reaped: boolean;
+    group_verified_absent: boolean;
+    termination_error: string | null;
+    timed_out: boolean;
+  }>;
   /** 1-based schedule ordinal to fail, and how. */
   failAt?: number;
   failMode?: 'status' | 'signal' | 'timeout' | 'spawn' | 'termination' | 'containment';
@@ -186,6 +199,9 @@ function makeStub(expectedSha: string, opts: StubOptions = {}) {
         timed_out: false,
         error: null,
         ...CONTAINED,
+        // Containment overrides come LAST so a test can leave the probe's
+        // status and stdout entirely valid while making its tree unprovable.
+        ...(opts.probeContainment ?? {}),
       };
     }
     scheduleCount += 1;
@@ -1179,6 +1195,66 @@ describe('Phase 50A R3 — a failed identity gate launches ZERO schedule command
     expect(result.ok).toBe(false);
     expect(result.refusal).toBe(REFUSAL.headUnreadable);
     expect(stub.scheduleLaunches).toHaveLength(0);
+  });
+
+  // ── THE IDENTITY PROBE'S OWN CONTAINMENT IS LOAD-BEARING ────────────
+  //
+  // The sequence-63 audit REJECTED the previous slice because this gate read
+  // `probe.error`, `probe.status` and `probe.stdout` and NOTHING else. A probe
+  // that reported the exact expected SHA from a process whose group could not
+  // be proven gone passed the gate and launched all twelve schedule entries —
+  // so uncontained identity work authorized successors. Each case below leaves
+  // the SHA perfectly valid and breaks only one containment fact.
+  it('UNVERIFIED IDENTITY CONTAINMENT: each single broken fact refuses with ZERO launches', async () => {
+    const head = repoHead();
+    const cases: Array<[string, StubOptions['probeContainment']]> = [
+      ['absence not proven', { group_verified_absent: false }],
+      ['reaping not observed', { direct_child_reaped: false }],
+      ['termination error', { termination_error: 'EPERM' }],
+      // Absence unproven AND the bound lapsed: still the containment refusal,
+      // because an unprovable tree outranks the reason we stopped waiting.
+      ['unprovable after a lapse', { group_verified_absent: false, timed_out: true }],
+    ];
+    for (const [why, probeContainment] of cases) {
+      const stub = makeStub(head, { probeContainment });
+      const result = await runFixedProof({
+        run: stub.run,
+        env: gateEnv(head),
+        repoRoot: ROOT,
+        selfPath: EXECUTOR_ABS,
+      });
+      expect(result.ok, `must refuse: ${why}`).toBe(false);
+      expect(result.refusal, `refusal code for: ${why}`).toBe(
+        REFUSAL.identityContainmentUnverified,
+      );
+      // THE CLAIM THAT MATTERS: not one successor ran.
+      expect(stub.scheduleLaunches, `zero schedule launches for: ${why}`).toHaveLength(0);
+      expect(result.launches, `zero counted launches for: ${why}`).toBe(0);
+      // The gate refused on containment, so it never reached the identity
+      // comparison — a valid SHA must not be laundered into an authorization.
+      expect(result.receipts ?? [], `no receipts for: ${why}`).toHaveLength(0);
+    }
+  });
+
+  it('VERIFIED IDENTITY CONTAINMENT: a fully contained probe authorizes the whole schedule', async () => {
+    // The positive control. Every containment fact holds and the canonical
+    // classification reports no containment failure, so all twelve entries run.
+    // Without this, the refusal tests above could pass on a gate that refuses
+    // unconditionally.
+    const head = repoHead();
+    const stub = makeStub(head);
+    const result = await runFixedProof({
+      run: stub.run,
+      env: gateEnv(head),
+      repoRoot: ROOT,
+      selfPath: EXECUTOR_ABS,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.refusal ?? null).toBeNull();
+    expect(stub.scheduleLaunches).toHaveLength(SCHEDULE.length);
+    expect(SCHEDULE.length).toBe(12);
+    // The probe is an identity probe, never a schedule command.
+    expect(stub.scheduleLaunches.map((l) => l.label)).not.toContain(IDENTITY_PROBE.label);
   });
 
   it('NO FALLBACK: no refusal path exits zero or runs a shortened schedule', async () => {

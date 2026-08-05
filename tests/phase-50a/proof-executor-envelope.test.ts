@@ -166,6 +166,56 @@ describe('Phase 50A R3 envelope — the executor contains no interpreter', () =>
     expect(src).toContain('commandContainmentUnverified');
   });
 
+  it('TERMINATION IS OWED TO SURVIVAL, never to the reason the wait ended', () => {
+    // THE sequence-63 REGRESSION GUARD. The rejected design gated all
+    // termination behind `if (timedOut)`, so a direct child that exited
+    // normally while a descendant lived was probed, reported
+    // group_verified_absent=false, and its group LEFT RUNNING. The condition
+    // that decides whether to signal must therefore test the group's
+    // SURVIVAL — never the timeout flag.
+    const src = executorSource();
+
+    // The signalling branch is keyed on absence not being proven.
+    expect(src, 'signalling is keyed on unproven absence').toContain('if (!groupVerifiedAbsent) {');
+
+    // And `timedOut` must NOT be what gates it. This is the exact text of the
+    // rejected design; its absence is the property under test.
+    expect(src, 'the rejected timeout-gated termination is gone').not.toContain('if (timedOut) {');
+
+    // Absence is established by probing the group, then re-verified after the
+    // signals, so the fact reported is always the post-termination one.
+    expect(src).toContain('groupVerifiedAbsent = reaped && !alive(pgid);');
+    expect(src).toContain('groupVerifiedAbsent = !alive(pgid);');
+  });
+
+  it('the IDENTITY GATE consults the canonical classifier and the containment facts', () => {
+    // The second sequence-63 blocker: the gate authorized the schedule from
+    // error/status/stdout alone, so a valid SHA read out of an uncontained
+    // process launched all twelve entries. The gate must now rest on
+    // `classify` and on the three observed facts.
+    const src = executorSource();
+    expect(src, 'the gate classifies the probe').toContain('const probeVerdict = classify(probe);');
+    for (const fact of [
+      'probe.termination_error !== null',
+      'probe.direct_child_reaped !== true',
+      'probe.group_verified_absent !== true',
+      'probeVerdict.containmentFailed === true',
+      'probeVerdict.terminationFailed === true',
+    ]) {
+      expect(src, `the gate requires: ${fact}`).toContain(fact);
+    }
+    // Its own refusal code, distinct from an unreadable or mismatched head.
+    expect(src).toContain('identityContainmentUnverified');
+    expect(src).toContain('"identity-containment-unverified"');
+    // ORDERING: containment is judged BEFORE the SHA is compared, so an
+    // uncontained probe can never reach the identity comparison.
+    const gateIdx = src.indexOf('const probeVerdict = classify(probe);');
+    const shaIdx = src.indexOf('if (observed !== expectedRaw) {');
+    expect(gateIdx).toBeGreaterThan(0);
+    expect(shaIdx).toBeGreaterThan(0);
+    expect(gateIdx, 'containment is checked before identity is accepted').toBeLessThan(shaIdx);
+  });
+
   it('reads the wrapper as RAW BYTES and only hashes them', () => {
     const src = executorSource();
     // readFileSync WITHOUT an encoding → a Buffer. The digest is taken over

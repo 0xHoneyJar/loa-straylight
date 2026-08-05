@@ -101,6 +101,12 @@ export declare const REFUSAL: {
   readonly npmTokenIngressMissing: string;
   readonly headUnreadable: string;
   readonly headMismatch: string;
+  /**
+   * The identity probe ran, but its OWN process group could not be proven
+   * absent. Uncontained identity work authorizes nothing: zero schedule
+   * entries launch on this path.
+   */
+  readonly identityContainmentUnverified: string;
   readonly commandFailed: string;
   readonly commandSignalled: string;
   readonly commandTimedOut: string;
@@ -166,7 +172,15 @@ export interface RunOutcome {
   timed_out?: boolean;
   /** Launch-failure code (ENOENT, EACCES, ...), or null. Never a lapse. */
   error?: string | null;
-  /** True when the whole group was signalled after a lapse. */
+  /**
+   * True when the whole group was signalled.
+   *
+   * Signalling is owed to the group's SURVIVAL, never to the reason this module
+   * stopped waiting: a direct child that exits normally (status 0, no lapse)
+   * while a descendant is still running gets the same whole-group termination
+   * as a lapsed bound. False means the tree was already proven gone and nothing
+   * needed signalling.
+   */
   group_signalled?: boolean;
   /** True when the uncatchable escalation was needed after the grace period. */
   escalated?: boolean;

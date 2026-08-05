@@ -43,8 +43,19 @@ import { spawn } from "node:child_process";
 import { appendFileSync, readFileSync } from "node:fs";
 
 const RECORD = process.env.PHASE_50A_FIXTURE_RECORD;
-const MODE = process.env.PHASE_50A_FIXTURE_MODE === "trap" ? "trap" : "hang";
+const MODES = new Set(["hang", "trap", "orphan"]);
+const REQUESTED_MODE = process.env.PHASE_50A_FIXTURE_MODE;
+const MODE = MODES.has(REQUESTED_MODE) ? REQUESTED_MODE : "hang";
 const GENERATION = process.env.PHASE_50A_FIXTURE_GENERATION ?? "root";
+
+/**
+ * How long the ROOT waits before exiting cleanly in "orphan" mode.
+ *
+ * Long enough that its descendants have certainly started and recorded
+ * themselves, short enough that the direct child's own exit is what ends the
+ * executor's wait — no bound has to lapse for this case to arise.
+ */
+const ORPHAN_ROOT_EXIT_MS = 250;
 
 // A bound far beyond any test's own timeout: the fixture must be killed by the
 // executor under test, never allowed to exit on its own and mask a failure to
@@ -122,9 +133,24 @@ if (next) {
   child.on("error", () => {});
 }
 
-// Sleep, holding the process alive. `unref` is deliberately NOT called: the
-// timer must keep the event loop alive so the process is genuinely present for
-// the executor to find, signal, and prove gone.
-setTimeout(() => {
-  process.exit(0);
-}, SLEEP_MS);
+// "orphan" MODE — THE NATURAL-EXIT / LIVE-DESCENDANT CASE.
+//
+// The ROOT (the executor's direct child) exits CLEANLY with status 0 shortly
+// after its descendants are up, while those descendants keep running far past
+// any bound. No timeout is involved: the executor stops waiting because its
+// direct child genuinely finished. A design that treats "the direct child
+// exited" as "the tree is gone" leaves the child and grandchild running here,
+// which is exactly the defect this mode exists to exhibit. Only the root
+// returns early; later generations fall through to the long sleep below.
+if (MODE === "orphan" && GENERATION === "root") {
+  setTimeout(() => {
+    process.exit(0);
+  }, ORPHAN_ROOT_EXIT_MS);
+} else {
+  // Sleep, holding the process alive. `unref` is deliberately NOT called: the
+  // timer must keep the event loop alive so the process is genuinely present for
+  // the executor to find, signal, and prove gone.
+  setTimeout(() => {
+    process.exit(0);
+  }, SLEEP_MS);
+}

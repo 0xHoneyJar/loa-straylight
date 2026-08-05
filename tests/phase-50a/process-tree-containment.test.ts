@@ -147,8 +147,15 @@ async function waitForGenerations(count: number, budgetMs = 5_000): Promise<Gene
   }
 }
 
+/**
+ * The fixture's modes. `orphan` is the natural-exit case: the ROOT exits
+ * cleanly with status 0 while its descendants keep running, so no bound has to
+ * lapse for a live descendant to be left behind.
+ */
+type FixtureMode = 'hang' | 'trap' | 'orphan';
+
 /** A fixture entry for the production runner: fixed executable, fixed argv. */
-function fixtureEntry(label: string, mode: 'hang' | 'trap', timeoutMs = BOUND_MS) {
+function fixtureEntry(label: string, mode: FixtureMode, timeoutMs = BOUND_MS) {
   return {
     label,
     file: process.execPath,
@@ -163,7 +170,7 @@ function fixtureEntry(label: string, mode: 'hang' | 'trap', timeoutMs = BOUND_MS
  * because `childEnv` intentionally forwards only what the source environment
  * holds — so the fixture's own variables are placed in that source environment.
  */
-function fixtureBaseEnv(mode: 'hang' | 'trap'): Record<string, string | undefined> {
+function fixtureBaseEnv(mode: FixtureMode): Record<string, string | undefined> {
   return {
     PATH: process.env.PATH,
     PHASE_50A_FIXTURE_RECORD: record,
@@ -290,6 +297,80 @@ describe('Phase 50A containment — a real child+grandchild tree is verifiably g
       expect(refusalFor(verdict)).toBeNull();
     },
     30_000,
+  );
+
+  // ── THE NATURAL-EXIT / LIVE-DESCENDANT CASE ─────────────────────────
+  //
+  // The sequence-63 audit REJECTED the previous slice over exactly this gap.
+  // The old `realRun` gated ALL termination behind `if (timedOut)`, so when the
+  // direct child exited FIRST — normally, status 0, no lapse — a surviving
+  // descendant was only probed, reported as `group_verified_absent: false`, and
+  // LEFT RUNNING. The suite could not catch it: one case covered a wholly live
+  // timeout tree, the other a single-process quick exit, and neither is a
+  // parent that finishes while its child keeps going.
+  //
+  // Verified against the substrate executor at 032cec5d before this test was
+  // written: it reported `group_signalled: false` and left the child and
+  // grandchild ALIVE. This test fails against that code and passes only once
+  // termination is owed to the SURVIVAL of the group rather than to the reason
+  // the executor stopped waiting.
+  it(
+    'a direct child that exits NORMALLY while a descendant lives still leaves ZERO survivors',
+    async () => {
+      // 30s bound the fixture never approaches: the root exits on its own in
+      // ~250ms, so nothing here is a timeout. If this test ever reports
+      // timed_out, the fixture — not the executor — is what changed.
+      const entry = fixtureEntry('real-tree-orphan', 'orphan', 30_000);
+      const runPromise = realRun(entry, {
+        token: FAKE_INGRESS,
+        baseEnv: fixtureBaseEnv('orphan'),
+        graceMs: TEST_GRACE_MS,
+        verifyMs: TEST_VERIFY_MS,
+        probeMs: TEST_PROBE_MS,
+      });
+
+      // Three REAL generations, sharing one group, must exist — otherwise this
+      // test would prove nothing about descendants.
+      const gens = await waitForGenerations(3);
+      expect(gens.map((g) => g.generation)).toEqual(['root', 'child', 'grandchild']);
+      const [root, child, grandchild] = gens as [Generation, Generation, Generation];
+      expect(child.pid).not.toBe(root.pid);
+      expect(grandchild.pid).not.toBe(child.pid);
+      expect(child.pgid).toBe(root.pgid);
+      expect(grandchild.pgid).toBe(root.pgid);
+
+      const outcome = await runPromise;
+
+      // THE PRECONDITION THAT MAKES THIS TEST THE ONE THAT MATTERS: the direct
+      // child ended by ITSELF, cleanly. No bound lapsed.
+      expect(outcome.status, 'the direct child exited normally').toBe(0);
+      expect(outcome.timed_out, 'no bound lapsed — this is not the timeout path').toBe(false);
+      expect(outcome.direct_child_reaped).toBe(true);
+
+      // A descendant survived that exit, so the WHOLE GROUP was owed a signal.
+      expect(outcome.group_signalled, 'the surviving group was signalled').toBe(true);
+
+      // Absence is PROVEN, and proven before the outcome was produced.
+      expect(outcome.group_verified_absent).toBe(true);
+      expect(outcome.termination_error).toBeNull();
+
+      // THE OPERATING SYSTEM IS THE WITNESS, not the executor's own report, and
+      // it is questioned at the moment the outcome exists — before any receipt
+      // is written. `afterEach` never runs first, so no cleanup can launder a
+      // leak into a pass here.
+      for (const gen of gens) {
+        expect(pidAlive(gen.pid), `${gen.generation} (pid ${gen.pid}) survived`).toBe(false);
+      }
+      expect(groupAlive(root.pgid), 'the process group survived').toBe(false);
+
+      // A clean, fully contained natural exit: no refusal is owed.
+      const verdict = classify(outcome);
+      expect(verdict.containmentFailed).toBe(false);
+      expect(verdict.terminationFailed).toBe(false);
+      expect(verdict.timedOut).toBe(false);
+      expect(refusalFor(verdict)).toBeNull();
+    },
+    60_000,
   );
 });
 

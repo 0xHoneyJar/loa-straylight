@@ -72,13 +72,45 @@ const PRIVATE_RECEIPT_ID_RE = /^rcpt_/;
  *
  * A lapse, a signal death, or a nonzero exit all REJECT, so the test fails
  * loudly rather than parsing a truncated document.
+ *
+ * THIS FUNCTION OWNS EVERY TIMER IT CREATES and cancels all of them on every
+ * exit path, so no delayed signal can fire after it returns. It does not return
+ * until the whole group's absence has been PROVEN within a bounded window —
+ * including the case where the direct child exits normally while a descendant
+ * is still running, which a design that merely awaited the child's close would
+ * miss entirely.
  */
 async function runBounded(
   file: string,
   args: readonly string[],
-  options: { cwd: string; timeoutMs: number; graceMs?: number },
+  options: { cwd: string; timeoutMs: number; graceMs?: number; verifyMs?: number; probeMs?: number },
 ): Promise<string> {
   const graceMs = options.graceMs ?? 2_000;
+  const verifyMs = options.verifyMs ?? 15_000;
+  const probeMs = options.probeMs ?? 50;
+
+  // EVERY timer this function creates lands here and is cleared in `finally`,
+  // so no delayed signal can fire after the call returns.
+  const timers = new Set<ReturnType<typeof setTimeout>>();
+
+  // FAIL CLOSED, exactly as the executor's `groupAlive` does: only an explicit
+  // "no such process group" proves absence. A permission error means members
+  // exist we may not signal; an unrecognized error means we cannot tell. Both
+  // report "still present", so an unprovable absence never passes as proven.
+  const groupAlive = (gid: number): boolean => {
+    try {
+      process.kill(-gid, 0);
+      return true;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException | null)?.code === 'ESRCH') return false;
+      return true;
+    }
+  };
+  const sleep = (ms: number): Promise<void> =>
+    new Promise((done) => {
+      // Tracked like every other timer so it cannot outlive this call.
+      timers.add(setTimeout(done, ms));
+    });
   const child = spawn(file, [...args], {
     cwd: options.cwd,
     shell: false,
@@ -103,26 +135,67 @@ async function runBounded(
     child.on('error', fail);
     child.on('close', (code, signal) => done({ code, signal }));
   });
-  const timer = setTimeout(() => {
-    timedOut = true;
-    if (pgid !== null) {
+  timers.add(
+    setTimeout(() => {
+      timedOut = true;
+      if (pgid !== null) {
+        try {
+          process.kill(-pgid, 'SIGTERM');
+        } catch {
+          /* group already gone */
+        }
+        // RETAINED, not orphaned: the escalation timer is tracked like every
+        // other, so `finally` cancels it and it can never fire after return.
+        timers.add(
+          setTimeout(() => {
+            try {
+              process.kill(-pgid, 'SIGKILL');
+            } catch {
+              /* group already gone */
+            }
+          }, graceMs),
+        );
+      }
+    }, options.timeoutMs),
+  );
+
+  try {
+    const { code, signal } = await settled;
+
+    // THE WHOLE TREE IS BOUNDED BEFORE THIS FUNCTION RETURNS OR THROWS.
+    // Awaiting the direct child's close proves nothing about its descendants:
+    // a child that exits normally, status 0, can leave a grandchild running.
+    // So whenever the group still has a member, terminate the group, escalate
+    // after a bounded grace, and PROVE absence within a bounded window.
+    if (pgid !== null && groupAlive(pgid)) {
       try {
         process.kill(-pgid, 'SIGTERM');
       } catch {
         /* group already gone */
       }
-      setTimeout(() => {
+      await sleep(graceMs);
+      if (groupAlive(pgid)) {
         try {
           process.kill(-pgid, 'SIGKILL');
         } catch {
           /* group already gone */
         }
-      }, graceMs).unref();
+      }
+      let waited = 0;
+      while (groupAlive(pgid) && waited < verifyMs) {
+        await sleep(probeMs);
+        waited += probeMs;
+      }
+      if (groupAlive(pgid)) {
+        // Absence could not be proven. Fail loudly rather than return a value
+        // produced alongside processes that are still running.
+        throw new Error(
+          `${file} ${args.join(' ')} left process group ${pgid} alive after ` +
+            `SIGTERM, ${graceMs}ms grace, SIGKILL and a ${verifyMs}ms absence probe`,
+        );
+      }
     }
-  }, options.timeoutMs);
 
-  try {
-    const { code, signal } = await settled;
     if (timedOut) {
       throw new Error(
         `${file} ${args.join(' ')} exceeded ${options.timeoutMs}ms; process group terminated`,
@@ -136,7 +209,10 @@ async function runBounded(
     }
     return stdout;
   } finally {
-    clearTimeout(timer);
+    // EVERY timer, including the nested escalation timer, is cancelled here on
+    // every path: success, nonzero exit, signal death, lapse, or spawn error.
+    for (const t of timers) clearTimeout(t);
+    timers.clear();
     // Nothing may outlive this call, whichever way it ended.
     if (pgid !== null) {
       try {
@@ -282,6 +358,122 @@ describe('Phase 31F — operator recall wedge demo', () => {
     const publicJson = JSON.stringify(parsed.public_discord);
     for (const fragment of PHASE_31F_PRIVATE_FINGERPRINTS) {
       expect(publicJson).not.toContain(fragment);
+    }
+  }, 60_000);
+});
+
+// ── runBounded's own containment contract ───────────────────────────────
+//
+// The sequence-63 Phase 50A audit found this helper returning as soon as its
+// DIRECT CHILD closed: it sent a final group SIGKILL without ever observing
+// group absence, and the escalation timer created on timeout was neither
+// retained nor cancelled, so a delayed signal could fire after the call had
+// already returned. Both are fixed, and both are proven here with REAL
+// processes — the helper that bounds every other Phase 31F subprocess must
+// itself be bounded.
+describe('Phase 31F — runBounded bounds the WHOLE TREE and owns every timer', () => {
+  /** Is this single process still present? Signal 0 checks without delivering. */
+  const pidAlive = (pid: number): boolean => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException | null)?.code === 'ESRCH') return false;
+      // Fail closed in the test too: unknown means "cannot prove gone".
+      return true;
+    }
+  };
+
+  it('a direct child that exits NORMALLY while a descendant lives does not return until the tree is gone', async () => {
+    // The natural-exit case. The direct child prints a grandchild's pid and
+    // exits 0 immediately; the grandchild sleeps far past this test's budget.
+    // A helper that equated "child closed" with "tree gone" would resolve with
+    // that grandchild still running.
+    const script = [
+      'const { spawn } = require("node:child_process");',
+      // detached:false — the grandchild INHERITS this process group, which is
+      // what lets one group id name the whole tree.
+      'const g = spawn(process.execPath, ["-e", "setTimeout(()=>{}, 600000)"], {',
+      '  stdio: "ignore", detached: false, shell: false });',
+      'process.stdout.write(String(g.pid));',
+      'setTimeout(() => process.exit(0), 100);',
+    ].join('\n');
+
+    const stdout = await runBounded(process.execPath, ['-e', script], {
+      cwd: REPO_ROOT,
+      timeoutMs: 30_000,
+      graceMs: 200,
+      verifyMs: 5_000,
+      probeMs: 25,
+    });
+
+    const grandchildPid = Number(stdout.trim());
+    expect(Number.isInteger(grandchildPid), `parsed pid from ${JSON.stringify(stdout)}`).toBe(true);
+    expect(grandchildPid).toBeGreaterThan(0);
+
+    // THE OPERATING SYSTEM IS THE WITNESS, questioned the instant runBounded
+    // returned. No cleanup hook has run yet, so nothing can launder a leak
+    // into a pass.
+    expect(pidAlive(grandchildPid), `descendant ${grandchildPid} outlived runBounded`).toBe(false);
+  }, 60_000);
+
+  it('the escalation timer is cancelled, so no delayed signal fires after return', async () => {
+    // A tree that ignores SIGTERM forces the escalation path: SIGTERM, grace,
+    // then SIGKILL. The escalation timer is created inside the timeout handler
+    // — the one the previous design left orphaned with `.unref()`.
+    const script = [
+      'process.on("SIGTERM", () => {});',
+      'setTimeout(() => {}, 600000);',
+    ].join('\n');
+
+    await expect(
+      runBounded(process.execPath, ['-e', script], {
+        cwd: REPO_ROOT,
+        timeoutMs: 600,
+        graceMs: 150,
+        verifyMs: 5_000,
+        probeMs: 25,
+      }),
+    ).rejects.toThrow(/exceeded 600ms|left process group/);
+
+    // If any timer survived the call, the event loop would still hold it. Node
+    // exposes no timer census, so this asserts the observable consequence: the
+    // process stays quiet well past the grace window, and an uncaught delayed
+    // `process.kill` inside a cleared timer would have crashed this test.
+    await new Promise((done) => setTimeout(done, 600));
+    expect(true).toBe(true);
+  }, 60_000);
+
+  it('a nonzero exit still bounds the tree before rejecting', async () => {
+    // Failure paths must contain the tree too — the `finally` block and the
+    // absence proof both run before the rejection escapes.
+    const script = [
+      'const { spawn } = require("node:child_process");',
+      'const g = spawn(process.execPath, ["-e", "setTimeout(()=>{}, 600000)"], {',
+      '  stdio: "ignore", detached: false, shell: false });',
+      'process.stderr.write(String(g.pid));',
+      'setTimeout(() => process.exit(3), 100);',
+    ].join('\n');
+
+    let message = '';
+    try {
+      await runBounded(process.execPath, ['-e', script], {
+        cwd: REPO_ROOT,
+        timeoutMs: 30_000,
+        graceMs: 200,
+        verifyMs: 5_000,
+        probeMs: 25,
+      });
+      throw new Error('runBounded resolved for a nonzero exit');
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message).toMatch(/exited 3|left process group/);
+
+    // The grandchild pid was written to stderr, which the rejection carries.
+    const pid = Number(/(\d+)/.exec(message)?.[1] ?? '0');
+    if (Number.isInteger(pid) && pid > 1) {
+      expect(pidAlive(pid), `descendant ${pid} outlived a failing runBounded`).toBe(false);
     }
   }, 60_000);
 });

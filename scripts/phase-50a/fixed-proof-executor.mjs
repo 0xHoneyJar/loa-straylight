@@ -349,6 +349,9 @@ export const REFUSAL = Object.freeze({
   npmTokenIngressMissing: "npm-token-ingress-missing",
   headUnreadable: "observed-head-unreadable",
   headMismatch: "head-identity-mismatch",
+  // The identity probe ran, but its own process group could not be proven
+  // absent. Uncontained identity work authorizes nothing.
+  identityContainmentUnverified: "identity-containment-unverified",
   commandFailed: "command-failed",
   commandSignalled: "command-signalled",
   commandTimedOut: "command-timed-out",
@@ -563,19 +566,40 @@ export async function realRun(entry, {
   let terminationError = null;
   let groupVerifiedAbsent = false;
 
-  if (timedOut) {
-    if (pgid === null) {
-      // No group id means no addressable tree. Refuse rather than pretend the
-      // direct child was the whole of it.
-      terminationError = "no-process-group";
-    } else {
-      // 1. Signal the WHOLE GROUP, not the direct child.
+  // 1. OBSERVE the direct child's reaping FIRST, bounded by the verification
+  //    window. An unreaped child is an unproven tree, not merely a slow one,
+  //    and it is itself still a group member — so absence can never be
+  //    established before its exit is seen. This is required on EVERY path,
+  //    not only after a lapse: a timeout is one reason the child may not have
+  //    been reaped yet, never the only one.
+  if (!reaped) {
+    await Promise.race([settled, sleep(verifyMs)]);
+  }
+
+  if (pgid === null) {
+    // No group id means no addressable tree. Refuse rather than pretend the
+    // direct child was the whole of it. Absence stays unproven.
+    terminationError = "no-process-group";
+  } else {
+    // 2. VERIFY the group's absence, bounded, BEFORE deciding whether any
+    //    signal is owed. A well-behaved tree that has fully exited needs
+    //    nothing: `group_signalled` stays false and this costs one probe.
+    groupVerifiedAbsent = reaped && !alive(pgid);
+
+    // 3. THE CORRECTION. If ANY member survives — whether the bound lapsed or
+    //    the direct child exited entirely on its own, status 0 included — the
+    //    WHOLE GROUP is terminated here. A natural direct-child exit that
+    //    leaves a descendant behind is precisely the case the previous design
+    //    missed: it probed, reported group_verified_absent=false, and left the
+    //    descendant running. Termination is owed to the SURVIVAL of the group,
+    //    never to the reason this program stopped waiting.
+    if (!groupVerifiedAbsent) {
       const first = signal(pgid, "SIGTERM");
       if (!first.ok) {
         terminationError = first.code;
       } else {
         groupSignalled = true;
-        // 2. Fixed grace, then escalate with a signal that cannot be caught
+        // 4. Bounded grace, then escalate with a signal that cannot be caught
         //    or ignored, so a member that trapped the first one still dies.
         await sleep(graceMs);
         if (alive(pgid)) {
@@ -584,25 +608,27 @@ export async function realRun(entry, {
           if (!second.ok) terminationError = second.code;
         }
       }
-    }
-    // 3. OBSERVE the direct child's reaping, bounded by the verification
-    //    window: an unreaped child is an unproven tree, not merely a slow one.
-    if (!reaped) {
-      await Promise.race([settled, sleep(verifyMs)]);
-    }
-  }
 
-  // 4. VERIFY the group's absence, within a bounded window, before anything is
-  //    reported. Reaping first, then absence: an unreaped direct child is
-  //    itself still a group member, so probing before its exit is observed
-  //    could never succeed.
-  if (pgid !== null && reaped) {
-    let waited = 0;
-    while (alive(pgid) && waited < verifyMs) {
-      await sleep(probeMs);
-      waited += probeMs;
+      // 5. The child may only now have been reaped (it was signalled), so
+      //    observe its exit before probing again — same ordering rule as
+      //    step 1, re-applied after the signals.
+      if (!reaped) {
+        await Promise.race([settled, sleep(verifyMs)]);
+      }
+
+      // 6. RE-VERIFY absence within a bounded window. Only an explicit "no
+      //    such process group" proves it (see `groupAlive`), so an unprovable
+      //    absence leaves group_verified_absent false and `classify` turns
+      //    that into a containment refusal: UNCERTAINTY FAILS CLOSED.
+      if (reaped) {
+        let waited = 0;
+        while (alive(pgid) && waited < verifyMs) {
+          await sleep(probeMs);
+          waited += probeMs;
+        }
+        groupVerifiedAbsent = !alive(pgid);
+      }
     }
-    groupVerifiedAbsent = !alive(pgid);
   }
 
   return {
@@ -859,6 +885,39 @@ export async function runFixedProof({
   // recorded as an identity probe — never as a schedule command, and never
   // counted in `launches`.
   const probe = await run({ ...IDENTITY_PROBE, capture: true }, { token, baseEnv: env, ...control });
+
+  // ── GATE STEP 4a: the probe's OWN CONTAINMENT is load-bearing. ────────
+  // The identity probe is a real launch in a real process group, so it can
+  // leak a descendant exactly like any schedule entry. Its containment is
+  // therefore checked through the SAME canonical classifier every schedule
+  // entry uses — `classify` — and the three observed facts it rests on are
+  // required explicitly. A probe whose tree cannot be proven absent must
+  // never authorize successors: reading a correct SHA out of an uncontained
+  // process says nothing about whether that process left anything behind.
+  // ZERO schedule entries launch on this path.
+  const probeVerdict = classify(probe);
+  if (
+    probe.termination_error !== null ||
+    probe.direct_child_reaped !== true ||
+    probe.group_verified_absent !== true ||
+    probeVerdict.containmentFailed === true ||
+    probeVerdict.terminationFailed === true
+  ) {
+    return {
+      ...base,
+      ok: false,
+      refusal: REFUSAL.identityContainmentUnverified,
+      detail:
+        `the identity probe's process group was not proven absent, so it ` +
+        `cannot authorize any schedule entry ` +
+        `(termination_error=${probe.termination_error}, ` +
+        `direct_child_reaped=${probe.direct_child_reaped}, ` +
+        `group_verified_absent=${probe.group_verified_absent}, ` +
+        `containmentFailed=${probeVerdict.containmentFailed}, ` +
+        `terminationFailed=${probeVerdict.terminationFailed})`,
+    };
+  }
+
   const observed = typeof probe.stdout === "string" ? probe.stdout.trim() : "";
   if (probe.error || probe.status !== 0 || !EXACT_SHA_RE.test(observed)) {
     return {
