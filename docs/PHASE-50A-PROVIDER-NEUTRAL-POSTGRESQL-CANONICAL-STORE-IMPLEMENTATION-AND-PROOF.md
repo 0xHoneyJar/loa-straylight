@@ -2936,3 +2936,117 @@ this work, under lease `lease-phase-50a-implementer-process-tree-017` (lane #122
 sequence 61). **No** Ultracode, **no** `/batch`, **no** teams, **no** subagents,
 and **no** delegation of any kind. The audit of this slice is Codex's; the
 implementer does not audit its own work.
+
+---
+
+## Phase 50A — complete containment closure (patch cycle 3, replacement packet 5195176675)
+
+**PURE END-OF-FILE APPEND.** Everything above the `---` separator preceding
+this section is byte-identical to the substrate: the file's first 178,995
+bytes hash to `sha256:47a96a4e6f4c73965267ccdb5e943620ef877ce378a4e6c320e9e211d61820ee`,
+the substrate file's exact full hash. No prior line was reflowed, deleted or
+modified.
+
+**Authority.** Coordinator task packet comment **5195176675** (canonical digest
+`sha256:8b3df8868eaa9d4b9581ff758436ea713a1a24743e4f8ad6adf38353702501e3`),
+posted at lane #122 sequence 73 under operator decision **5194786982**
+(sequence 72), which disposed of the internally contradictory sequence-69
+packet 5193719803 after the implementer's fail-closed escalation at
+sequence 71. Implementer lease
+`lease-phase-50a-implementer-complete-containment-021` (sequence 74, comment
+5195313437). Branch `phase-50a-r3-complete-containment-closure`, cut from the
+exact rejected substrate `032cec5dfdbfa114239ace43d00891764b817bc9`. PR #129
+was not amended; it remains rejected substrate.
+
+**What the sequence-63 audit rejected, and what changed.**
+
+1. **Natural-exit leak (`realRun`).** At the substrate, every termination
+   action sat behind `if (timedOut)` — a direct child that exited first
+   (status 0, no lapse) left a live descendant probed, reported
+   `group_verified_absent: false`, and RUNNING. Now reaping is observed first
+   on every path, the group is probed, and any surviving group is terminated
+   (bounded SIGTERM grace, then SIGKILL), re-observed, and re-verified before
+   any receipt or refusal exists. Termination is owed to the group's SURVIVAL,
+   never to the reason the wait ended. Uncertainty fails closed, unchanged.
+2. **Identity gate.** At the substrate the gate authorized the 12-entry
+   schedule from `error`/`status`/`stdout` alone. It now computes the
+   canonical `classify()` verdict for the probe and requires
+   `termination_error === null`, `direct_child_reaped === true`,
+   `group_verified_absent === true`, `containmentFailed === false` and
+   `terminationFailed === false` BEFORE the identity comparison; failure
+   refuses with the new `identity-containment-unverified` code and launches
+   ZERO successors.
+3. **Phase 31F `runBounded`.** At the substrate it resolved on the direct
+   child's close, sent a last group SIGKILL without observing absence, and
+   orphaned its escalation timer via `.unref()`. It now tracks every timer it
+   creates in one set cleared on every exit path, and does not return until
+   group absence is PROVEN within a bounded window — including after a clean
+   child exit with a live descendant.
+4. **Tests.** The fixture gains an `orphan` mode (root exits cleanly in
+   ~250 ms; descendants outlive any bound). New real-process tests prove: zero
+   survivors before output on the natural-exit path (the OS is the witness,
+   probed before any cleanup hook); the identity gate refuses each singly
+   broken containment fact with zero schedule launches; a fully contained
+   probe still launches all 12 (positive control); and `runBounded` bounds the
+   tree and cancels every timer on success, failure and lapse paths. No test
+   kills recorded pids and then asserts absence; no test relies on runner
+   cleanup.
+
+**Adversarial verification against the substrate (disclosed method).** Before
+the tests were written, the substrate executor at `032cec5d…` was driven
+through the new `orphan` fixture: it reported `group_signalled: false` and
+left the child and grandchild ALIVE (leak reproduced), while the repaired
+executor reports `status: 0`, `timed_out: false`, `group_signalled: true`,
+`group_verified_absent: true` and zero surviving pids. Four mutations were
+then applied to the repaired tree, each failing at least one test:
+(a) re-gating termination behind `timedOut` → the natural-exit test fails on
+`group_signalled`; (b) dropping the `group_verified_absent` gate condition →
+the envelope seam test fails (the behavioral refusal survives via
+`classify()`, which subsumes that fact — disclosed, not hidden); (c) removing
+the whole identity-containment gate → the refusal tests fail behaviorally
+with launches observed; (d) removing `runBounded`'s tree bounding → the
+descendant-survival test fails on a live pid.
+
+**Local verification at head `a9f4181` (this closure).**
+
+| Check | Result |
+| --- | --- |
+| Repository suite | 89 files, 2269 passed / 149 skipped (PostgreSQL live-DB cases skip locally; CI provides the database) |
+| Control plane | 29 files, 1025 passed; `control-plane:validate` all checks passed |
+| Phase 50A | 15 files, 166 passed / 149 skipped locally |
+| Containment suite | 9/9, including the new natural-exit/live-descendant real-process test |
+| Executor suite | 57/57, including gate refusal (4 cases) + positive control |
+| Envelope suite | 25/25, including the two new seam claims |
+| Phase 31F | 9/9, including 3 new `runBounded` containment tests |
+| Typecheck / build | clean (`tsc --noEmit`; build + postbuild) |
+| Artifact | `verify-generated-artifact` PASS — C1..C9 hold |
+| Wrapper | `7287` bytes, `sha256:b95509fb82142d647e425d8c9a0ca10a7cf289d5fbfedc4573193a20c499fd7b` — byte-identical to substrate |
+
+**Failed attempts, disclosed.** (1) `npm run typecheck` failed once during
+development: the new `identityContainmentUnverified` refusal code was added to
+the executor but not to `fixed-proof-executor.d.mts`; the declaration was
+added and typecheck is clean. (2) Mutation (b) above initially survived the
+executor suite — the behavioral gate test alone could not distinguish the
+explicit fact check from `classify()`'s subsumption of it; the envelope seam
+test was added so the removal is caught. Both are disclosed rather than
+silently retried. (3) During fixture development one manual probe left a
+detached fixture tree running in the dev shell; it was killed by pgid and the
+final test design keeps every fixture tree inside the executor-owned group.
+
+**Scope (Evidence B, substrate → this head).** Exactly the packet's eight
+allowed paths differ (seven code files in commit `a9f4181`, plus this
+append-only document change); all other tree entries — 652 of 659 — are
+identical by mode, type and blob object id. Cumulative base→head evidence
+(Evidence A) accompanies the pull request body and is evidence, not
+authorization.
+
+**No authority.** This closure claims no acceptance, no readiness, no merge
+authority, no Phase 50B progression, no gate closure and no MVP-2 completion.
+An ACCEPT verdict, if one ever comes, parks the lane in eligibility-pending;
+merge remains operator-only (`operator:eileen`, ADR-049 §6).
+
+**Implementation provenance.** Exactly **one** Claude agent at high effort did
+this work, under lease `lease-phase-50a-implementer-complete-containment-021`
+(lane #122 sequence 74). **No** Ultracode, **no** `/batch`, **no** teams,
+**no** subagents, and **no** delegation of any kind. The audit of this slice
+is Codex's; the implementer does not audit its own work.
