@@ -59,6 +59,19 @@ const NPM_BIN = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const PRIVATE_RECEIPT_ID_RE = /^rcpt_/;
 
 /**
+ * The PRE-SEAM globals, captured at MODULE EVALUATION — before any seam in
+ * this file (or any suite in it) can have been installed.
+ *
+ * Deliberately independent of the seam's own `realKill` / `realSetTimeout`:
+ * the identity assertions compare against THESE, so a seam that saved and
+ * restored a bound copy would satisfy its own internal bookkeeping and still
+ * fail here. That independence is what makes the assertion non-vacuous — the
+ * sequence-83 audit's blocker was exactly a self-consistent wrong object.
+ */
+const PRISTINE_PROCESS_KILL: typeof process.kill = process.kill;
+const PRISTINE_SET_TIMEOUT: typeof globalThis.setTimeout = globalThis.setTimeout;
+
+/**
  * Run one command as a BOUNDED, process-tree-safe subprocess and resolve its
  * stdout.
  *
@@ -517,7 +530,18 @@ describe('Phase 31F — runBounded cancels every timer on all five exit paths', 
     readonly rejection: string | null;
   };
 
-  const realKill = process.kill.bind(process);
+  // THE EXACT ORIGINAL OBJECTS, captured before any seam is installed and
+  // restored by REFERENCE IDENTITY in `observe`'s finally.
+  //
+  // `process.kill.bind(process)` was the sequence-83 audit's blocker: `bind`
+  // returns a NEW function object, so restoring it left `process.kill`
+  // permanently replaced — functionally similar, but not the object Node
+  // installed, and every later test in this worker inherited the substitute.
+  // `Object.is` separates the two, and only reference identity is restoration.
+  //
+  // Node's `process.kill` reads no `this`, so the unbound reference calls
+  // exactly as the bound one did: only WHAT IS SAVED changes, not behaviour.
+  const realKill = process.kill;
   const realSetTimeout = globalThis.setTimeout;
 
   /** Sleep on the UNWRAPPED timer, so the harness never records its own waits. */
@@ -626,6 +650,27 @@ describe('Phase 31F — runBounded cancels every timer on all five exit paths', 
     }
   };
 
+  /**
+   * The seam left the globals EXACTLY as it found them — by reference.
+   *
+   * Compared against the module-level pre-seam capture, not against the seam's
+   * own saved value, so a seam that restored a bound copy of `process.kill`
+   * (the sequence-83 blocker) fails here even though it restored something
+   * that works. `typeof`, `.name` and `toString()` cannot tell the two apart;
+   * `Object.is` can, and nothing weaker counts as restoration.
+   */
+  const expectGlobalsRestored = (label: string): void => {
+    expect(
+      Object.is(process.kill, PRISTINE_PROCESS_KILL),
+      `${label}: process.kill is not REFERENCE-IDENTICAL to the pre-seam object ` +
+        '(a bound or wrapped replacement is not a restoration)',
+    ).toBe(true);
+    expect(
+      Object.is(globalThis.setTimeout, PRISTINE_SET_TIMEOUT),
+      `${label}: globalThis.setTimeout is not REFERENCE-IDENTICAL to the pre-seam object`,
+    ).toBe(true);
+  };
+
   /** Signals that DELIVER. A `0` probe asks a question and is not a signal. */
   const delivering = (records: readonly KillRecord[]): readonly KillRecord[] =>
     records.filter((k) => k.signal !== '0');
@@ -713,6 +758,8 @@ describe('Phase 31F — runBounded cancels every timer on all five exit paths', 
     expect(Number(String(o.resolved).trim())).toBeGreaterThan(0);
     expectGroupsGone(o, 'success');
     expectNothingEscaped(o, 'success');
+    // THE RESOLVED PATH restored the exact original globals, by reference.
+    expectGlobalsRestored('success');
   }, 60_000);
 
   it('NON-ZERO EXIT PATH: after runBounded rejects on exit 3, no timer fires and no signal is issued', async () => {
@@ -731,6 +778,9 @@ describe('Phase 31F — runBounded cancels every timer on all five exit paths', 
     );
     expectGroupsGone(o, 'nonzero-exit');
     expectNothingEscaped(o, 'nonzero-exit');
+    // THE REJECTED PATH — the one the sequence-83 audit found leaking a bound
+    // replacement — restored the exact original globals, by reference.
+    expectGlobalsRestored('nonzero-exit');
   }, 60_000);
 
   it('SIGNAL-DEATH PATH: after runBounded rejects on a signal-killed child, no timer fires and no signal is issued', async () => {
@@ -881,5 +931,64 @@ describe('Phase 31F — runBounded cancels every timer on all five exit paths', 
     // The escalation was in band, so the post-mark record must STILL be clean.
     expectGroupsGone(o, 'positive-control');
     expectNothingEscaped(o, 'positive-control');
+    expectGlobalsRestored('positive-control');
   }, 60_000);
+
+  it('THROWING PATH: an expectation that throws INSIDE the observed call still leaves the globals reference-identical', async () => {
+    // The third exit path out of `observe`: not a resolved call and not a
+    // rejected one, but a `call` whose body threw for a reason of the test's
+    // own — the case where a failing assertion could otherwise strand the seam
+    // installed for every later test in this worker.
+    //
+    // `observe` catches the throw into `o.rejection` exactly as it catches
+    // runBounded's own rejections, so the assertion here is about the FINALLY:
+    // whatever happened inside, the globals must be the pre-seam objects.
+    const marker = 'phase-31f-throwing-path-probe-9c1e';
+    const o = await observe(async () => {
+      // A real bounded call first, so the seam has genuinely observed
+      // something and the restoration is not trivially about an empty window.
+      await runBounded(process.execPath, ['-e', 'process.stdout.write("ok");'], {
+        cwd: REPO_ROOT,
+        timeoutMs: OUTER_MS,
+        graceMs: GRACE_MS,
+        verifyMs: 5_000,
+        probeMs: 25,
+      });
+      throw new Error(marker);
+    }, WAIT_NON_TIMEOUT_MS);
+
+    expect(o.rejection, 'the throwing path did not surface its own error').toBe(marker);
+    // The seam was live for the call that preceded the throw.
+    expect(o.timers.length, 'the seam recorded no timers on the throwing path').toBeGreaterThan(0);
+    expectGroupsGone(o, 'throwing');
+    expectNothingEscaped(o, 'throwing');
+    // THE THROWING PATH restored the exact original globals, by reference.
+    expectGlobalsRestored('throwing');
+  }, 60_000);
+
+  it('the seam SAVES the ORIGINAL process.kill object, not a bound replacement', () => {
+    // The defect stated positively, over the values the seam actually holds.
+    // `process.kill.bind(process)` would produce a function that WORKS and
+    // whose `typeof` and arity match, so only reference identity distinguishes
+    // it — asserted here against the module-level pre-seam capture, and
+    // demonstrated to be discriminating on the very next line.
+    expect(
+      Object.is(realKill, PRISTINE_PROCESS_KILL),
+      'the seam saved something other than the original process.kill object',
+    ).toBe(true);
+    expect(
+      Object.is(realSetTimeout, PRISTINE_SET_TIMEOUT),
+      'the seam saved something other than the original globalThis.setTimeout object',
+    ).toBe(true);
+
+    // THE ASSERTION IS DISCRIMINATING: a bound copy of the very same function
+    // is NOT reference-identical, which is precisely why saving one leaked.
+    // (`typeof` and `.name` agree — the weaker comparisons the packet forbids.)
+    const bound = PRISTINE_PROCESS_KILL.bind(process);
+    expect(Object.is(bound, PRISTINE_PROCESS_KILL)).toBe(false);
+    expect(typeof bound).toBe(typeof PRISTINE_PROCESS_KILL);
+
+    // And the globals are untouched right now, outside any observed call.
+    expectGlobalsRestored('no-call-in-flight');
+  });
 });

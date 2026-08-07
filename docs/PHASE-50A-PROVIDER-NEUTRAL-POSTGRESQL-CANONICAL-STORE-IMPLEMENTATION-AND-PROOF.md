@@ -3251,3 +3251,236 @@ implementer does not audit its own work.
 this work, under lease `lease-phase-50a-implementer-timer-proof-023` (lane #122
 sequence 80). **No** Ultracode, **no** `/batch`, **no** teams, **no** subagents,
 and **no** delegation of any kind.
+
+---
+
+## Phase 50A R3 — Track A safety and authority closure (lane #122, sequence 86)
+
+Appended at the end of the file, changing no byte above this line. Substrate
+prefix: **198060 bytes**, `sha256:b5b140453c52f60d8065f0269001fb70a3e560a85e016398eccd65a104a61a80`.
+Written under implementer lease `lease-phase-50a-implementer-safety-authority-024`
+against task packet comment **5207195426**
+(`sha256:d5cd1d42bdb357f7c663cb14ff8cbc96d98e6abfcea88c6572aa2c4d3346937f`),
+authorized by `operator:eileen` decision **5204854701** (sequence 84).
+
+**This is not acceptance.** Every property below is an obligation
+**re-established** at a new head, never a claim that Phase 50A is complete.
+
+### What was rejected, and what changed
+
+The sequence-83 audit (comment 5202973998,
+`sha256:adb5716fa2fba4c68cbdb87ce479f002889383068036605793547de7a5d8749d`)
+returned **REJECT** at head `cefe2b5f7598736fce89a86d8032055034cd94c4`. That
+verdict is durable exact-SHA history and is not reinterpreted here. PR #131,
+branch `phase-50a-r3-timer-proof-closure` and head `cefe2b5…` remain **open,
+unmerged and immutable rejected substrate** — read from and branched from, never
+amended, force-pushed, retargeted, closed or merged. No review thread anywhere
+was resolved, dismissed or marked outdated.
+
+Four Track A findings are closed by executable proof, within the packet's ten
+allowed paths and no others.
+
+#### F-01 — the seam preserved a bound copy, not the original object
+
+`tests/phase-31f-operator-recall-wedge-demo.test.ts:520` saved
+`process.kill.bind(process)`. `bind` returns a **new function object**, so the
+`finally` block at line 624 restored a substitute: functionally similar, but not
+the object Node installed, and every later test in that worker inherited the
+replacement.
+
+The seam now saves `process.kill` itself. Identity is asserted with `Object.is`
+against `PRISTINE_PROCESS_KILL` / `PRISTINE_SET_TIMEOUT` — captured at **module
+evaluation**, before any seam in the file can exist, and deliberately independent
+of the seam's own saved values, so a seam that saved and restored a bound copy
+would satisfy its own bookkeeping and still fail. The assertion runs on the
+**resolved**, **rejected**, **throwing** and positive-control paths, and a new
+in-file test states the property directly while demonstrating on the next line
+that a bound copy is *not* reference-identical (`typeof` and `.name` agree — the
+weaker comparisons the packet forbids). The five pre-existing exit-path
+proofs, the positive control, the group-absence checks and the anchored
+`/exited 3: (\d+)/` extraction are preserved and still pass: 14 tests → **16**,
+none weakened, skipped or deleted.
+
+#### F-04 — credentials in query parameters reached every diagnostic
+
+`redactConnectionString` replaced URI userinfo only, so
+`?password=…` — a form `pg` accepts and `pg-connection-string` parses — survived
+verbatim into every message built from `describeTarget()`.
+
+Both channels are now closed: userinfo, and credential-bearing query parameters
+(`password`, `passwd`, `pgpassword`, `pgpassfile`, `sslpassword`, `sslkey`),
+matched case-insensitively at any position, however many. A third leak found
+while building the matrix is also closed: a **truncated** URI that lost its `@`
+(`postgres://<user>:<password>`, which `new URL` refuses outright) left the pair
+in the clear, so the authority is now redacted unless it is *provably* a bare
+host or `host:port` — with bracketed IPv6 recognized, so `[::1]:5432` is not
+mistaken for a credential. Unproven fails closed.
+
+Non-secret detail survives on purpose — scheme, host, port, database and
+non-credential parameters — because a redactor that erased everything would be
+safe and useless; a dedicated test asserts credential-free targets pass through
+**unchanged**. The function never parses its input, so malformed, empty,
+non-URI and non-string input is rewritten by the same rules and **nothing
+throws** on the diagnostic path. Exported name, signature and call sites are
+unchanged, so `host.ts` and the public barrel stay byte-identical.
+
+Every matrix case asserts the **absence of every secret substring, raw and
+percent-decoded**, never merely the presence of `<redacted>`: a partially
+redacted string contains both.
+
+#### F-09 / F-10 — one environment variable stood between a proof and someone's data
+
+`hosts.ts` honoured `STRAYLIGHT_PHASE_50A_SOURCE_URL` /
+`…_REPLACEMENT_URL`, and the Phase 50A proof is **destructive** — it drops
+schemas, drops and recreates databases, and restores over whatever is there. The
+tool targets made it worse: `pg_dump`/`psql` ran inside *fixed* container names
+while the store connected through the override, so the two could disagree about
+which database was being erased.
+
+**The design chosen, of the two the packet allowed: overrides are removed
+outright, not validated-and-refused.** A refusal path would have to decide, from
+a connection string alone, whether a host "is really a local disposable harness
+instance" — and a loopback address proves nothing about disposability: a
+developer's own PostgreSQL on `127.0.0.1:5432` holding real data satisfies every
+check such a validator could make. Removing the input removes the decision. The
+alternative was rejected for exactly that reason: it would have shipped a
+safety check that cannot be correct.
+
+`hosts.ts` now reads **no environment variable at all** (asserted over
+comment-blanked executable text, and by setting both old names and observing
+nothing change). `resolveProofHost` accepts only a descriptor
+**reference-identical** to one of two frozen fixed descriptors, or the exact name
+of one — reference identity deliberately, because a structural check would accept
+a crafted object whose fields matched while the **connection string** it carried
+is what a client would dial. The refusal names the constraint and the offending
+name/port/database/container and **never echoes a connection string**: a rejected
+target may carry a credential.
+
+The refusal precedes everything. `toolTargetOf` registers each issued target, and
+`pg-tools` refuses any target it did not issue *before* recording or spawning, so
+a hand-built target cannot reach `pg_dump`, `psql` or the cluster probe at all.
+Store and tool targets derive from the **same** descriptor (F-10), asserted by
+value against the database the connection string dials.
+
+**Observed negative controls, not inferred:** on refusal of a non-loopback host,
+a non-harness database, a non-harness port, a foreign URI, a copy-with-one-field
+-changed, and an unknown name — including prototype names — the recorded counts
+are **0 destructive operations** and **0 tool invocations**. The existing
+distinct-instance proof is made *stricter*, never thinner:
+`assertDistinctHosts`, the loopback scan, the harness-password scan and the
+evaluated hosts-default check all pass **unchanged**.
+
+#### F-14 / F-15 — the runbook told operators to erase what they were verifying
+
+§4.3, "Verify — this step is not optional", directed `npm run phase-50a:proof`.
+That proof drops the public schema on **both** hosts, re-migrates the source and
+re-seeds it. An operator who had just restored real data and followed the
+verification step would have destroyed exactly the data they were checking.
+
+`scripts/phase-50a/verify-existing-restore.ts` reads. It compares canonical
+digests, per-table row counts and every per-estate chain across an **existing**
+source and target, and issues no `DROP`, `TRUNCATE`, `DELETE`, reseed or
+schema-emptying statement — proven by scanning the SQL actually handed to
+`.query()` and by a runtime record asserted read-only in **both** the agreeing
+and mismatching cases, with row counts unchanged afterwards. Divergence is
+created in the live test by **adding** a write, never by deleting one. Exit
+status is the verdict: `0` agree, `1` **mismatch**, `2` could-not-verify — three
+distinct outcomes, so an unreachable host is never reported as agreement and
+never as a mismatch about estates it never read. Verified live: exit 0 on a fresh
+restore, exit 1 with field-level differences on a diverged target.
+
+It accepts explicit `--source`/`--target` connection strings, and that asymmetry
+with F-09 is deliberate: the destructive path refuses caller-supplied targets
+because it **erases** what it is pointed at. This path cannot, and *requiring*
+the harness here would leave the operator with no executable verification of the
+estate they actually restored — which is the finding.
+
+**Operator-invocable with no `package.json` change**, as the packet requires:
+`npx vite-node scripts/phase-50a/verify-existing-restore.ts`. Proven by running
+it as a child process with `VITEST` stripped and observing exit 2; the package
+script surface is asserted unchanged and free of any reference to the verifier.
+
+**F-15: there is no executable checksum-repair route within Phase 50A's
+authorized semantics, and §9.3 now says so.** The previous text directed export →
+rollback → re-apply — a route that **cannot execute**, because `rollback`
+verifies the recorded checksum before running a DOWN file and therefore refuses
+on precisely the mismatch it was offered to repair. Directing an operator at a
+command guaranteed to refuse reads as a remedy and delivers a dead end. §9.3 now
+directs **fail-closed quarantine and escalation**, states that the refusal is the
+safeguard rather than an obstacle, and splits the remedy by which side moved —
+shipped-content drift is repairable, an unprovable schema needs an authorized
+migration path Phase 50A does not have. Migration content, checksums and the
+checksum verifier are untouched.
+
+### Evidence B — closure-only scope (substrate → final head)
+
+Exactly **9** tree entries differ from `cefe2b5f7598736fce89a86d8032055034cd94c4`,
+every one an allowed path; all other entries are identical by mode, type and blob
+object id.
+
+| Path | Change |
+|---|---|
+| `tests/phase-31f-operator-recall-wedge-demo.test.ts` | M — F-01 identity |
+| `src/straylight/storage/postgres/config.ts` | M — F-04 redaction |
+| `scripts/phase-50a/hosts.ts` | M — F-09/F-10 fixed descriptors |
+| `scripts/phase-50a/pg-tools.ts` | M — F-09 tool gate + seam |
+| `scripts/phase-50a/two-host-proof.ts` | M — gated, derived targets |
+| `scripts/phase-50a/verify-existing-restore.ts` | **A** — F-14 verifier |
+| `tests/phase-50a/postgres-two-host-portability.test.ts` | M — derived targets, live F-14 |
+| `tests/phase-50a/safety-authority-closure.test.ts` | **A** — closure suite |
+| `docs/runbooks/…-backup-restore-and-rollback.md` | M — §1, §4.3, §9.3 |
+
+**The tenth allowed path — this document — is written by this append and nothing
+else.** No allowed path went unwritten.
+
+### Mutations and negative controls — every one run, named, and reverted
+
+| # | Mutation | Result |
+|---|---|---|
+| M1 | `realKill = process.kill.bind(process)` (the audited defect, exactly) | **6 tests fail** — identity on success, nonzero-exit, throwing, positive-control, the direct save assertion, and the F-01 scan |
+| M2 | delete the `finally` restoration of `process.kill` | **6 tests fail** — all four paths plus `no-call-in-flight` and the finally-block assertion |
+| M3 | revert redaction to the substrate's userinfo-only regex | **13 tests fail** — every query-parameter case by leaked-value absence, plus malformed input and the `describeTarget()` reachability proof |
+| M4 | make the host gate accept a non-loopback host | **6 tests fail** — all five refusal cases and the zero-destruction negative control |
+| M5 | verifier resets an estate before comparing (`DELETE FROM estate_assertions`) | **fails statically** (destructive SQL at a `.query()` site) **and live** (the runtime record shows the `DELETE`) |
+| M6 | derive the tool target from a literal diverging from the descriptor | **3 tests fail** by value — container and user disagreement |
+
+Positive control: the unmutated tree passes every suite below. All six mutations
+were fully reverted and the tree is clean — verified by blob-identity comparison,
+not by inspection.
+
+### Re-established obligations at the final head
+
+| Obligation | Result |
+|---|---|
+| Repository suite | **90 files, 2318 passed**, 150 skipped |
+| Control-plane validate | passed (policy, schemas, state machine, markers) |
+| Control-plane suite | **29 files, 1025 passed** |
+| Phase 50A suite | **16 files, 358 passed** |
+| Typecheck / build | clean; `postbuild` prune ran |
+| Two-host proof | **PASS** — distinct clusters `7671235572770562087` / `7671235593399533607`, digests equal, chains identical, cold load, governed recall, continued write |
+| Artifact proof C1..C9 | **PASS** — 30 tracked = 30 generated = 30 packed; no PostgreSQL declaration generated or packed |
+| Containment byte-identity | executor, declarations, 4 suites, fixture, manifest + parser **identical by blob id** |
+| Wrapper identity | **7287 bytes**, `sha256:b95509fb82142d647e425d8c9a0ca10a7cf289d5fbfedc4573193a20c499fd7b` |
+| Public surface | `src/straylight/index.ts`, `storage/postgres/index.ts`, `package.json`, `package-lock.json`, `tests/storage-conformance.test.ts` **identical by blob id** |
+| No-leak / neutrality | 15 tests pass **unchanged**; loopback-only, harness-password confinement and provider-neutrality all hold |
+
+Non-loopback values in the new suite are assembled from fragments (RFC 5737
+`198.51.100.x`, RFC 2606 `.invalid`) and used **only** as inputs proven to be
+refused or redacted — never connected to — so the committed-loopback scan keeps
+passing unchanged rather than being loosened.
+
+### What this closure does NOT claim
+
+No provider, production, living-estate, sibling-repository or external-API
+authority. No Tracks B/C/D work: the audit-recomputation finding at
+`src/straylight/storage/postgres/load.ts:173` is **not** in Track A and was not
+touched. No Phase 50B progression, no gate closure, no MVP-2 closure, and no
+acceptance, readiness or merge claim — closing Track A does not make PR #131 or
+this PR merge-eligible. This is `patch_cycle` 3 and creates no `patch_cycle` 4.
+Merge remains **operator-only** (`operator:eileen`, ADR-049 §6). The audit of
+this slice is Codex's; the implementer does not audit its own work.
+
+**Implementation provenance.** Exactly **one** Claude agent at high effort did
+this work, under lease `lease-phase-50a-implementer-safety-authority-024` (lane
+#122 sequence 86). **No** Ultracode, **no** `/batch`, **no** teams, **no**
+subagents, and **no** delegation of any kind.

@@ -34,13 +34,17 @@ import {
   verifyChains,
 } from '../../src/straylight/storage/postgres/index.js';
 import { clusterSystemIdentifier, pgDump, psqlRestore, type PgToolTarget } from './pg-tools.js';
-import { assertDistinctHosts, replacementHost, sourceHost } from './hosts.js';
+import {
+  assertDistinctHosts,
+  type ProofHost,
+  replacementHost,
+  resolveProofHost,
+  sourceHost,
+  toolTargetOf,
+} from './hosts.js';
 
 const NOW = '2026-05-05T12:00:00Z';
 const ESTATE_ID = loadEstate().estate_id;
-const SOURCE_CONTAINER = 'straylight-phase-50a-source';
-const REPLACEMENT_CONTAINER = 'straylight-phase-50a-replacement';
-const PROOF_USER = 'straylight_proof';
 
 function line(label: string, value: string): void {
   process.stdout.write(`${label.padEnd(34)} ${value}\n`);
@@ -51,20 +55,18 @@ function heading(text: string): void {
 }
 
 async function main(): Promise<void> {
-  const source = sourceHost();
-  const replacement = replacementHost();
+  // THE FIXED DESCRIPTORS, gated. `resolveProofHost` accepts only the two
+  // frozen harness instances and refuses anything else BEFORE a connection is
+  // opened — this proof is destructive, so the gate precedes every action.
+  const source = resolveProofHost(sourceHost());
+  const replacement = resolveProofHost(replacementHost());
   assertDistinctHosts(source, replacement);
 
-  const sourceTarget: PgToolTarget = {
-    container: SOURCE_CONTAINER,
-    user: PROOF_USER,
-    database: 'straylight_source',
-  };
-  const replacementTarget: PgToolTarget = {
-    container: REPLACEMENT_CONTAINER,
-    user: PROOF_USER,
-    database: 'straylight_replacement',
-  };
+  // The tool targets DERIVE FROM THE SAME DESCRIPTORS the stores connect
+  // through, so `pg_dump`/`psql` can never address a database the store did
+  // not populate (F-10). Nothing here restates a container, user or database.
+  const sourceTarget: PgToolTarget = toolTargetOf(source);
+  const replacementTarget: PgToolTarget = toolTargetOf(replacement);
 
   heading('two distinct PostgreSQL server instances');
   const sourceId = clusterSystemIdentifier(sourceTarget);
@@ -100,10 +102,10 @@ async function main(): Promise<void> {
     //                 would also hide whether the export is self-sufficient.
     //                 A real replacement host is a fresh database, so the proof
     //                 uses one.
-    await emptySchema(sourceStore);
+    await emptySchema(source, sourceStore);
     const applied = await sourceStore.migrate();
     line('source migrations applied', applied.join(', '));
-    await emptySchema(replacementStore);
+    await emptySchema(replacement, replacementStore);
     line('replacement starting state', 'empty (schema arrives with the dump)');
 
     heading('populate the source with a governed flow');
@@ -232,12 +234,53 @@ async function main(): Promise<void> {
  * canonical rollback: the canonical, reversible rollback path is
  * `migrations/postgres/0001_canonical_estate.down.sql`, exercised by
  * `tests/phase-50a/postgres-migrations.test.ts`.
+ *
+ * GATED AND OBSERVED (F-09). The host descriptor is resolved FIRST, so a target
+ * that is not one of the two fixed disposable harness instances is refused
+ * before a connection is opened and before any DDL is issued; the attempt is
+ * then recorded on `destructiveOperations`, so a negative control can prove by
+ * OBSERVATION that a refusal destroyed nothing.
  */
-async function emptySchema(store: PostgresEstateHost): Promise<void> {
+export async function emptySchema(host: ProofHost, store: PostgresEstateHost): Promise<void> {
+  // The gate precedes the connection AND the destruction. `resolveProofHost`
+  // throws ProofHostRefusedError for anything unfixed.
+  const fixed = resolveProofHost(host);
+  destructive.push(
+    Object.freeze({
+      operation: 'DROP SCHEMA public CASCADE',
+      host: fixed.name,
+      database: fixed.database,
+    }),
+  );
   await store.withClient(async (client) => {
     await client.query('DROP SCHEMA public CASCADE');
     await client.query('CREATE SCHEMA public');
   });
+}
+
+/** One recorded destructive operation: what was erased, and where. */
+export interface DestructiveOperation {
+  readonly operation: string;
+  readonly host: ProofHost['name'];
+  readonly database: string;
+}
+
+const destructive: DestructiveOperation[] = [];
+
+/**
+ * Every destructive operation this process attempted, in order.
+ *
+ * Populated AFTER the host gate and BEFORE the DDL, so a refused target leaves
+ * it untouched — which is what makes "zero destructive operations on refusal" an
+ * observation rather than an inference.
+ */
+export function destructiveOperations(): readonly DestructiveOperation[] {
+  return [...destructive];
+}
+
+/** Clear the destructive-operation record. For tests establishing a baseline. */
+export function resetDestructiveOperations(): void {
+  destructive.length = 0;
 }
 
 function newStore(storage: StorageAdapter): EstateStore {
@@ -268,7 +311,15 @@ function publicRecallRequest() {
   });
 }
 
-main().catch((err: unknown) => {
-  process.stderr.write(`\nPHASE 50A TWO-HOST PROOF: FAIL\n${err instanceof Error ? err.stack : String(err)}\n`);
-  process.exit(1);
-});
+// RUN ONLY AS A SCRIPT. `emptySchema` and the observation records above are
+// exported so the closure suite can prove the destructive path refuses an
+// unfixed host WITHOUT destroying anything — and importing this module must not
+// start a destructive proof as a side effect. Under vitest the whole exercise
+// stays inert; `npm run phase-50a:proof` (vite-node, no VITEST in the
+// environment) runs it exactly as before.
+if (process.env['VITEST'] === undefined) {
+  main().catch((err: unknown) => {
+    process.stderr.write(`\nPHASE 50A TWO-HOST PROOF: FAIL\n${err instanceof Error ? err.stack : String(err)}\n`);
+    process.exit(1);
+  });
+}

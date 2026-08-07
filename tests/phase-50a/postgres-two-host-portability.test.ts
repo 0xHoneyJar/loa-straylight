@@ -56,13 +56,19 @@ import {
   requireReachable,
   sourceHost,
 } from './_support.js';
+// `toolTargetOf` comes straight from the descriptor module: `_support.ts` is
+// outside this packet's allowed paths, so it cannot re-export it, and importing
+// it here keeps the SINGLE SOURCE of container/user/database intact (F-10).
+import { toolTargetOf } from '../../scripts/phase-50a/hosts.js';
+import {
+  recordedStatements,
+  recordedStatementsAreReadOnly,
+  resetRecordedStatements,
+  verifyExistingRestore,
+} from '../../scripts/phase-50a/verify-existing-restore.js';
 
 const NOW = '2026-05-05T12:00:00Z';
 const ESTATE_ID = loadEstate().estate_id;
-
-const SOURCE_CONTAINER = 'straylight-phase-50a-source';
-const REPLACEMENT_CONTAINER = 'straylight-phase-50a-replacement';
-const PROOF_USER = 'straylight_proof';
 
 phase50aGateReport('postgres-two-host-portability');
 
@@ -79,16 +85,10 @@ maybe('Phase 50A portability — export from source, restore into a different ho
     // Distinct cluster system identifiers: two separately initialized servers.
     // One server addressed twice — or one database renamed — would produce the
     // same identifier, and the packet forbids substituting that for the proof.
-    const sourceId = clusterSystemIdentifier({
-      container: SOURCE_CONTAINER,
-      user: PROOF_USER,
-      database: 'straylight_source',
-    });
-    const replacementId = clusterSystemIdentifier({
-      container: REPLACEMENT_CONTAINER,
-      user: PROOF_USER,
-      database: 'straylight_replacement',
-    });
+    // Targets DERIVED from the shared fixed descriptors, never restated: the
+    // container, user and database all come from `hosts.ts` (F-10).
+    const sourceId = clusterSystemIdentifier(toolTargetOf(sourceHost()));
+    const replacementId = clusterSystemIdentifier(toolTargetOf(replacementHost()));
     expect(sourceId).toMatch(/^\d+$/);
     expect(replacementId).toMatch(/^\d+$/);
     expect(sourceId).not.toBe(replacementId);
@@ -126,16 +126,16 @@ maybe('Phase 50A portability — export from source, restore into a different ho
         expect(seeded.value.tail).toBeDefined();
         expect(seeded.value.auditLength).toBeGreaterThanOrEqual(3);
 
-        const sourceTarget: PgToolTarget = {
-          container: SOURCE_CONTAINER,
-          user: PROOF_USER,
-          database: databaseNameOf(source.connectionString),
-        };
-        const replacementTarget: PgToolTarget = {
-          container: REPLACEMENT_CONTAINER,
-          user: PROOF_USER,
-          database: databaseNameOf(target.connectionString),
-        };
+        // Same fixed descriptors, scoped to this test's scratch databases
+        // INSIDE those same instances. Container and user are never restated.
+        const sourceTarget: PgToolTarget = toolTargetOf(
+          sourceHost(),
+          databaseNameOf(source.connectionString),
+        );
+        const replacementTarget: PgToolTarget = toolTargetOf(
+          replacementHost(),
+          databaseNameOf(target.connectionString),
+        );
 
         // ── 2. ordinary export ────────────────────────────────────────────
         const dump = pgDump(sourceTarget);
@@ -251,6 +251,94 @@ maybe('Phase 50A portability — export from source, restore into a different ho
     120_000,
   );
 
+  it(
+    'F-14: the NON-DESTRUCTIVE verifier reports agreement, detects a real divergence, and erases nothing',
+    async () => {
+      // The F-14 proof against LIVE data. `safety-authority-closure.test.ts`
+      // proves the verifier issues no destructive statement and that its
+      // comparison is not vacuous; this proves the same properties end to end on
+      // two real estates — including that the ROW COUNTS ARE UNCHANGED after
+      // verification, which is the only way to show nothing was erased.
+      const source = await openScratchDatabase(sourceHost(), 'verify-src');
+      const target = await openUnmigratedDatabase(replacementHost(), 'verify-dst');
+      try {
+        await source.host.withEstateSession(ESTATE_ID, (storage) => {
+          const store = newStore(storage);
+          expect(store.admit(observation('verify one'), NOW).ok).toBe(true);
+          expect(store.admit(observation('verify two'), NOW).ok).toBe(true);
+        });
+
+        const dump = pgDump(toolTargetOf(sourceHost(), databaseNameOf(source.connectionString)));
+        psqlRestore(
+          toolTargetOf(replacementHost(), databaseNameOf(target.connectionString)),
+          dump.sql,
+        );
+
+        // ── AGREEING CASE ────────────────────────────────────────────────
+        resetRecordedStatements();
+        const agreeing = await verifyExistingRestore(
+          source.connectionString,
+          target.connectionString,
+        );
+        expect(agreeing.differences).toEqual([]);
+        expect(agreeing.brokenChains).toEqual([]);
+        expect(agreeing.ok).toBe(true);
+        // Redacted target descriptions — the harness password must not appear in
+        // a report an operator is invited to paste into an escalation.
+        expect(agreeing.source.target).toContain('<redacted>');
+        expect(agreeing.target.target).toContain('<redacted>');
+        // OBSERVED: only reads.
+        const agreeingStatements = recordedStatements();
+        expect(agreeingStatements.length).toBeGreaterThan(0);
+        expect(recordedStatementsAreReadOnly(), `recorded: ${agreeingStatements.join(' | ')}`).toBe(
+          true,
+        );
+
+        // NOTHING WAS ERASED: both estates still hold what they held.
+        const countsAfter = await source.host.withEstateSession(ESTATE_ID, (storage) => ({
+          assertions: storage.listAssertions(ESTATE_ID).length,
+          audit: storage.listAuditEvents(ESTATE_ID).length,
+        }));
+        expect(countsAfter.value.assertions).toBe(2);
+        expect(agreeing.source.counts['assertions']).toBe(2);
+        expect(agreeing.target.counts['assertions']).toBe(2);
+
+        // ── MISMATCHING CASE ─────────────────────────────────────────────
+        // The target diverges by a genuine write, so the verifier must REPORT a
+        // mismatch rather than pass. (Written through the store, not by erasing
+        // anything: divergence is created by ADDING, never by deleting.)
+        await target.host.withEstateSession(ESTATE_ID, (storage) => {
+          const store = EstateStore.fromStorage(storage, ESTATE_ID)!;
+          expect(store.admit(observation('divergence on the target only'), NOW).ok).toBe(true);
+        });
+
+        resetRecordedStatements();
+        const mismatching = await verifyExistingRestore(
+          source.connectionString,
+          target.connectionString,
+        );
+        expect(mismatching.ok, 'a divergent target must NOT be reported as agreement').toBe(false);
+        expect(mismatching.differences.length).toBeGreaterThan(0);
+        expect(mismatching.differences.join(' ')).toMatch(/digest|assertions|audit/i);
+        // A divergence is not a BROKEN chain — both chains still verify — so the
+        // two verdicts stay distinguishable.
+        expect(mismatching.brokenChains).toEqual([]);
+        // OBSERVED: still only reads, on the failing path too.
+        expect(recordedStatementsAreReadOnly()).toBe(true);
+
+        // And STILL nothing erased: the source is exactly as it was.
+        const sourceUntouched = await source.host.withEstateSession(ESTATE_ID, (storage) => ({
+          assertions: storage.listAssertions(ESTATE_ID).length,
+        }));
+        expect(sourceUntouched.value.assertions).toBe(2);
+      } finally {
+        await target.dispose();
+        await source.dispose();
+      }
+    },
+    120_000,
+  );
+
   it('a multi-estate store restores with every chain intact and no cross-estate leakage', async () => {
     const source = await openScratchDatabase(sourceHost(), 'portability-multi-src');
     const target = await openUnmigratedDatabase(replacementHost(), 'portability-multi-dst');
@@ -269,17 +357,9 @@ maybe('Phase 50A portability — export from source, restore into a different ho
         tails[estate] = written.value;
       }
 
-      const dump = pgDump({
-        container: SOURCE_CONTAINER,
-        user: PROOF_USER,
-        database: databaseNameOf(source.connectionString),
-      });
+      const dump = pgDump(toolTargetOf(sourceHost(), databaseNameOf(source.connectionString)));
       psqlRestore(
-        {
-          container: REPLACEMENT_CONTAINER,
-          user: PROOF_USER,
-          database: databaseNameOf(target.connectionString),
-        },
+        toolTargetOf(replacementHost(), databaseNameOf(target.connectionString)),
         dump.sql,
       );
 
@@ -326,17 +406,9 @@ maybe('Phase 50A portability — export from source, restore into a different ho
       await source.host.withEstateSession(ESTATE_ID, (storage) => {
         newStore(storage).admit(observation('immutable after restore'), NOW);
       });
-      const dump = pgDump({
-        container: SOURCE_CONTAINER,
-        user: PROOF_USER,
-        database: databaseNameOf(source.connectionString),
-      });
+      const dump = pgDump(toolTargetOf(sourceHost(), databaseNameOf(source.connectionString)));
       psqlRestore(
-        {
-          container: REPLACEMENT_CONTAINER,
-          user: PROOF_USER,
-          database: databaseNameOf(target.connectionString),
-        },
+        toolTargetOf(replacementHost(), databaseNameOf(target.connectionString)),
         dump.sql,
       );
 

@@ -44,9 +44,19 @@ Two separate instances, defined by `../../docker-compose.phase-50a.yml`:
 ```bash
 npm run phase-50a:up      # start both, wait for health
 npm run phase-50a:test    # the asserted suites (requires both)
-npm run phase-50a:proof   # the operator-readable two-host proof
+npm run phase-50a:proof   # the operator-readable two-host proof — DESTRUCTIVE,
+                          # these two DISPOSABLE instances only (see below)
 npm run phase-50a:down    # stop both and discard volumes
 ```
+
+`phase-50a:proof` is **destructive**: it drops the `public` schema on both
+instances, re-migrates the source, re-seeds it, and restores over the
+replacement. That is safe **only** because these two instances are disposable —
+ephemeral, holding no estate anyone relies on. The proof supports **no host
+override**: the fixed descriptors in `scripts/phase-50a/hosts.ts` are the only
+targets it accepts, and any other target is refused before a connection is
+opened. To verify an estate you actually care about, use the non-destructive
+verifier in §4.3 instead.
 
 The harness user is `straylight_proof` and the password is a **fixed
 local-only value committed on purpose** so the proof is reproducible without
@@ -168,21 +178,42 @@ docker exec -i straylight-phase-50a-replacement \
 `ON_ERROR_STOP=1` is **mandatory**. Without it `psql` continues past errors
 and produces a partially restored database that looks like a success.
 
-### 4.3 Verify — this step is not optional
+### 4.3 Verify — this step is not optional, and it destroys nothing
+
+Verify the estate you just restored with the **non-destructive** verifier. It
+reads both estates and compares them; it issues no `DROP`, no `TRUNCATE`, no
+`DELETE`, no reseed and no schema-emptying statement, so the data being verified
+survives the verification:
 
 ```bash
-npm run phase-50a:proof
+npx vite-node scripts/phase-50a/verify-existing-restore.ts \
+  --source postgresql://<user>:<password>@<host>:<port>/<database> \
+  --target postgresql://<user>:<password>@<host>:<port>/<database>
 ```
 
-The proof compares the **canonical content digest** of both stores and
-verifies every per-estate chain on the replacement with the same
-`AuditLog.verifyChain` the source uses. Programmatically:
+With both flags omitted it verifies the two fixed disposable harness instances.
+Exit status **is** the verdict: `0` the estates agree and every per-estate chain
+verifies; `1` a **mismatch** or a broken chain — go to §4.4; `2` the check could
+not be performed (unreachable host, bad argument), which is **not** a verdict
+about the estates.
+
+It compares the **canonical content digest** of both stores and verifies every
+per-estate chain with the same `AuditLog.verifyChain` the source uses.
+Programmatically, the same read-only comparison:
 
 ```ts
 const sourceSnapshot = await sourceHost.withClient(readStoreSnapshot);
 const targetSnapshot = await replacementHost.withClient(readStoreSnapshot);
 assertRestoreServiceable(sourceSnapshot, targetSnapshot);  // throws on any defect
 ```
+
+> **Do not run `npm run phase-50a:proof` to verify a restore you care about.**
+> That proof is **destructive by design**: it drops the `public` schema on *both*
+> hosts, re-migrates the source, re-seeds it with its own synthetic flow, and
+> restores over the replacement. It is the reproducible **disposable-harness**
+> exercise (§1) and nothing else — pointed at a just-restored estate it would
+> erase exactly the data you were checking. Erasing data is never a way to
+> verify it.
 
 ### 4.4 Quarantine on failure
 
@@ -377,18 +408,45 @@ drop or half-drop objects it does not describe.
 
 ### 9.3 Operator response
 
-1. **Do not** hand-edit the ledger to make the error go away. That reinstates
-   exactly the unbound claim this binding exists to prevent.
-2. Take an export first (§3) if the database holds any estate data. This is the
-   same precondition as a deliberate migration rollback.
-3. Establish which side actually moved — compare the deployed migration files
-   against the revision the schema was applied from. The checksum covers both
-   the up and the down file, so a changed rollback file is also a mismatch.
-4. If the shipped content is correct and the database's schema is stale, the
-   route forward is export → rollback → re-apply (§5.2), which re-establishes a
-   correct binding. If the database's schema is correct and the shipped files
-   drifted, restore the correct migration content and re-verify.
+**There is no executable repair route inside Phase 50A's authorized semantics.**
+Read that plainly before the steps below, because an earlier revision of this
+section directed export → rollback → re-apply (§5.2) — **a route that cannot
+execute**. `rollback` verifies the recorded checksum *before* it will run a DOWN
+file (`verifyAppliedChecksums`, §9.2), so on a mismatch it refuses, exactly as
+designed. Directing an operator at a command guaranteed to refuse is worse than
+directing them nowhere: it reads as a remedy and delivers a dead end.
 
-Both paths are non-production procedures in Phase 50A. Nothing in this section
-authorizes a production migration or a production rollback, and §8's unproven
-pre-production obligations are unchanged.
+So the response is **fail-closed quarantine and escalation**:
+
+1. **Quarantine the database.** Do not put it into service and do not migrate it.
+   The store already refuses to serve it — every session, state read and estate
+   listing raises `PostgresIntegrityError` — and that refusal is correct. Leave it
+   refusing.
+2. **Do not** hand-edit the ledger to make the error go away. That reinstates
+   exactly the unbound claim this binding exists to prevent, and it is the one
+   action that turns a detected problem into an undetectable one.
+3. **Do not** run `rollback` expecting repair. It will refuse on the same
+   mismatch (§9.2). The refusal is the safeguard, not a bug to work around.
+4. **Take an export first** (§3) if the database holds any estate data. Capture
+   the evidence before anything else is attempted; a plain-SQL dump is readable
+   even when the schema binding is not provable.
+5. **Establish which side moved** — compare the deployed migration files against
+   the revision the schema was applied from. The checksum covers both the up and
+   the down file, so a changed rollback file is also a mismatch. Record both
+   checksums (`recorded` and `shipped`, both in the error message) verbatim.
+6. **Escalate with that evidence.** Which side moved decides the remedy, and the
+   remedy is a decision with an owner, not a command in a runbook:
+   - **shipped content drifted** — restore the correct migration content at the
+     revision the schema was applied from, then re-verify. The database was
+     never wrong.
+   - **the database's schema is stale or unprovable** — that needs an authorized
+     migration path, which Phase 50A does not have and this runbook does not
+     grant. Escalate; do not improvise one.
+
+Verification of an existing estate stays available throughout, and it is
+non-destructive: §4.3's verifier reads and compares without erasing, so a
+quarantined estate can be inspected without being destroyed.
+
+Every step here is a non-production procedure in Phase 50A. Nothing in this
+section authorizes a production migration or a production rollback, and §8's
+unproven pre-production obligations are unchanged.

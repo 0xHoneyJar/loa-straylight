@@ -11,8 +11,20 @@
 // about the DUMP is container-specific: it is a plain SQL file produced by
 // stock `pg_dump`, and the runbook documents the identical commands for an
 // operator running the tools directly.
+//
+// ── THE TOOL-INVOCATION SEAM (sequence-83 audit, F-09/F-10) ───────────────
+//
+// Every `docker` invocation in this module goes through `runDockerTool`, which
+// GATES the target and then records the attempt (readable via
+// `toolInvocations()`) BEFORE it spawns anything. A negative control can
+// therefore prove that a refused target produced ZERO tool invocations by
+// OBSERVING the record, rather than inferring it from an error having been
+// thrown — an error alone cannot distinguish "refused before acting" from
+// "acted, then failed".
 
 import { execFileSync } from 'node:child_process';
+
+import { ProofHostRefusedError, isIssuedToolTarget } from './hosts.js';
 
 export interface PgToolTarget {
   /** Container the PostgreSQL server runs in. */
@@ -26,6 +38,83 @@ export interface PgToolTarget {
 export interface CommandRecord {
   command: string;
   bytes?: number;
+}
+
+/** One observed tool invocation: what was about to run, on which database. */
+export interface ToolInvocation {
+  /** The executable. Always `docker` here. */
+  readonly file: string;
+  /** The exact argv array handed to it. */
+  readonly argv: readonly string[];
+  /** The client tool inside the container — `pg_dump` or `psql`. */
+  readonly tool: string;
+  /** The database the invocation targets. */
+  readonly database: string;
+}
+
+const invocations: ToolInvocation[] = [];
+
+/**
+ * Every tool invocation attempted in this process, in order.
+ *
+ * The record is APPEND-ONLY and populated before the spawn, so a caller that
+ * refused a target leaves it untouched. Tests read it through
+ * `toolInvocations()` and clear it with `resetToolInvocations()`.
+ */
+export function toolInvocations(): readonly ToolInvocation[] {
+  return [...invocations];
+}
+
+/** Clear the observation record. For tests establishing a known baseline. */
+export function resetToolInvocations(): void {
+  invocations.length = 0;
+}
+
+/**
+ * THE TOOL GATE. Every client-tool invocation in this module passes through
+ * here, and every one must be aimed at a target `hosts.toolTargetOf` ISSUED —
+ * i.e. one derived from a fixed disposable harness descriptor that already
+ * passed `resolveProofHost` (F-09/F-10).
+ *
+ * Checked BEFORE the invocation is recorded and before anything is spawned, so
+ * a hand-built target — a foreign container, a non-harness database, a copy of
+ * a real target with one field edited — produces ZERO tool invocations and ZERO
+ * destructive work, observably, on the record below.
+ */
+function requireIssuedTarget(target: PgToolTarget, tool: string): void {
+  if (!isIssuedToolTarget(target)) {
+    throw new ProofHostRefusedError(
+      `phase-50a: refusing to run ${tool} against a tool target that did not come from a ` +
+        'FIXED disposable harness descriptor. Build every target with hosts.toolTargetOf() — ' +
+        'the destructive proof accepts no hand-built or overridden target. Refused: ' +
+        `container=${String(target?.container)} database=${String(target?.database)}`,
+    );
+  }
+}
+
+/**
+ * The ONE place this module spawns a process.
+ *
+ * Gates the target, records the attempt, then runs a FIXED executable with an
+ * argv ARRAY and no shell — the same launch discipline the proof executor uses,
+ * so no value here is ever interpreted by a shell.
+ */
+function runDockerTool(
+  target: PgToolTarget,
+  argv: readonly string[],
+  tool: string,
+  options: Parameters<typeof execFileSync>[2],
+): string {
+  requireIssuedTarget(target, tool);
+  invocations.push(
+    Object.freeze({
+      file: 'docker',
+      argv: Object.freeze([...argv]),
+      tool,
+      database: target.database,
+    }),
+  );
+  return execFileSync('docker', [...argv], options) as unknown as string;
 }
 
 /**
@@ -45,7 +134,7 @@ export function pgDump(target: PgToolTarget): { sql: string; record: CommandReco
     '-d',
     target.database,
   ];
-  const sql = execFileSync('docker', args, {
+  const sql = runDockerTool(target, args, 'pg_dump', {
     encoding: 'utf8',
     maxBuffer: 256 * 1024 * 1024,
   });
@@ -72,7 +161,7 @@ export function psqlRestore(target: PgToolTarget, sql: string): CommandRecord {
     '-d',
     target.database,
   ];
-  execFileSync('docker', args, {
+  runDockerTool(target, args, 'psql', {
     input: sql,
     encoding: 'utf8',
     maxBuffer: 256 * 1024 * 1024,
@@ -83,24 +172,21 @@ export function psqlRestore(target: PgToolTarget, sql: string): CommandRecord {
 
 /** Run one `psql -c <sql>` statement and return its unaligned output. */
 export function psqlExec(target: PgToolTarget, sql: string): string {
-  return execFileSync(
-    'docker',
-    [
-      'exec',
-      target.container,
-      'psql',
-      '--set',
-      'ON_ERROR_STOP=1',
-      '-tA',
-      '-U',
-      target.user,
-      '-d',
-      target.database,
-      '-c',
-      sql,
-    ],
-    { encoding: 'utf8' },
-  ).trim();
+  const args = [
+    'exec',
+    target.container,
+    'psql',
+    '--set',
+    'ON_ERROR_STOP=1',
+    '-tA',
+    '-U',
+    target.user,
+    '-d',
+    target.database,
+    '-c',
+    sql,
+  ];
+  return runDockerTool(target, args, 'psql', { encoding: 'utf8' }).trim();
 }
 
 /**
