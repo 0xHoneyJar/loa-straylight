@@ -44,19 +44,9 @@ Two separate instances, defined by `../../docker-compose.phase-50a.yml`:
 ```bash
 npm run phase-50a:up      # start both, wait for health
 npm run phase-50a:test    # the asserted suites (requires both)
-npm run phase-50a:proof   # the operator-readable two-host proof — DESTRUCTIVE,
-                          # these two DISPOSABLE instances only (see below)
+npm run phase-50a:proof   # the operator-readable two-host proof
 npm run phase-50a:down    # stop both and discard volumes
 ```
-
-`phase-50a:proof` is **destructive**: it drops the `public` schema on both
-instances, re-migrates the source, re-seeds it, and restores over the
-replacement. That is safe **only** because these two instances are disposable —
-ephemeral, holding no estate anyone relies on. The proof supports **no host
-override**: the fixed descriptors in `scripts/phase-50a/hosts.ts` are the only
-targets it accepts, and any other target is refused before a connection is
-opened. To verify an estate you actually care about, use the non-destructive
-verifier in §4.3 instead.
 
 The harness user is `straylight_proof` and the password is a **fixed
 local-only value committed on purpose** so the proof is reproducible without

@@ -59,8 +59,13 @@ import {
 // `toolTargetOf` comes straight from the descriptor module: `_support.ts` is
 // outside this packet's allowed paths, so it cannot re-export it, and importing
 // it here keeps the SINGLE SOURCE of container/user/database intact (F-10).
-import { toolTargetOf } from '../../scripts/phase-50a/hosts.js';
 import {
+  declareScratchDatabase,
+  toolTargetOf,
+  type ProofHost,
+} from '../../scripts/phase-50a/hosts.js';
+import {
+  provedNoDestructiveSql,
   recordedStatements,
   recordedStatementsAreReadOnly,
   resetRecordedStatements,
@@ -69,6 +74,26 @@ import {
 
 const NOW = '2026-05-05T12:00:00Z';
 const ESTATE_ID = loadEstate().estate_id;
+
+/**
+ * The tool target for one of THIS suite's scratch databases.
+ *
+ * ── THE GATED ISSUANCE ROUTE (sequence-89 audit, F-10) ────────────────────
+ *
+ * `toolTargetOf(host, name)` used to accept any name and register it as an
+ * ISSUED (therefore authorized) target, so an arbitrary database could reach
+ * `pg_dump`, `psql` and the destructive paths. A database other than the
+ * descriptor's own must now be MINTED for that descriptor first.
+ *
+ * These scratch databases are legitimately ours — `_support.ts#openScratchDatabase`
+ * created them inside the fixed instance, with its own `p50a_` naming — so this
+ * helper declares the name against the same descriptor and then issues the
+ * target from it. Container and user still come only from the descriptor.
+ */
+function scratchToolTarget(host: ProofHost, connectionString: string): PgToolTarget {
+  const database = declareScratchDatabase(host, databaseNameOf(connectionString));
+  return toolTargetOf(host, database);
+}
 
 phase50aGateReport('postgres-two-host-portability');
 
@@ -128,13 +153,13 @@ maybe('Phase 50A portability — export from source, restore into a different ho
 
         // Same fixed descriptors, scoped to this test's scratch databases
         // INSIDE those same instances. Container and user are never restated.
-        const sourceTarget: PgToolTarget = toolTargetOf(
+        const sourceTarget: PgToolTarget = scratchToolTarget(
           sourceHost(),
-          databaseNameOf(source.connectionString),
+          source.connectionString,
         );
-        const replacementTarget: PgToolTarget = toolTargetOf(
+        const replacementTarget: PgToolTarget = scratchToolTarget(
           replacementHost(),
-          databaseNameOf(target.connectionString),
+          target.connectionString,
         );
 
         // ── 2. ordinary export ────────────────────────────────────────────
@@ -268,9 +293,9 @@ maybe('Phase 50A portability — export from source, restore into a different ho
           expect(store.admit(observation('verify two'), NOW).ok).toBe(true);
         });
 
-        const dump = pgDump(toolTargetOf(sourceHost(), databaseNameOf(source.connectionString)));
+        const dump = pgDump(scratchToolTarget(sourceHost(), source.connectionString));
         psqlRestore(
-          toolTargetOf(replacementHost(), databaseNameOf(target.connectionString)),
+          scratchToolTarget(replacementHost(), target.connectionString),
           dump.sql,
         );
 
@@ -287,12 +312,26 @@ maybe('Phase 50A portability — export from source, restore into a different ho
         // a report an operator is invited to paste into an escalation.
         expect(agreeing.source.target).toContain('<redacted>');
         expect(agreeing.target.target).toContain('<redacted>');
-        // OBSERVED: only reads.
+        // OBSERVED AT EXECUTION: the record comes from the wrapped
+        // `client.query`, so these are statements the verifier ACTUALLY issued
+        // — not a description it wrote about itself (sequence-89 F-14).
         const agreeingStatements = recordedStatements();
         expect(agreeingStatements.length).toBeGreaterThan(0);
         expect(recordedStatementsAreReadOnly(), `recorded: ${agreeingStatements.join(' | ')}`).toBe(
           true,
         );
+        // The NON-VACUOUS proof: evidence exists AND none of it is destructive.
+        // An empty record would fail this, which is the whole point.
+        expect(provedNoDestructiveSql(), `recorded: ${agreeingStatements.join(' | ')}`).toBe(true);
+        // Every observed statement is a real SQL text, and they are SELECTs.
+        for (const statement of agreeingStatements) {
+          expect(typeof statement).toBe('string');
+          expect(statement).not.toContain('UNRECOGNIZED QUERY SHAPE');
+        }
+        expect(
+          agreeingStatements.some((s) => /\bSELECT\b/i.test(s)),
+          'no observed statement was a SELECT — the seam did not observe the reads',
+        ).toBe(true);
 
         // NOTHING WAS ERASED: both estates still hold what they held.
         const countsAfter = await source.host.withEstateSession(ESTATE_ID, (storage) => ({
@@ -323,8 +362,13 @@ maybe('Phase 50A portability — export from source, restore into a different ho
         // A divergence is not a BROKEN chain — both chains still verify — so the
         // two verdicts stay distinguishable.
         expect(mismatching.brokenChains).toEqual([]);
-        // OBSERVED: still only reads, on the failing path too.
+        // OBSERVED: still only reads, on the mismatching path too — and proven
+        // non-vacuously, from statements the verifier actually issued.
         expect(recordedStatementsAreReadOnly()).toBe(true);
+        expect(
+          provedNoDestructiveSql(),
+          `mismatch path recorded: ${recordedStatements().join(' | ')}`,
+        ).toBe(true);
 
         // And STILL nothing erased: the source is exactly as it was.
         const sourceUntouched = await source.host.withEstateSession(ESTATE_ID, (storage) => ({
@@ -357,9 +401,9 @@ maybe('Phase 50A portability — export from source, restore into a different ho
         tails[estate] = written.value;
       }
 
-      const dump = pgDump(toolTargetOf(sourceHost(), databaseNameOf(source.connectionString)));
+      const dump = pgDump(scratchToolTarget(sourceHost(), source.connectionString));
       psqlRestore(
-        toolTargetOf(replacementHost(), databaseNameOf(target.connectionString)),
+        scratchToolTarget(replacementHost(), target.connectionString),
         dump.sql,
       );
 
@@ -406,9 +450,9 @@ maybe('Phase 50A portability — export from source, restore into a different ho
       await source.host.withEstateSession(ESTATE_ID, (storage) => {
         newStore(storage).admit(observation('immutable after restore'), NOW);
       });
-      const dump = pgDump(toolTargetOf(sourceHost(), databaseNameOf(source.connectionString)));
+      const dump = pgDump(scratchToolTarget(sourceHost(), source.connectionString));
       psqlRestore(
-        toolTargetOf(replacementHost(), databaseNameOf(target.connectionString)),
+        scratchToolTarget(replacementHost(), target.connectionString),
         dump.sql,
       );
 

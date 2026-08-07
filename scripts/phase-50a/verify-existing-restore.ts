@@ -82,13 +82,22 @@ export interface VerificationReport {
 }
 
 /**
- * Every SQL statement this module caused to be issued, in order.
+ * Every SQL statement this module ACTUALLY ISSUED, in order.
  *
- * The whole point of the F-14 finding is that verification must not destroy, and
- * "it does not destroy" is only credible if it is OBSERVED. Each read path
- * appends its statement here before running, so a test can assert the recorded
- * set contains no DROP, TRUNCATE, DELETE or schema-emptying statement — rather
- * than inferring safety from reading the source.
+ * ── OBSERVED, NOT ANNOUNCED (sequence-89 audit, F-14) ─────────────────────
+ *
+ * This record used to be SYNTHETIC: each read path pushed a hand-written
+ * description of what it was about to do
+ * (`'SELECT (readStoreSnapshot: actors, estates, …)'`) and then ran. The record
+ * therefore attested to this module's own narration — it could not have
+ * detected a statement the narration failed to mention, which is exactly the
+ * property it was supposed to prove. The audit called it vacuous, correctly.
+ *
+ * Entries now arrive from `observeQueries`, which wraps the client's own `query`
+ * method, so every statement that reaches PostgreSQL is recorded BY
+ * CONSTRUCTION, at the moment it is issued, whether or not anybody remembered
+ * to mention it. A statement this module did not intend to run would appear
+ * here; under the old scheme it would not have.
  */
 const statements: string[] = [];
 
@@ -101,27 +110,97 @@ export function resetRecordedStatements(): void {
 }
 
 /**
- * Statements that would erase data. Any of these appearing on the record above
- * is a defect in this module, not a finding about the database.
+ * Statements that would erase data or change state. Any of these appearing on
+ * the record above is a defect in this module, not a finding about the database.
  */
-const DESTRUCTIVE_SQL = /\b(?:DROP|TRUNCATE|DELETE|ALTER|CREATE|INSERT|UPDATE)\b/i;
+const DESTRUCTIVE_SQL = /\b(?:DROP|TRUNCATE|DELETE|ALTER|CREATE|INSERT|UPDATE|MERGE|GRANT|REVOKE|VACUUM|REINDEX|COPY)\b/i;
 
-/** Is every recorded statement non-destructive? */
+/**
+ * Is every OBSERVED statement non-destructive?
+ *
+ * True over an empty record — deliberately, because "no destructive statement
+ * was observed" is a true and useful statement about a run that issued nothing.
+ * It is NOT proof of a completed non-destructive verification; for that, use
+ * `provedNoDestructiveSql` below, which requires the observation to exist.
+ */
 export function recordedStatementsAreReadOnly(): boolean {
   return statements.every((s) => !DESTRUCTIVE_SQL.test(s));
 }
 
 /**
+ * Did this run PROVE that it verified without destroying anything?
+ *
+ * ── WHY AN EMPTY RECORD MUST FAIL (sequence-89 audit, F-14) ───────────────
+ *
+ * `recordedStatementsAreReadOnly()` answers `[].every(...)` — i.e. `true` — over
+ * an empty record. Used on its own as the non-destruction proof, it therefore
+ * passed VACUOUSLY: a verifier that observed nothing at all, or whose seam had
+ * been removed entirely, "proved" that it destroyed nothing. The audit
+ * demonstrated exactly that.
+ *
+ * A proof requires evidence. This predicate demands BOTH: at least one observed
+ * statement (so the seam demonstrably ran) AND no destructive statement among
+ * them. An empty record is now "unproven", not "proven safe".
+ */
+export function provedNoDestructiveSql(): boolean {
+  return statements.length > 0 && recordedStatementsAreReadOnly();
+}
+
+/**
+ * THE OBSERVATION SEAM. Wrap a client so every `query` it issues is recorded.
+ *
+ * The wrapper is a `Proxy` over the live client, so the recording is not
+ * something a call site opts into: any statement issued through the object this
+ * module holds passes through `query` and is recorded before the driver sees it.
+ * That is what makes the record an OBSERVATION of execution rather than a
+ * description of intent — and it is why a statement this module never meant to
+ * issue could not hide from it.
+ *
+ * `pg` accepts `query(text)`, `query(text, values)` and `query(config)`; all
+ * three are normalized to the SQL text here. Anything unrecognizable is recorded
+ * as an explicit unknown-shape marker rather than dropped: an unrecorded
+ * statement would be the one thing this seam exists to prevent.
+ */
+function observeQueries<TClient extends { query: (...args: never[]) => unknown }>(
+  client: TClient,
+): TClient {
+  return new Proxy(client, {
+    get(target, property, receiver) {
+      if (property !== 'query') return Reflect.get(target, property, receiver);
+      const original = Reflect.get(target, property, receiver) as TClient['query'];
+      return function observedQuery(this: unknown, ...args: unknown[]) {
+        statements.push(sqlTextOf(args[0]));
+        return (original as (...a: unknown[]) => unknown).apply(target, args);
+      };
+    },
+  });
+}
+
+/** The SQL text of a `pg` query argument, in any of its accepted shapes. */
+function sqlTextOf(first: unknown): string {
+  if (typeof first === 'string') return first;
+  if (
+    typeof first === 'object' &&
+    first !== null &&
+    typeof (first as { text?: unknown }).text === 'string'
+  ) {
+    return (first as { text: string }).text;
+  }
+  // Never dropped: an unattributable statement is still a statement.
+  return `(UNRECOGNIZED QUERY SHAPE: ${typeof first})`;
+}
+
+/**
  * Read one estate's canonical content. READ-ONLY: `readStoreSnapshot` issues
- * only `SELECT`s, and no other statement is issued here.
+ * only `SELECT`s — and that is now OBSERVED rather than asserted, because the
+ * client it receives is wrapped by `observeQueries`.
  */
 export async function readEstate(connectionString: string): Promise<EstateReading> {
   const host = new PostgresEstateHost({ connectionString });
   try {
-    const snapshot: StoreSnapshot = await host.withClient(async (client) => {
-      statements.push('SELECT (readStoreSnapshot: actors, estates, keyrings, assertions, transitions, transition_receipts, recall_receipts, audit_events)');
-      return readStoreSnapshot(client);
-    });
+    const snapshot: StoreSnapshot = await host.withClient(async (client) =>
+      readStoreSnapshot(observeQueries(client)),
+    );
     return {
       target: redactConnectionString(connectionString),
       digest: snapshotDigest(snapshot),

@@ -24,7 +24,7 @@
 
 import { execFileSync } from 'node:child_process';
 
-import { ProofHostRefusedError, isIssuedToolTarget } from './hosts.js';
+import { ProofHostRefusedError, authorizedToolTarget } from './hosts.js';
 
 export interface PgToolTarget {
   /** Container the PostgreSQL server runs in. */
@@ -80,14 +80,23 @@ export function resetToolInvocations(): void {
  * a hand-built target — a foreign container, a non-harness database, a copy of
  * a real target with one field edited — produces ZERO tool invocations and ZERO
  * destructive work, observably, on the record below.
+ *
+ * SEQUENCE-89: the gate delegates to `hosts.authorizedToolTarget`, which checks
+ * ISSUANCE **and** that the target's current fields still equal the ones it was
+ * issued with. Issuance identity alone accepted a spread copy whose `database`
+ * had drifted from the descriptor that authorized it; the field comparison is
+ * what closes that. The returned descriptor is discarded here — the point is
+ * the refusal, and the caller has already fixed its argv from the target.
  */
 function requireIssuedTarget(target: PgToolTarget, tool: string): void {
-  if (!isIssuedToolTarget(target)) {
+  try {
+    authorizedToolTarget(target);
+  } catch (error) {
+    // Re-thrown with the tool named, so the record shows WHICH invocation was
+    // refused. The cause carries the structural reason unchanged.
     throw new ProofHostRefusedError(
-      `phase-50a: refusing to run ${tool} against a tool target that did not come from a ` +
-        'FIXED disposable harness descriptor. Build every target with hosts.toolTargetOf() — ' +
-        'the destructive proof accepts no hand-built or overridden target. Refused: ' +
-        `container=${String(target?.container)} database=${String(target?.database)}`,
+      `phase-50a: refusing to run ${tool} against an unauthorized tool target. ` +
+        (error instanceof Error ? error.message : String(error)),
     );
   }
 }

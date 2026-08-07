@@ -3484,3 +3484,226 @@ this slice is Codex's; the implementer does not audit its own work.
 this work, under lease `lease-phase-50a-implementer-safety-authority-024` (lane
 #122 sequence 86). **No** Ultracode, **no** `/batch`, **no** teams, **no**
 subagents, and **no** delegation of any kind.
+
+## 21. Phase 50A binding-and-proof closure (lane #122 sequence 91)
+
+Appended by the sequence-91 slice authorized by operator decision **5220991234**
+(lane #122 sequence 90). Substrate `add1d1b25da34f583c9671e267128c4b201772a0`
+(PR #132, branch `phase-50a-r3-safety-authority-closure`) is **rejected,
+immutable substrate**: readable and branchable only, never amended,
+force-pushed, retargeted, closed or merged, and no review thread on it was
+resolved. `patch_cycle` remains **3**; this creates no `patch_cycle` 4.
+
+Everything below §21 is a **pure end-of-file append**. No byte of §1–§20 is
+rewritten. The prefix this append follows is exactly **212 595 bytes**, SHA-256
+`3b6d4f3251baef81361d5a2067b2feb82896ef0d10245f574186a5a4462ec78d` — the file's
+complete content at substrate `add1d1b25da34f583c9671e267128c4b201772a0`.
+
+### 21.1 CORRECTION — §20's Evidence B entry count was 9; the tree shows 10
+
+The sequence-89 Codex audit (comment **5220211460**, digest
+`sha256:195581c344eb94648253759f66a35ff2b9411cb4da7428c5fc0ca0ba6696135c`,
+verdict **REJECT**) recorded a MEDIUM finding: the proof record reported **nine**
+changed entries where the tree carries **ten**.
+
+That finding is **accepted as stated**. §20's "Evidence B — closure-only scope"
+heading asserts *"Exactly **9** tree entries differ from
+`cefe2b5f7598736fce89a86d8032055034cd94c4`"* and then tabulates nine paths,
+explaining the tenth in the prose beneath rather than counting it.
+
+**The correct count is ten.** Recomputed:
+
+```bash
+git diff --name-only cefe2b5f7598736fce89a86d8032055034cd94c4 \
+                     add1d1b25da34f583c9671e267128c4b201772a0 | wc -l
+# 10
+```
+
+| # | Path | In §20's table? |
+|---:|---|---|
+| 1 | `tests/phase-31f-operator-recall-wedge-demo.test.ts` | yes |
+| 2 | `src/straylight/storage/postgres/config.ts` | yes |
+| 3 | `scripts/phase-50a/hosts.ts` | yes |
+| 4 | `scripts/phase-50a/pg-tools.ts` | yes |
+| 5 | `scripts/phase-50a/two-host-proof.ts` | yes |
+| 6 | `scripts/phase-50a/verify-existing-restore.ts` | yes |
+| 7 | `tests/phase-50a/postgres-two-host-portability.test.ts` | yes |
+| 8 | `tests/phase-50a/safety-authority-closure.test.ts` | yes |
+| 9 | `docs/runbooks/phase-50a-postgresql-backup-restore-and-rollback.md` | yes |
+| 10 | `docs/PHASE-50A-…-IMPLEMENTATION-AND-PROOF.md` (this document) | **no — prose only** |
+
+The tenth entry is this document itself, which §20 described in prose
+immediately below its table ("**The tenth allowed path — this document — is
+written by this append and nothing else.**") but excluded from the stated total.
+The paths were complete and correctly scoped; the **number** was wrong, and a
+reader checking the claim against the tree found a discrepancy. Ten allowed
+paths were authorized and ten were written.
+
+**Historical text is not rewritten.** §20's sentence stands exactly as recorded
+and this section is the correction of record, per the packet's pure-append
+requirement.
+
+### 21.2 What this slice closes
+
+Three HIGH findings from audit 5220211460. F-01 (exact `process.kill` /
+`setTimeout` identity restoration) and F-15 (checksum-mismatch quarantine and
+escalation semantics) **passed** at sequence 89 and are preserved as closed;
+`tests/phase-31f-operator-recall-wedge-demo.test.ts` is a **forbidden path** in
+this packet and is byte-identical to substrate.
+
+#### F-04 — credential redaction that cannot diverge from the parser
+
+**The finding.** `src/straylight/storage/postgres/config.ts` built
+`CREDENTIAL_PARAM_RE` from the RAW literal option names and matched it against
+the undecoded connection string, while `pg-connection-string` decides on the
+**decoded** `URL.searchParams` key. So `?pass%77ord=<secret>` was honoured by
+`pg` as the password and left verbatim by the redactor — the secret-bearing URI
+reached every diagnostic built from `describeTarget()`.
+
+Demonstrated mechanically before the fix:
+
+```
+pass%77ord=SECRET1   → pg parses password="SECRET1"
+p%61ssword=SECRET4   → pg parses password="SECRET4"
+sslp%61ssword=SECRET5 → pg parses sslpassword="SECRET5"
+```
+
+**The fix is not another spelling.** The pattern is now
+**key-agnostic** (`QUERY_PARAM_RE` finds every `key=value` pair) and the
+credential decision moved to `isCredentialParameterName`, which
+percent-**decodes** each key the way the parser does — including `+`-as-space —
+case-folds it, and compares against the same six real option names. An
+**undecodable** key (`%ZZ`) returns `null` from `decodeParameterName` and is
+treated as credential-bearing: unproven **fails closed**, the rule
+`isProvablyCredentialFreeAuthority` already followed. No encoding can diverge
+from what the parser honours, because the redactor now performs the same decode.
+
+The exported name, signature and call sites are unchanged; `host.ts` and the
+public barrel are byte-identical to substrate.
+
+**Proof that it is not vacuous.** A **parser-agreement** test generates every
+single-position and full percent-encoding, plus case variants, of all six
+credential names (**≥50** spellings checked, **≥10** of which `pg` actually
+honours), parses each with `pg-connection-string`, and asserts: *if the parser
+extracted the secret, the redactor hid it.* A spelling the parser starts
+honouring is covered with no edit to the test.
+
+#### F-09 / F-10 — structural binding, not a heuristic
+
+**The F-09 finding.** `emptySchema(host, store)` resolved `host` through the
+descriptor gate and then issued `DROP SCHEMA public CASCADE` through the
+**independently supplied** `store`. A legitimate descriptor paired with somebody
+else's store reached destructive SQL with nothing checked about the database
+actually being erased. The pre-existing negative controls only ever paired a
+**refused** descriptor with a real store, which is why they passed over it.
+
+**The fix removes the second parameter.** `emptySchema` now takes ONE
+`BoundProofStore`, obtainable only from `hosts.bindStore`, which resolves the
+descriptor and then requires the store's own `describeTarget()` to equal the
+**redacted** form of that descriptor's connection string. The type is branded
+with a module-private symbol, so a bound store cannot be forged, and
+`requireBoundStore` fails closed for an untyped JavaScript caller. **There is no
+longer a signature through which the validated thing and the destroyed thing can
+differ.** (The comparison is against the redacted form deliberately: like is
+compared with like and no credential is interpolated into a refusal.)
+
+**The F-10 finding.** `toolTargetOf(host, database)` accepted free-text
+`database` and registered whatever it was handed in `ISSUED_TOOL_TARGETS`. The
+tool gate downstream checked only issuance identity, so an arbitrary name —
+`somebody_elses_data` — became an authorized `pg_dump` / `psql` / destructive
+target simply by being passed in. "It came from us" was true and meaningless.
+
+**Two structural fixes.** (1) A database other than the descriptor's own must be
+**minted first** by `declareScratchDatabase`, which records it in a
+`WeakMap` keyed by the fixed-descriptor **object** — so a scratch name minted for
+`source` can never authorize a target inside `replacement`. (2) The registry is
+now a `WeakMap` recording each issued target's **authorizing descriptor and exact
+field values**, and `authorizedToolTarget` requires both issuance **and** that
+the target's current `container` / `user` / `database` still equal what it was
+issued with — closing the spread-copy divergence case that issuance identity
+alone accepted.
+
+No hostname, port, database-name or URI pattern is used to judge a
+caller-supplied target. The one name-form check (`p50a_` prefix) applies only to
+names **the harness mints for itself**, matching
+`tests/phase-50a/_support.ts#scratchName`; the authority is the descriptor
+binding.
+
+The portability suite's legitimate scratch databases go through the gated route
+via a `scratchToolTarget` helper; its existing proofs are unchanged.
+
+#### F-14 — observation of execution, not narration
+
+**The finding, in two parts.** (a) The record was **synthetic**: each read path
+did `statements.push('SELECT (readStoreSnapshot: actors, estates, …)')` and then
+ran, so the record attested to the module's own narration and could not have
+detected a statement the narration failed to mention. (b)
+`recordedStatementsAreReadOnly()` is `[].every(...)` — **vacuously true over an
+empty record** — so a run that observed nothing "proved" non-destruction.
+
+**The fix.** `observeQueries` wraps the live client in a `Proxy` that records
+every statement issued through `query` **before the driver sees it**, so
+recording is not something a call site opts into: any SQL reaching PostgreSQL
+through the object this module holds is observed by construction. All three `pg`
+call shapes (`query(text)`, `query(text, values)`, `query(config)`) are
+normalized; an unrecognized shape is recorded as an explicit marker rather than
+dropped, because an unrecorded statement is the one thing the seam exists to
+prevent.
+
+For (b), `provedNoDestructiveSql()` requires **both** at least one observed
+statement **and** no destructive statement among them. An empty record is now
+*unproven*, not *proven safe*. `recordedStatementsAreReadOnly()` is retained with
+its true-over-empty semantics — "no destructive statement was observed" is a true
+and useful claim about a run that issued nothing — but it is no longer the proof.
+The destructive-SQL pattern also widened to cover `MERGE`, `GRANT`, `REVOKE`,
+`VACUUM`, `REINDEX` and `COPY`.
+
+Agreement, mismatch and could-not-verify paths each carry the proof: the
+agreeing and mismatching cases assert `provedNoDestructiveSql()` over statements
+the verifier actually issued; the could-not-verify case asserts that the record
+is empty and the proof therefore **unavailable** — the distinction the audit
+required.
+
+### 21.3 Adversarial reproductions — failed on substrate, pass after the fix
+
+Each reproduction was written first and RUN against the unmodified substrate.
+
+| # | Reproduction | On substrate `add1d1b` | After the fix |
+|---:|---|---|---|
+| 1 | encoded credential-key bypass (`pass%77ord` and six more shapes, plus parser agreement) | **8 tests fail** — every encoded spelling leaked; `PARSER DISAGREEMENT: pg honoured "%70assword" … but the redactor left it in` | **pass** |
+| 2 | unrelated-store / arbitrary-database binding bypass | **2 tests fail** — `a valid descriptor with an unrelated store reached the destructive path`; `an arbitrary database name was issued as a tool target` | **pass** |
+| 3 | synthetic / empty query-observation bypass | **3 tests fail** — `provedNoDestructiveSql is not a function` (the predicate did not exist); `the verifier pushes a hand-written statement description — that is narration, not observation` | **pass** |
+
+Reproduction 2's clone-descriptor and divergent-tool-target cases already failed
+closed on substrate (reference identity covered them); they are retained as
+regression cover for the new binding.
+
+### 21.4 Structural mutations — every one run, named, and reverted
+
+Each mutation reinstates the audited defect exactly, then is reverted and the
+suite re-run green.
+
+| # | Mutation | Result |
+|---:|---|---|
+| M1 | `isCredentialParameterName` decides on the RAW key (`CREDENTIAL_PARAMETERS.includes(rawName.toLowerCase())`) — the substrate semantics | **8 tests fail**: all seven encoded-name matrix cases plus the parser-agreement test |
+| M2 | `bindStore`'s target comparison disabled — the validated descriptor and the operated store become independent again | **1 test fails**: `a valid descriptor bound successfully to an unrelated store` |
+| M3 | `toolTargetOf`'s mint requirement disabled — an arbitrary database name is registered as issued again | **2 tests fail**: arbitrary-database issuance and the cross-instance scratch-name refusal |
+| M4a | the synthetic narration recorder reinstated in place of the `client.query` seam | **1 test fails**: `the verifier pushes a hand-written statement description — that is narration, not observation` |
+| M4b | `provedNoDestructiveSql` reverted to the empty-record tautology | **2 tests fail**: `an empty observation record was accepted as proof of non-destruction`, and the could-not-verify proof-unavailable assertion |
+
+Positive control: with every mutation reverted the closure suite passes in full.
+
+### 21.5 What this closure does NOT claim
+
+No provider, production, living-estate, sibling-repository or external-API
+authority. No Tracks B/C/D work. No Phase 50B progression, no control-plane
+change, no workflow / package / dependency change, no gate closure, no MVP-2
+closure, and no acceptance, readiness or merge claim — closing these findings
+does not make any PR merge-eligible. Merge remains **operator-only**
+(`operator:eileen`, ADR-049 §6). The audit of this slice is Codex's; the
+implementer does not audit its own work.
+
+**Implementation provenance.** Exactly **one** Claude agent at high effort did
+this work, under lease `lease-phase-50a-implementer-binding-proof-026` (lane
+#122 sequence 92). **No** Ultracode, **no** `/batch`, **no** teams, **no**
+subagents, and **no** delegation of any kind.

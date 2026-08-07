@@ -30,12 +30,17 @@ import {
   assertRestoreServiceable,
   compareSnapshots,
   readStoreSnapshot,
+  redactConnectionString,
   snapshotDigest,
   verifyChains,
 } from '../../src/straylight/storage/postgres/index.js';
 import { clusterSystemIdentifier, pgDump, psqlRestore, type PgToolTarget } from './pg-tools.js';
 import {
+  type BoundProofStore,
+  ProofHostRefusedError,
   assertDistinctHosts,
+  bindStore,
+  isBoundProofStore,
   type ProofHost,
   replacementHost,
   resolveProofHost,
@@ -86,6 +91,13 @@ async function main(): Promise<void> {
     connectionString: replacement.connectionString,
   });
 
+  // BIND each store to the descriptor that authorizes it (F-09). `bindStore`
+  // refuses the pair unless the store's own target IS the descriptor's target,
+  // so the destructive step below cannot be handed a store for some other
+  // database. This is the only way to obtain a value `emptySchema` accepts.
+  const boundSource = bindStore(source, sourceStore, redactConnectionString);
+  const boundReplacement = bindStore(replacement, replacementStore, redactConnectionString);
+
   try {
     heading('reset both hosts to a known starting state');
     // The proof must start from a known state. Safe here because these are
@@ -102,10 +114,10 @@ async function main(): Promise<void> {
     //                 would also hide whether the export is self-sufficient.
     //                 A real replacement host is a fresh database, so the proof
     //                 uses one.
-    await emptySchema(source, sourceStore);
+    await emptySchema(boundSource);
     const applied = await sourceStore.migrate();
     line('source migrations applied', applied.join(', '));
-    await emptySchema(replacement, replacementStore);
+    await emptySchema(boundReplacement);
     line('replacement starting state', 'empty (schema arrives with the dump)');
 
     heading('populate the source with a governed flow');
@@ -240,22 +252,58 @@ async function main(): Promise<void> {
  * before a connection is opened and before any DDL is issued; the attempt is
  * then recorded on `destructiveOperations`, so a negative control can prove by
  * OBSERVATION that a refusal destroyed nothing.
+ *
+ * ── ONE BOUND VALUE, NOT TWO PARAMETERS (sequence-89 audit, F-09) ─────────
+ *
+ * This function used to take `(host, store)` and destroy through the store
+ * after validating the host. Passing a legitimate descriptor with an unrelated
+ * store therefore reached `DROP SCHEMA` with nothing checked about the database
+ * actually being erased — the gate proved something about one object while the
+ * destruction ran through another.
+ *
+ * It now takes a SINGLE `BoundProofStore`, obtainable only from
+ * `hosts.bindStore`, which resolves the descriptor and refuses the pair unless
+ * the store's own target is the one the descriptor names. There is no longer a
+ * signature through which the validated thing and the destroyed thing can
+ * differ.
  */
-export async function emptySchema(host: ProofHost, store: PostgresEstateHost): Promise<void> {
-  // The gate precedes the connection AND the destruction. `resolveProofHost`
-  // throws ProofHostRefusedError for anything unfixed.
-  const fixed = resolveProofHost(host);
+export async function emptySchema(bound: BoundProofStore<PostgresEstateHost>): Promise<void> {
+  // The binding IS the gate, and it happened in `bindStore` — before this
+  // function was reachable, before a connection, before any DDL. Re-resolving
+  // here would be theatre: the descriptor in a bound store already passed
+  // `resolveProofHost`.
+  const fixed = requireBoundStore(bound);
   destructive.push(
     Object.freeze({
       operation: 'DROP SCHEMA public CASCADE',
-      host: fixed.name,
-      database: fixed.database,
+      host: fixed.host.name,
+      database: fixed.host.database,
     }),
   );
-  await store.withClient(async (client) => {
+  await fixed.store.withClient(async (client) => {
     await client.query('DROP SCHEMA public CASCADE');
     await client.query('CREATE SCHEMA public');
   });
+}
+
+/**
+ * Refuse anything that is not a genuine `bindStore` product.
+ *
+ * The brand is a module-private symbol, so a plain object cannot carry it — but
+ * an untyped JavaScript caller can still pass anything, and the destructive path
+ * must fail closed rather than read `undefined.withClient`.
+ */
+function requireBoundStore(
+  bound: BoundProofStore<PostgresEstateHost>,
+): BoundProofStore<PostgresEstateHost> {
+  if (!isBoundProofStore(bound)) {
+    throw new ProofHostRefusedError(
+      'phase-50a: refusing a destructive operation that was not handed a store BOUND to a ' +
+        'fixed harness descriptor. Obtain one from hosts.bindStore(); a bare store handle is ' +
+        'never destructive authority.',
+    );
+  }
+  return bound;
 }
 
 /** One recorded destructive operation: what was erased, and where. */

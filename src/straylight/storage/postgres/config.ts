@@ -118,17 +118,62 @@ function isProvablyCredentialFreeAuthority(authority: string): boolean {
 }
 
 /**
- * One `key=value` pair whose key is credential-bearing, wherever it sits in
- * the query string. The leading group captures the delimiter that introduces
- * the pair — `?` or `&` — so a FIRST, MIDDLE or LAST parameter is matched
- * identically and the delimiter is preserved rather than swallowed. The value
- * runs to the next `&` or `#`, so percent-encoded bytes inside it are covered
- * without being decoded first.
+ * EVERY `key=value` pair in the query string, whatever its key.
+ *
+ * The leading group captures the delimiter that introduces the pair — `?` or
+ * `&` — so a FIRST, MIDDLE or LAST parameter is matched identically and the
+ * delimiter is preserved rather than swallowed. The key runs to the `=`; the
+ * value runs to the next `&` or `#`, so percent-encoded bytes inside it are
+ * covered without being decoded.
+ *
+ * DELIBERATELY KEY-AGNOSTIC. The sequence-89 audit found the previous version
+ * — which embedded the credential NAMES in this pattern — redacting on the RAW
+ * spelling while `pg` decides on the DECODED one, so `?pass%77ord=` slipped
+ * through. Which keys are credential-bearing is now decided by
+ * `isCredentialParameterName` on the DECODED key, below; this pattern's only
+ * job is to find the pairs.
  */
-const CREDENTIAL_PARAM_RE = new RegExp(
-  `([?&])(${CREDENTIAL_PARAMETERS.join('|')})=[^&#]*`,
-  'gi',
-);
+const QUERY_PARAM_RE = /([?&])([^=&#]*)=([^&#]*)/g;
+
+/**
+ * Decode a query-parameter NAME the way the connection parser does, or report
+ * that it cannot be decoded.
+ *
+ * `pg-connection-string` builds a `URL` and reads `searchParams`, whose keys
+ * are percent-DECODED (and whose `+` is a space). So `pass%77ord` arrives at
+ * the parser as `password` and is honoured as the credential. A redactor that
+ * matched the raw spelling therefore disagreed with the code that USES the
+ * value — the divergence the audit demonstrated.
+ *
+ * Returns `null` when the name cannot be decoded (`decodeURIComponent` throws
+ * on a malformed escape such as `%ZZ`). A name we cannot interpret is a name
+ * we cannot clear, so the caller treats `null` as credential-bearing: unproven
+ * FAILS CLOSED, the same rule `isProvablyCredentialFreeAuthority` follows.
+ */
+function decodeParameterName(rawName: string): string | null {
+  try {
+    return decodeURIComponent(rawName.replace(/\+/g, ' '));
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Is this raw query-parameter name credential-bearing, judged as the parser
+ * judges it?
+ *
+ * The decision is made on the DECODED, case-folded name, so every encoding of
+ * a credential name — `pass%77ord`, `%70assword`, `PASS%57ORD`,
+ * `%70%61%73%73%77%6Frd` — resolves to the same answer as the plain spelling,
+ * and no future encoding can diverge from what the parser honours. This is
+ * why the fix is not another list of spellings: the list stays the six real
+ * OPTION NAMES, and decoding does the work.
+ */
+function isCredentialParameterName(rawName: string): boolean {
+  const decoded = decodeParameterName(rawName);
+  if (decoded === null) return true; // undecodable ⇒ unproven ⇒ redact
+  return CREDENTIAL_PARAMETERS.includes(decoded.toLowerCase());
+}
 
 /**
  * Redact a connection string for diagnostics.
@@ -137,12 +182,21 @@ const CREDENTIAL_PARAM_RE = new RegExp(
  *
  *   1. URI USERINFO — `//user:password@host` — replaced wholesale;
  *   2. CREDENTIAL-BEARING QUERY PARAMETERS — `?password=…`, `?sslkey=…` and
- *      the other names above, in any case, at any position, however many.
+ *      the other names above, in any case, HOWEVER ENCODED, at any position,
+ *      however many.
  *
  * The sequence-83 audit found only (1) closed, so a connection string that
  * carried its password as a query parameter — a form `pg` accepts and
  * `pg-connection-string` parses — leaked verbatim into every error message and
  * log line built from `describeTarget()`.
+ *
+ * The sequence-89 audit then found (2) closed only for RAW spellings: the
+ * pattern embedded the literal names, while the parser decides on the DECODED
+ * key, so `?pass%77ord=<secret>` was honoured by `pg` as the password and left
+ * verbatim by the redactor. The decision now runs through
+ * `isCredentialParameterName`, which DECODES each key exactly as the parser
+ * does before judging it — so the two cannot diverge, and no encoding trick
+ * needs a new entry anywhere.
  *
  * NON-SECRET DETAIL IS PRESERVED on purpose: scheme, host, port, database and
  * every non-credential parameter survive, so a diagnostic still names which
@@ -172,7 +226,12 @@ export function redactConnectionString(connectionString: string): string {
       isProvablyCredentialFreeAuthority(authority) ? match : `//${REDACTED}`,
     );
   }
-  return out.replace(CREDENTIAL_PARAM_RE, (_match, delimiter: string, name: string) =>
-    `${delimiter}${name}=${REDACTED}`,
+  // QUERY PARAMETERS. Every pair is examined; the DECODED key decides. The raw
+  // key spelling is preserved in the output (so the diagnostic still shows which
+  // parameter was hidden), and only the value is replaced.
+  return out.replace(
+    QUERY_PARAM_RE,
+    (match, delimiter: string, rawName: string, _value: string) =>
+      isCredentialParameterName(rawName) ? `${delimiter}${rawName}=${REDACTED}` : match,
   );
 }

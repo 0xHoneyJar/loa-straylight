@@ -39,6 +39,9 @@ import {
 import {
   ProofHostRefusedError,
   assertDistinctHosts,
+  authorizedToolTarget,
+  bindStore,
+  declareScratchDatabase,
   fixedProofHosts,
   isIssuedToolTarget,
   replacementHost,
@@ -60,6 +63,7 @@ import {
   resetDestructiveOperations,
 } from '../../scripts/phase-50a/two-host-proof.js';
 import {
+  provedNoDestructiveSql,
   recordedStatements,
   recordedStatementsAreReadOnly,
   resetRecordedStatements,
@@ -316,6 +320,55 @@ describe('Phase 50A F-04 — redactConnectionString redacts userinfo AND credent
       secrets: ['firstsecret', 'secondsecret', 'appuser'],
       preserved: ['127.0.0.1', 'straylight_source', '#note'],
     },
+    // ── ENCODED PARAMETER NAMES (sequence-89 F-04) ──────────────────────────
+    //
+    // The sequence-89 audit demonstrated that the credential decision was made
+    // on the RAW parameter name while `pg` decides on the DECODED one, so
+    // `pass%77ord` reached a diagnostic verbatim. Each case below is a name the
+    // connection parser HONOURS as a credential; the parser-agreement test
+    // further down proves that agreement mechanically rather than by assertion.
+    {
+      label: 'ENCODED parameter name (pass%77ord)',
+      input: `${SOURCE_ORIGIN}/straylight_source?pass%77ord=hunter2secret`,
+      secrets: ['hunter2secret'],
+      preserved: ['127.0.0.1', 'straylight_source'],
+    },
+    {
+      label: 'ENCODED parameter name, first letter (p%61ssword)',
+      input: `${SOURCE_ORIGIN}/straylight_source?p%61ssword=hunter2secret`,
+      secrets: ['hunter2secret'],
+      preserved: ['127.0.0.1', 'straylight_source'],
+    },
+    {
+      label: 'ENCODED parameter name, UPPERCASE escape (PASS%57ORD)',
+      input: `${SOURCE_ORIGIN}/straylight_source?PASS%57ORD=hunter2secret`,
+      secrets: ['hunter2secret'],
+      preserved: ['127.0.0.1', 'straylight_source'],
+    },
+    {
+      label: 'ENCODED parameter name, mixed case + escape (PaSs%77oRd)',
+      input: `${SOURCE_ORIGIN}/straylight_source?PaSs%77oRd=hunter2secret`,
+      secrets: ['hunter2secret'],
+      preserved: ['127.0.0.1', 'straylight_source'],
+    },
+    {
+      label: 'ENCODED sslpassword name (sslp%61ssword)',
+      input: `${SOURCE_ORIGIN}/straylight_source?sslp%61ssword=hunter2secret&sslmode=require`,
+      secrets: ['hunter2secret'],
+      preserved: ['sslmode=require', 'straylight_source'],
+    },
+    {
+      label: 'ENCODED name mid-query, non-credential parameters preserved',
+      input: `${SOURCE_ORIGIN}/straylight_source?application_name=straylight&pass%77ord=hunter2secret&connect_timeout=5`,
+      secrets: ['hunter2secret'],
+      preserved: ['application_name=straylight', 'connect_timeout=5'],
+    },
+    {
+      label: 'FULLY ENCODED credential name (%70%61%73%73%77%6Frd)',
+      input: `${SOURCE_ORIGIN}/straylight_source?%70%61%73%73%77%6Frd=hunter2secret`,
+      secrets: ['hunter2secret'],
+      preserved: ['127.0.0.1', 'straylight_source'],
+    },
   ];
 
   for (const entry of MATRIX) {
@@ -404,6 +457,67 @@ describe('Phase 50A F-04 — redactConnectionString redacts userinfo AND credent
     } finally {
       await host.close();
     }
+  });
+
+  // ── PARSER AGREEMENT (sequence-89 F-04, the structural property) ─────────
+  //
+  // The sequence-89 audit rejected the CLASS of fix that adds spellings to a
+  // list: any list can be out-run by the next encoding. The property that
+  // actually closes the finding is AGREEMENT WITH THE PARSER — for every input,
+  // if `pg-connection-string` extracts a credential, the redactor must have
+  // hidden it. This test derives its cases from the parser itself rather than
+  // from a table, so a name the parser starts honouring is covered without any
+  // edit here.
+  it('AGREES WITH THE PARSER: every credential pg extracts is redacted', async () => {
+    const { parse } = await import('pg-connection-string');
+    const secret = 'agreementsecret';
+    // Encodings of the credential-bearing names, generated mechanically: each
+    // letter position encoded in turn, plus case variants and a full encoding.
+    const encodeAt = (name: string, i: number): string =>
+      name.slice(0, i) +
+      '%' +
+      name.charCodeAt(i).toString(16).padStart(2, '0') +
+      name.slice(i + 1);
+    const spellings = (name: string): string[] => {
+      const out = [name, name.toUpperCase(), name[0]!.toUpperCase() + name.slice(1)];
+      for (let i = 0; i < name.length; i += 1) {
+        out.push(encodeAt(name, i), encodeAt(name.toUpperCase(), i));
+      }
+      out.push([...name].map((ch) => '%' + ch.charCodeAt(0).toString(16).padStart(2, '0')).join(''));
+      return out;
+    };
+
+    const names = ['password', 'passwd', 'pgpassword', 'sslpassword', 'sslkey', 'pgpassfile'];
+    let checked = 0;
+    let parserHonoured = 0;
+    for (const name of names) {
+      for (const spelling of spellings(name)) {
+        const uri = `${SOURCE_ORIGIN}/straylight_source?${spelling}=${secret}`;
+        checked += 1;
+        // What does the PARSER make of it? Only agreement matters, so a spelling
+        // the parser ignores imposes no obligation.
+        let parsed: Record<string, unknown> = {};
+        try {
+          parsed = parse(uri) as unknown as Record<string, unknown>;
+        } catch {
+          continue; // unparseable: the fail-closed test above owns this case
+        }
+        const parserSawSecret = Object.entries(parsed).some(
+          ([, value]) => typeof value === 'string' && value === secret,
+        );
+        if (!parserSawSecret) continue;
+        parserHonoured += 1;
+        const out = redactConnectionString(uri);
+        expect(
+          out.includes(secret),
+          `PARSER DISAGREEMENT: pg honoured ${JSON.stringify(spelling)} as a credential ` +
+            `carrying ${secret}, but the redactor left it in ${JSON.stringify(out)}`,
+        ).toBe(false);
+      }
+    }
+    // The test must actually have exercised the property.
+    expect(checked).toBeGreaterThan(50);
+    expect(parserHonoured).toBeGreaterThan(10);
   });
 });
 
@@ -510,13 +624,23 @@ describe('Phase 50A F-09 — every destructive proof target is refused unless it
     resetDestructiveOperations();
     resetToolInvocations();
 
-    // `emptySchema` is THE destructive operation of the proof. The store handle
-    // is deliberately a real one — but pointed at a host descriptor that is not
-    // fixed, so the gate must refuse BEFORE the handle is ever used.
+    // `emptySchema` is THE destructive operation of the proof, and since the
+    // sequence-89 closure it accepts ONLY a bound store. The refusal therefore
+    // happens at the BINDING — earlier than before, and still before the handle
+    // is ever used.
     const rejected = foreign({});
     const store = new PostgresEstateHost({ connectionString: sourceHost().connectionString });
     try {
-      await expect(emptySchema(rejected, store)).rejects.toThrow(ProofHostRefusedError);
+      expect(() => bindStore(rejected, store, redactConnectionString)).toThrow(
+        ProofHostRefusedError,
+      );
+      // And the destructive entry point itself fails closed if an untyped caller
+      // hands it something that never went through the binding.
+      await expect(
+        emptySchema({ host: rejected, store } as never),
+        'a forged bound-store object reached the destructive path',
+      ).rejects.toThrow(ProofHostRefusedError);
+      await expect(emptySchema(undefined as never)).rejects.toThrow(ProofHostRefusedError);
     } finally {
       await store.close();
     }
@@ -527,6 +651,91 @@ describe('Phase 50A F-09 — every destructive proof target is refused unless it
       0,
     );
     expect(toolInvocations().length, 'a refused target recorded a tool invocation').toBe(0);
+  });
+
+  // ── SEQUENCE-89 F-09: THE VALIDATED OBJECT MUST BE THE ONE OPERATED THROUGH ──
+  //
+  // The sequence-89 audit found the gate validating one object and the
+  // destruction running through another: `emptySchema(host, store)` resolved
+  // `host` and then issued `DROP SCHEMA` on the INDEPENDENTLY SUPPLIED `store`.
+  // Passing a legitimate descriptor with somebody else's store therefore reached
+  // destructive SQL with nothing checked about the thing actually being erased.
+  // The tests above only ever pair a REFUSED descriptor with a real store, which
+  // is why they passed over the defect.
+  it('REPRO (F-09): a VALID descriptor paired with an UNRELATED store cannot reach destructive SQL', async () => {
+    resetDestructiveOperations();
+    resetToolInvocations();
+
+    // A legitimate, gate-passing descriptor…
+    const legitimate = sourceHost();
+    // …and a store that is NOT the one that descriptor authorizes. Loopback and
+    // never connected to: the refusal must precede the connection, which is the
+    // property under test.
+    const unrelated = new PostgresEstateHost({
+      connectionString: `${SOURCE_ORIGIN}/somebody_elses_data`,
+    });
+    try {
+      // The BINDING is where this pair is refused — before a connection, before
+      // any DDL, and before `emptySchema` is even reachable: its parameter type
+      // admits nothing but a `bindStore` product.
+      expect(
+        () => bindStore(legitimate, unrelated, redactConnectionString),
+        'a valid descriptor bound successfully to an unrelated store',
+      ).toThrow(ProofHostRefusedError);
+    } finally {
+      await unrelated.close();
+    }
+
+    // OBSERVED: nothing was destroyed, nothing was invoked.
+    expect(destructiveOperations(), 'destruction was recorded for an unbound store').toEqual([]);
+    expect(toolInvocations()).toEqual([]);
+  });
+
+  it('REPRO (F-09): a CLONED descriptor cannot reach destructive SQL even with its own matching store', async () => {
+    resetDestructiveOperations();
+    resetToolInvocations();
+
+    // A structural copy of a fixed descriptor: every field equal, identity not.
+    // Even paired with the RIGHT store, the clone cannot be bound.
+    const clone = { ...sourceHost() };
+    const store = new PostgresEstateHost({ connectionString: sourceHost().connectionString });
+    try {
+      expect(() => bindStore(clone, store, redactConnectionString)).toThrow(ProofHostRefusedError);
+    } finally {
+      await store.close();
+    }
+    expect(destructiveOperations()).toEqual([]);
+    expect(toolInvocations()).toEqual([]);
+  });
+
+  it('REPRO (F-10): an ARBITRARY database name cannot be registered as an issued tool target', () => {
+    resetToolInvocations();
+
+    // `toolTargetOf` took a free-text database name and registered whatever it
+    // was handed as ISSUED — so the tool gate downstream, which checks only
+    // issuance identity, would then accept it. An arbitrary name must not become
+    // an authorized target at all.
+    expect(
+      () => toolTargetOf(sourceHost(), 'somebody_elses_data'),
+      'an arbitrary database name was issued as a tool target',
+    ).toThrow(ProofHostRefusedError);
+
+    // And nothing reached a tool.
+    expect(toolInvocations()).toEqual([]);
+  });
+
+  it('REPRO (F-10): a DIVERGENT tool target — right issuance, wrong field — cannot reach a tool', () => {
+    resetToolInvocations();
+
+    // Issued legitimately, then a field edited: the object still carries its
+    // issuance, so an identity-only gate accepts it while the field it would
+    // actually dial has drifted from the descriptor that authorized it.
+    const issued = toolTargetOf(sourceHost());
+    const divergent = { ...issued, database: 'somebody_elses_data' };
+    expect(() => pgDump(divergent)).toThrow(ProofHostRefusedError);
+    expect(() => psqlRestore(divergent, 'SELECT 1')).toThrow(ProofHostRefusedError);
+    expect(() => clusterSystemIdentifier(divergent)).toThrow(ProofHostRefusedError);
+    expect(toolInvocations()).toEqual([]);
   });
 
   it('NEGATIVE CONTROL: a hand-built tool target cannot reach pg_dump, psql or a cluster probe', () => {
@@ -630,11 +839,34 @@ describe('Phase 50A F-10 — store and tool targets derive from the SAME fixed d
   it('a scratch database inside the SAME instance keeps the descriptor’s container and user', () => {
     // What the portability suite does: per-test databases inside the fixed
     // instances. The instance identity must still come from the descriptor.
-    const tool = toolTargetOf(sourceHost(), 'p50a_scratch_probe');
+    //
+    // SEQUENCE-89: the name must be MINTED for this descriptor first. Passing a
+    // bare name is no longer enough — that is precisely how an arbitrary
+    // database became an issued destructive target.
+    const scratch = declareScratchDatabase(sourceHost(), 'p50a_scratch_probe');
+    const tool = toolTargetOf(sourceHost(), scratch);
     expect(tool.container).toBe(sourceHost().container);
     expect(tool.user).toBe(sourceHost().user);
     expect(tool.database).toBe('p50a_scratch_probe');
     expect(isIssuedToolTarget(tool)).toBe(true);
+    // And the authority resolves back to the descriptor that minted it.
+    expect(authorizedToolTarget(tool)).toBe(sourceHost());
+  });
+
+  it('a scratch name minted for ONE instance cannot authorize a target in the other', () => {
+    // The registry is keyed by descriptor, so cross-instance reuse is refused:
+    // a name declared for `source` is not authority inside `replacement`.
+    const scratch = declareScratchDatabase(sourceHost(), 'p50a_cross_instance_probe');
+    expect(() => toolTargetOf(replacementHost(), scratch)).toThrow(ProofHostRefusedError);
+  });
+
+  it('declareScratchDatabase refuses a name that is not a harness scratch name', () => {
+    for (const bad of ['postgres', 'somebody_elses_data', 'straylight_source', '', 'P50A_UPPER']) {
+      expect(
+        () => declareScratchDatabase(sourceHost(), bad),
+        `minted a non-harness database name: ${bad}`,
+      ).toThrow(ProofHostRefusedError);
+    }
   });
 
   it('the portability suite DERIVES its tool targets rather than restating literals', () => {
@@ -748,6 +980,71 @@ describe('Phase 50A F-14 — restore verification is NON-DESTRUCTIVE and detects
       ),
     ).rejects.toThrow();
     // And nothing destructive was attempted while failing.
+    expect(recordedStatementsAreReadOnly()).toBe(true);
+  }, 30_000);
+
+  // ── SEQUENCE-89 F-14: THE PROOF MUST OBSERVE EXECUTION, NOT INTENTION ─────
+  //
+  // The sequence-89 audit found the non-destruction proof vacuous in two ways:
+  //
+  //   (a) the record was SYNTHETIC — the verifier appended a description of what
+  //       it was about to run, so the record attested to the verifier's own
+  //       narration rather than to any SQL actually issued to a client; and
+  //   (b) `recordedStatementsAreReadOnly()` was VACUOUSLY TRUE over an empty
+  //       record, so a run that observed nothing at all "proved" non-destruction.
+  //
+  // Both are closed by observing `client.query` itself and by making an empty
+  // record fail the proof.
+  it('REPRO (F-14): an EMPTY observation record is NOT proof of non-destruction', () => {
+    resetRecordedStatements();
+    // Nothing observed. A predicate used to prove "the verifier destroyed
+    // nothing" must not answer yes here: no evidence is not evidence.
+    expect(recordedStatements()).toEqual([]);
+    expect(
+      provedNoDestructiveSql(),
+      'an empty observation record was accepted as proof of non-destruction',
+    ).toBe(false);
+  });
+
+  it('REPRO (F-14): the record is populated by client.query EXECUTION, not by narration', () => {
+    // The observation seam must be the place SQL is actually issued. Proven
+    // structurally: the verifier must not contain a literal statement-push of a
+    // hand-written description, and the recorder must be wired to a query seam.
+    const source = readFileSync(resolve(ROOT, VERIFIER), 'utf8');
+    const executable = executableText(source);
+
+    // (a) NO SYNTHETIC PUSH. The substrate pushed a hand-written
+    // 'SELECT (readStoreSnapshot: ...)' description; nothing may announce SQL.
+    expect(
+      /statements\.push\(\s*['"`]/.test(executable),
+      'the verifier pushes a hand-written statement description — that is narration, not observation',
+    ).toBe(false);
+
+    // (b) THE SEAM IS A QUERY WRAPPER. The recorder must observe a `query`
+    // call, so every statement that reaches the client is recorded by
+    // construction rather than by the author remembering to announce it.
+    expect(
+      /observeQueries|client\.query\b/.test(executable),
+      'the verifier does not wrap client.query — the record cannot be an observation',
+    ).toBe(true);
+  });
+
+  it('REPRO (F-14): a MISMATCH and a COULD-NOT-VERIFY are each proven non-destructive from the record', async () => {
+    // Could-not-verify: an unreachable target. The proof must report that it
+    // could not be performed AND that nothing destructive was observed — and
+    // must NOT claim non-destruction from an empty record.
+    resetRecordedStatements();
+    await expect(
+      verifyExistingRestore(
+        `${SOURCE_ORIGIN.replace('55432', '1')}/definitely_not_listening`,
+        `${SOURCE_ORIGIN.replace('55432', '1')}/definitely_not_listening`,
+      ),
+    ).rejects.toThrow();
+    // Nothing was observed because nothing ran, so the proof is UNAVAILABLE
+    // rather than affirmative — the distinction the audit required.
+    expect(recordedStatements()).toEqual([]);
+    expect(provedNoDestructiveSql()).toBe(false);
+    // What IS true unconditionally: no destructive statement was observed.
     expect(recordedStatementsAreReadOnly()).toBe(true);
   }, 30_000);
 
