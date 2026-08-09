@@ -211,7 +211,25 @@ describe('Phase 50A F-01 — the Phase 31F seam preserves the exact original pro
 // Every case asserts the ABSENCE OF EVERY SECRET SUBSTRING, raw and
 // percent-decoded — never merely the presence of `<redacted>`, which a
 // partially redacted string would also satisfy.
-describe('Phase 50A F-04 — redactConnectionString redacts userinfo AND credential query parameters', () => {
+describe('Phase 50A F-04 — redactConnectionString decides WITH the real connection parser', () => {
+  /**
+   * The option names `pg` treats as carrying a credential.
+   *
+   * Used ONLY as the test's oracle key set — to ask "did the parser put a value
+   * under a name pg would use as a credential?" — never as a redaction rule.
+   * The implementation derives its own names from the parser; if this list and
+   * the implementation ever disagreed about a name the parser honours, the
+   * seek-disagreement proof below would fail, which is the point.
+   */
+  const CREDENTIAL_KEYS: readonly string[] = [
+    'password',
+    'passwd',
+    'pgpassword',
+    'pgpassfile',
+    'sslpassword',
+    'sslkey',
+  ];
+
   /** A secret is absent when neither its raw nor its decoded form survives. */
   const expectNoSecret = (redacted: string, secret: string, label: string): void => {
     expect(redacted.includes(secret), `${label}: raw secret survived in ${redacted}`).toBe(false);
@@ -369,6 +387,45 @@ describe('Phase 50A F-04 — redactConnectionString redacts userinfo AND credent
       secrets: ['hunter2secret'],
       preserved: ['127.0.0.1', 'straylight_source'],
     },
+    // ── NORMALIZED PARAMETER NAMES (sequence-95 F-04) ───────────────────────
+    //
+    // The sequence-95 audit demonstrated the NEXT divergence: the fix for the
+    // cases above decided on `decodeURIComponent(rawName)`, but the parser
+    // builds a WHATWG `URL` first, and URL parsing STRIPS tab, LF and CR BEFORE
+    // anything is decoded. So a bare control character inside a credential name
+    // normalizes AWAY at the parser and the value is honoured as the credential,
+    // while a decode-only decision sees an unrecognised name and prints it.
+    // These are Codex's three counterexamples, as cases.
+    {
+      label: 'NORMALIZED name, bare LF inside the credential name',
+      input: `${SOURCE_ORIGIN}/straylight_source?pass\nword=hunter2secret`,
+      secrets: ['hunter2secret'],
+      preserved: ['127.0.0.1', 'straylight_source'],
+    },
+    {
+      label: 'NORMALIZED name, bare TAB inside the credential name',
+      input: `${SOURCE_ORIGIN}/straylight_source?pass\tword=hunter2secret`,
+      secrets: ['hunter2secret'],
+      preserved: ['127.0.0.1', 'straylight_source'],
+    },
+    {
+      label: 'NORMALIZED name, bare CR inside the credential name',
+      input: `${SOURCE_ORIGIN}/straylight_source?pass\rword=hunter2secret`,
+      secrets: ['hunter2secret'],
+      preserved: ['127.0.0.1', 'straylight_source'],
+    },
+    {
+      label: 'NORMALIZED name, control character AND an escape (P%61ss\nWORD)',
+      input: `${SOURCE_ORIGIN}/straylight_source?P%61ss\nWORD=hunter2secret`,
+      secrets: ['hunter2secret'],
+      preserved: ['127.0.0.1', 'straylight_source'],
+    },
+    {
+      label: 'NORMALIZED name mid-query, non-credential parameters preserved',
+      input: `${SOURCE_ORIGIN}/straylight_source?application_name=straylight&pgpass\rword=hunter2secret&connect_timeout=5`,
+      secrets: ['hunter2secret'],
+      preserved: ['application_name=straylight', 'connect_timeout=5'],
+    },
   ];
 
   for (const entry of MATRIX) {
@@ -385,6 +442,310 @@ describe('Phase 50A F-04 — redactConnectionString redacts userinfo AND credent
     });
   }
 
+  // ── THE SEQUENCE-95 REPRODUCTION, STATED AGAINST THE REAL PARSER ─────────
+  //
+  // This is the NAMED proof the structural mutation must break. It does not
+  // assert that a control character is handled; it asserts the PROPERTY: the
+  // real parser is asked what credential it derives, and that exact value must
+  // be absent from the redaction. Run against the substrate implementation —
+  // or against any reintroduction of a decode-only decision — it FAILS here,
+  // because `pg` receives the credential and the redactor prints it.
+  it('SEQUENCE-95 REPRODUCTION: a bare LF, TAB or CR inside a credential name cannot leak', async () => {
+    const { parse } = await import('pg-connection-string');
+    const CRED_VALUE = 'hunter2secret';
+    const controls: ReadonlyArray<{ label: string; ch: string }> = [
+      { label: 'bare LF', ch: '\n' },
+      { label: 'bare TAB', ch: '\t' },
+      { label: 'bare CR', ch: '\r' },
+    ];
+    let honoured = 0;
+    for (const { label, ch } of controls) {
+      for (const name of ['password', 'passwd', 'pgpassword', 'sslpassword']) {
+        // The control character goes INSIDE the name, at every interior split.
+        for (let at = 1; at < name.length; at += 1) {
+          const spelling = `${name.slice(0, at)}${ch}${name.slice(at)}`;
+          const uri = `${SOURCE_ORIGIN}/straylight_source?${spelling}=${CRED_VALUE}`;
+          // WHAT DOES THE REAL PARSER DO? The obligation exists only where the
+          // parser actually derives the credential, so this is asked, never
+          // assumed.
+          const parsed = parse(uri) as unknown as Record<string, unknown>;
+          const derives = Object.entries(parsed).some(
+            ([key, value]) =>
+              CREDENTIAL_KEYS.includes(key.toLowerCase()) && value === CRED_VALUE,
+          );
+          if (!derives) continue;
+          honoured += 1;
+          const out = redactConnectionString(uri);
+          expect(
+            out.includes(CRED_VALUE),
+            `PARSER DISAGREEMENT (${label} in ${name}): pg derives the credential ` +
+              `${CRED_VALUE} from ${JSON.stringify(uri)}, but the redactor printed it ` +
+              `in ${JSON.stringify(out)}`,
+          ).toBe(false);
+        }
+      }
+    }
+    // Non-vacuity: if the parser stopped normalizing these away, this test would
+    // silently assert nothing. The counterexamples must really be honoured.
+    expect(honoured, 'the parser must actually honour the control-character names').toBeGreaterThan(
+      15,
+    );
+  });
+
+  // ── THE GENERATED SEEK-DISAGREEMENT PROOF ────────────────────────────────
+  //
+  // The sequence-89 and sequence-95 audits both rejected a fix that enumerates
+  // spellings, and both were vindicated by the NEXT spelling. So this proof does
+  // not enumerate: it GENERATES inputs by composing the transformations that
+  // have historically produced divergence, asks the REAL parser what credential
+  // each one yields, and asserts that value is absent from the redaction.
+  //
+  // The oracle is `pg-connection-string` itself — not a local helper sharing the
+  // implementation's assumptions, which is exactly the mistake under audit. A
+  // helper that agreed with the implementation would agree with its bugs too.
+  //
+  // Every transformation class is COUNTED, and each must be honoured by the
+  // parser at least once. That turns "we covered percent encoding" from a claim
+  // into an assertion, and makes a generator that silently produces nothing fail
+  // rather than pass.
+  it('SEEK-DISAGREEMENT: no generated input makes the parser derive a credential the redactor prints', async () => {
+    const { parse } = await import('pg-connection-string');
+    const CRED_VALUE = 'hunter2secret';
+
+    type Tagged = { readonly text: string; readonly classes: readonly string[] };
+    const hex = (ch: string, upper: boolean): string => {
+      const h = ch.charCodeAt(0).toString(16).padStart(2, '0');
+      return `%${upper ? h.toUpperCase() : h}`;
+    };
+
+    // CASE — the query is case-preserving, so `PASSWORD` and `PaSsWoRd` reach
+    // the parser unchanged and only the option lookup folds them.
+    const caseOps: ReadonlyArray<(n: string) => Tagged> = [
+      (n) => ({ text: n, classes: [] }),
+      (n) => ({ text: n.toUpperCase(), classes: ['mixed-case'] }),
+      (n) => ({ text: n[0]!.toUpperCase() + n.slice(1), classes: ['mixed-case'] }),
+      (n) => ({
+        text: [...n].map((c, i) => (i % 2 === 0 ? c.toUpperCase() : c)).join(''),
+        classes: ['mixed-case'],
+      }),
+    ];
+
+    // PERCENT ENCODING — the sequence-89 class. First, middle and last letter
+    // (the middle one with an UPPERCASE escape, since escape case is itself a
+    // spelling), plus the fully encoded name.
+    const encodeOps = (n: string): Tagged[] => {
+      const mid = Math.floor(n.length / 2);
+      const at = (i: number, upper: boolean): Tagged => ({
+        text: n.slice(0, i) + hex(n[i]!, upper) + n.slice(i + 1),
+        classes: ['percent-encoding'],
+      });
+      return [
+        { text: n, classes: [] },
+        at(0, false),
+        at(mid, true),
+        at(n.length - 1, false),
+        { text: [...n].map((c) => hex(c, false)).join(''), classes: ['percent-encoding'] },
+      ];
+    };
+
+    // NORMALIZATION AND SEPARATORS — inserted INSIDE the name. CR/LF/TAB are the
+    // sequence-95 class; `+` and a malformed escape are included because they
+    // are the neighbouring transformations a decode-only decision confuses with
+    // them, and the proof must be told apart from them by the parser, not by us.
+    const insertOps: ReadonlyArray<{ ch: string; klass: string }> = [
+      { ch: '', klass: '' },
+      { ch: '\n', klass: 'lf-normalization' },
+      { ch: '\r', klass: 'cr-normalization' },
+      { ch: '\t', klass: 'tab-normalization' },
+      { ch: '+', klass: 'plus-in-name' },
+      { ch: '%ZZ', klass: 'malformed-escape' },
+    ];
+
+    const spellings = (name: string): Tagged[] => {
+      const seen = new Set<string>();
+      const out: Tagged[] = [];
+      for (const caseOp of caseOps) {
+        const cased = caseOp(name);
+        for (const encoded of encodeOps(cased.text)) {
+          for (const insert of insertOps) {
+            // Insert at an interior position so the name is still recognisably
+            // the credential name the parser may normalize back to.
+            const at = Math.max(1, Math.floor(encoded.text.length / 2));
+            const text =
+              insert.ch === ''
+                ? encoded.text
+                : encoded.text.slice(0, at) + insert.ch + encoded.text.slice(at);
+            if (seen.has(text)) continue;
+            seen.add(text);
+            const classes = [
+              ...cased.classes,
+              ...encoded.classes,
+              ...(insert.klass ? [insert.klass] : []),
+            ];
+            out.push({ text, classes });
+          }
+        }
+      }
+      return out;
+    };
+
+    // VALUE FORMS — the parser DECODES values, so the decoded form is what `pg`
+    // receives and what must not survive. `+` becomes a space at the parser,
+    // which is the plus class that is actually honoured.
+    const valueForms: ReadonlyArray<Tagged> = [
+      { text: CRED_VALUE, classes: [] },
+      { text: CRED_VALUE.replace(/e/g, '%65'), classes: ['encoded-credential-value'] },
+      { text: encodeURIComponent('p@ss:w/rd'), classes: ['encoded-credential-value'] },
+      { text: 'hunter+2+secret', classes: ['plus-handling'] },
+      { text: `${CRED_VALUE}%ZZ`, classes: ['malformed-escape'] },
+    ];
+
+    // TAILS — what else is in the query. `&x=v%ZZ` puts a malformed escape in a
+    // DIFFERENT parameter, which forces the parser to pre-encode the WHOLE
+    // string and so rewrites every name; the duplicate tail is the last-wins
+    // trap handled explicitly below.
+    const tails = (spelling: string): ReadonlyArray<Tagged> => [
+      { text: '', classes: [] },
+      { text: '&application_name=straylight', classes: [] },
+      { text: '&x=v%ZZ', classes: ['malformed-escape'] },
+      { text: '#note', classes: [] },
+      { text: '&password=laterwins', classes: ['duplicate-parameters'] },
+      { text: `&${spelling}=laterwins`, classes: ['duplicate-parameters'] },
+    ];
+
+    const heads: readonly string[] = [
+      `${SOURCE_ORIGIN}/straylight_source?`,
+      `${SCHEME}appuser:firstsecret@127.0.0.1:55432/straylight_source?`,
+      `${SCHEME}127.0.0.1/straylight_source?`,
+    ];
+
+    const REQUIRED_CLASSES: readonly string[] = [
+      'mixed-case',
+      'percent-encoding',
+      'lf-normalization',
+      'cr-normalization',
+      'tab-normalization',
+      'plus-handling',
+      'duplicate-parameters',
+      'malformed-escape',
+      'encoded-credential-value',
+      'interaction',
+    ];
+    const honouredByClass = new Map<string, number>();
+    const bump = (klass: string): void =>
+      void honouredByClass.set(klass, (honouredByClass.get(klass) ?? 0) + 1);
+
+    let checked = 0;
+    let honoured = 0;
+    let refusedByParser = 0;
+
+    for (const name of CREDENTIAL_KEYS) {
+      for (const spelling of spellings(name)) {
+        for (const value of valueForms) {
+          for (const tail of tails(spelling.text)) {
+            for (const head of heads) {
+              const uri = `${head}${spelling.text}=${value.text}${tail.text}`;
+              checked += 1;
+
+              // ASK THE PARSER. When it refuses the input outright, `pg` never
+              // receives a credential from it, so the decisive property imposes
+              // no obligation — but the redactor must still not throw, which is
+              // asserted here rather than deferred.
+              let parsed: Record<string, unknown>;
+              try {
+                parsed = parse(uri) as unknown as Record<string, unknown>;
+              } catch {
+                refusedByParser += 1;
+                expect(() => redactConnectionString(uri)).not.toThrow();
+                continue;
+              }
+
+              // THE ORACLE: every value the parser placed under a name `pg`
+              // treats as a credential. Derived from the parser's own output —
+              // never recomputed here.
+              const derived = Object.entries(parsed)
+                .filter(
+                  ([key, v]) =>
+                    CREDENTIAL_KEYS.includes(key.toLowerCase()) &&
+                    typeof v === 'string' &&
+                    v.length > 0,
+                )
+                .map(([, v]) => v as string);
+              if (derived.length === 0) continue;
+
+              honoured += 1;
+              const classes = [...spelling.classes, ...value.classes, ...tail.classes];
+              for (const klass of new Set(classes)) bump(klass);
+              // Two or more independent transformations at once — the
+              // INTERACTION requirement, counted only when it really happened.
+              if (new Set(classes).size > 1) bump('interaction');
+
+              const out = redactConnectionString(uri);
+              for (const credential of derived) {
+                expect(
+                  out.includes(credential),
+                  `PARSER DISAGREEMENT: pg derives credential ${JSON.stringify(credential)} ` +
+                    `from ${JSON.stringify(uri)} (classes: ${classes.join(', ') || 'none'}), ` +
+                    `but the redactor printed it in ${JSON.stringify(out)}`,
+                ).toBe(false);
+              }
+            }
+          }
+        }
+      }
+    }
+
+    // NON-VACUITY. A generator that produced nothing, or inputs the parser never
+    // honours, would assert nothing at all and pass.
+    expect(checked, 'the generator must produce a substantial input set').toBeGreaterThan(5_000);
+    expect(honoured, 'the parser must honour a substantial share of them').toBeGreaterThan(1_000);
+    expect(refusedByParser, 'parser-refused inputs must also have been exercised').toBeGreaterThan(
+      0,
+    );
+    // And every required transformation class must have been HONOURED — not
+    // merely generated. This is what makes the coverage claim checkable.
+    for (const klass of REQUIRED_CLASSES) {
+      expect(
+        honouredByClass.get(klass) ?? 0,
+        `transformation class ${klass} was never honoured by the parser, so it was not proven`,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  // ── THE DUPLICATE TRAP ───────────────────────────────────────────────────
+  //
+  // `searchParams` is last-wins for the parser's `config[name] = value` loop, so
+  // `?pass<LF>word=A&password=B` yields B — and it is tempting to conclude that
+  // A, having lost, is therefore ordinary text. It is not: A is still a
+  // credential someone wrote into the connection string, and it is still in the
+  // raw text the diagnostic would print. Both values are asserted absent, with
+  // both spelled out here by construction rather than read back from a helper.
+  it('DUPLICATE TRAP: an EARLIER credential value does not leak because a later duplicate wins', async () => {
+    const { parse } = await import('pg-connection-string');
+    const EARLIER = 'earlierpassvalue';
+    const LATER = 'laterpassvalue';
+    const cases: readonly string[] = [
+      `${SOURCE_ORIGIN}/straylight_source?password=${EARLIER}&password=${LATER}`,
+      `${SOURCE_ORIGIN}/straylight_source?pass\nword=${EARLIER}&password=${LATER}`,
+      `${SOURCE_ORIGIN}/straylight_source?pass%77ord=${EARLIER}&PASSWORD=${LATER}`,
+      `${SOURCE_ORIGIN}/straylight_source?password=${EARLIER}&pass\tword=${LATER}`,
+      `${SOURCE_ORIGIN}/straylight_source?pgpassword=${EARLIER}&pgpass\rword=${LATER}`,
+    ];
+    for (const uri of cases) {
+      // The parser really is last-wins here, so the trap is real rather than
+      // hypothetical.
+      const parsed = parse(uri) as unknown as Record<string, unknown>;
+      const derived = Object.entries(parsed)
+        .filter(([key]) => CREDENTIAL_KEYS.includes(key.toLowerCase()))
+        .map(([, v]) => v);
+      expect(derived, `${uri}: the parser must derive the LATER value`).toContain(LATER);
+
+      const out = redactConnectionString(uri);
+      expectNoSecret(out, LATER, `duplicate winner in ${uri}`);
+      expectNoSecret(out, EARLIER, `duplicate LOSER in ${uri}`);
+    }
+  });
+
   it('MALFORMED input FAILS CLOSED — it redacts rather than throwing or echoing', () => {
     const malformed: ReadonlyArray<{ input: string; secret?: string }> = [
       { input: '' },
@@ -399,6 +760,17 @@ describe('Phase 50A F-04 — redactConnectionString redacts userinfo AND credent
       { input: '://:@?password=leakedsecret', secret: 'leakedsecret' },
       { input: `${SOURCE_ORIGIN}/db?password`, secret: undefined },
       { input: `${SOURCE_ORIGIN}/db?password=`, secret: undefined },
+      // UNDECODABLE NAME (%ZZ): the name cannot be interpreted, so it cannot be
+      // cleared. Unproven must not mean printed.
+      { input: `${SOURCE_ORIGIN}/db?pass%ZZword=leakedsecret`, secret: undefined },
+      { input: `${SOURCE_ORIGIN}/db?password=leaked%ZZsecret`, secret: 'leaked%ZZsecret' },
+      // UNALIGNABLE QUERY: a segment that normalizes away to nothing, and a
+      // fragment inside the query, so the raw segments and the parser's entries
+      // no longer correspond one-to-one.
+      { input: `${SOURCE_ORIGIN}/db?\r=1&\n&=leakedsecret`, secret: undefined },
+      { input: `${SOURCE_ORIGIN}/db?password=leakedsecret#a?b=c`, secret: 'leakedsecret' },
+      // SPACE forces the parser to pre-encode the whole string.
+      { input: `${SOURCE_ORIGIN}/db?pass word=leakedsecret`, secret: undefined },
     ];
     for (const { input, secret } of malformed) {
       let out = '';
@@ -408,6 +780,18 @@ describe('Phase 50A F-04 — redactConnectionString redacts userinfo AND credent
       expect(typeof out).toBe('string');
       if (secret !== undefined) expectNoSecret(out, secret, `malformed ${JSON.stringify(input)}`);
     }
+  });
+
+  it('an UNALIGNABLE query WITHHOLDS the query rather than guessing which span is the credential', () => {
+    // The fail-closed branch, observed rather than asserted about. When the
+    // parser's entries cannot be paired with the raw segments, no rewrite can
+    // know WHICH span carries the credential — so the whole query goes.
+    const out = redactConnectionString(`${SOURCE_ORIGIN}/straylight_source?\r=1&\n&=hunter2secret`);
+    expect(out.includes('hunter2secret'), `unalignable query leaked: ${out}`).toBe(false);
+    expect(out).toContain('<redacted>');
+    // It still names its target — withholding the query is not erasing the URI.
+    expect(out).toContain('127.0.0.1');
+    expect(out).toContain('straylight_source');
   });
 
   it('a NON-STRING target fails closed with a type report, not an interpolated value', () => {
@@ -432,6 +816,7 @@ describe('Phase 50A F-04 — redactConnectionString redacts userinfo AND credent
       `${SCHEME}localhost/db`,
       `${SCHEME}[::1]:55432/db`,
       `${SOURCE_ORIGIN}/db?application_name=straylight&connect_timeout=5`,
+      `${SOURCE_ORIGIN}/db?sslmode=verify-full&connect_timeout=5`,
     ]) {
       expect(redactConnectionString(safe)).toBe(safe);
     }
@@ -459,65 +844,73 @@ describe('Phase 50A F-04 — redactConnectionString redacts userinfo AND credent
     }
   });
 
-  // ── PARSER AGREEMENT (sequence-89 F-04, the structural property) ─────────
-  //
-  // The sequence-89 audit rejected the CLASS of fix that adds spellings to a
-  // list: any list can be out-run by the next encoding. The property that
-  // actually closes the finding is AGREEMENT WITH THE PARSER — for every input,
-  // if `pg-connection-string` extracts a credential, the redactor must have
-  // hidden it. This test derives its cases from the parser itself rather than
-  // from a table, so a name the parser starts honouring is covered without any
-  // edit here.
-  it('AGREES WITH THE PARSER: every credential pg extracts is redacted', async () => {
-    const { parse } = await import('pg-connection-string');
-    const secret = 'agreementsecret';
-    // Encodings of the credential-bearing names, generated mechanically: each
-    // letter position encoded in turn, plus case variants and a full encoding.
-    const encodeAt = (name: string, i: number): string =>
-      name.slice(0, i) +
-      '%' +
-      name.charCodeAt(i).toString(16).padStart(2, '0') +
-      name.slice(i + 1);
-    const spellings = (name: string): string[] => {
-      const out = [name, name.toUpperCase(), name[0]!.toUpperCase() + name.slice(1)];
-      for (let i = 0; i < name.length; i += 1) {
-        out.push(encodeAt(name, i), encodeAt(name.toUpperCase(), i));
-      }
-      out.push([...name].map((ch) => '%' + ch.charCodeAt(0).toString(16).padStart(2, '0')).join(''));
-      return out;
-    };
-
-    const names = ['password', 'passwd', 'pgpassword', 'sslpassword', 'sslkey', 'pgpassfile'];
-    let checked = 0;
-    let parserHonoured = 0;
-    for (const name of names) {
-      for (const spelling of spellings(name)) {
-        const uri = `${SOURCE_ORIGIN}/straylight_source?${spelling}=${secret}`;
-        checked += 1;
-        // What does the PARSER make of it? Only agreement matters, so a spelling
-        // the parser ignores imposes no obligation.
-        let parsed: Record<string, unknown> = {};
-        try {
-          parsed = parse(uri) as unknown as Record<string, unknown>;
-        } catch {
-          continue; // unparseable: the fail-closed test above owns this case
-        }
-        const parserSawSecret = Object.entries(parsed).some(
-          ([, value]) => typeof value === 'string' && value === secret,
-        );
-        if (!parserSawSecret) continue;
-        parserHonoured += 1;
-        const out = redactConnectionString(uri);
-        expect(
-          out.includes(secret),
-          `PARSER DISAGREEMENT: pg honoured ${JSON.stringify(spelling)} as a credential ` +
-            `carrying ${secret}, but the redactor left it in ${JSON.stringify(out)}`,
-        ).toBe(false);
-      }
+  it('DIAGNOSTIC REACHABILITY: a NORMALIZED credential name is redacted at describeTarget() too', async () => {
+    // The sequence-95 counterexample, carried all the way to the operator-facing
+    // surface rather than stopping at the pure function.
+    const host = new PostgresEstateHost({
+      connectionString: `${SOURCE_ORIGIN}/straylight_source?pass\nword=secondsecret&application_name=straylight`,
+    });
+    try {
+      const described = host.describeTarget();
+      expectNoSecret(described, 'secondsecret', 'describeTarget normalized name');
+      expect(described).toContain('<redacted>');
+      expect(described).toContain('straylight_source');
+    } finally {
+      await host.close();
     }
-    // The test must actually have exercised the property.
-    expect(checked).toBeGreaterThan(50);
-    expect(parserHonoured).toBeGreaterThan(10);
+  });
+
+  // ── PRESERVATION NEGATIVE CONTROL ────────────────────────────────────────
+  //
+  // This slice is authorized to rewrite ONLY the F-04 region of this file. The
+  // packet pins the two regions that must not move, by byte count and digest, so
+  // the preservation claim is checkable here rather than asserted in prose: the
+  // F-01 block (lines 133-213 at the substrate) and the F-09/F-10/F-14/F-15
+  // suffix (line 525 to EOF at the substrate, which is where this region ends).
+  //
+  // `node:crypto` is imported dynamically because the import block at the top of
+  // this file is outside the region this slice may edit.
+  it('PRESERVATION: the F-01 block and the F-09/F-10/F-14/F-15 suffix are byte-identical to the substrate', async () => {
+    const { createHash } = await import('node:crypto');
+    const selfText = readFileSync(resolve(ROOT, 'tests/phase-50a/safety-authority-closure.test.ts'), 'utf8');
+    const lines = selfText.split('\n');
+    const sha = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
+
+    // The F-01 block, still at lines 133-213: this region begins after it, so
+    // its position is unchanged as well as its content.
+    const f01 = lines.slice(132, 213).join('\n') + '\n';
+    expect(Buffer.byteLength(f01, 'utf8'), 'F-01 block byte count').toBe(4308);
+    expect(sha(f01), 'F-01 block digest').toBe(
+      '43cfce3c3920d94bb4305780ef5f550d2d337865fdc7f303b3b5e3dba7f0bf70',
+    );
+    // The F-01 block really is the F-01 block, so the digest is not being
+    // computed over some other 4308 bytes.
+    expect(f01).toContain("describe('Phase 50A F-01");
+
+    // The preserved suffix, wherever this region now ends: located by its first
+    // line rather than by a line number, then hashed as a unit.
+    const suffixStart = lines.findIndex((line) => line.startsWith("describe('Phase 50A F-09"));
+    expect(suffixStart, 'the F-09 suffix must still be present').toBeGreaterThan(0);
+    const suffix = lines.slice(suffixStart).join('\n');
+    expect(Buffer.byteLength(suffix, 'utf8'), 'F-09/F-10/F-14/F-15 suffix byte count').toBe(30644);
+    expect(sha(suffix), 'F-09/F-10/F-14/F-15 suffix digest').toBe(
+      '1f5159d65cafe3a4a5e7bf643d6c6a9e925e4f3310ee70df9e03d5f365f22117',
+    );
+  });
+
+  it('PRESERVATION: config.ts exports exactly the audited surface, unchanged', async () => {
+    // F-04 must be closed WITHOUT widening the module's contract. An added
+    // export would be a new surface no audit has seen; a removed one would break
+    // a call site outside this slice.
+    const module = await import('../../src/straylight/storage/postgres/config.js');
+    expect(Object.keys(module).sort()).toEqual([
+      'SHIPPED_SCHEMA_VERSIONS',
+      'redactConnectionString',
+      'resolveConfig',
+    ]);
+    expect(typeof module.redactConnectionString).toBe('function');
+    expect(module.redactConnectionString.length, 'signature arity is unchanged').toBe(1);
+    expect(module.redactConnectionString.name).toBe('redactConnectionString');
   });
 });
 

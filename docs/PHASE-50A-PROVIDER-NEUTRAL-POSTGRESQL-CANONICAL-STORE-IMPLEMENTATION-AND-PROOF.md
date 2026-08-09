@@ -3707,3 +3707,360 @@ implementer does not audit its own work.
 this work, under lease `lease-phase-50a-implementer-binding-proof-026` (lane
 #122 sequence 92). **No** Ultracode, **no** `/batch`, **no** teams, **no**
 subagents, and **no** delegation of any kind.
+
+## 22. Phase 50A F-04 parser-equivalence closure (lane #122 sequence 101)
+
+Appended by the parser-equivalence slice authorized by operator decision
+**5226840651** (lane #122 sequence 96) and executed under the sequence-97
+replacement INITIAL packet **5226925041** (digest
+`sha256:2e4681963397e7775fc4d0b35c48bdbd407d81333fe4c238c665a2cc09e57e54`),
+under fresh implementer lease
+`lease-phase-50a-implementer-parser-equivalence-029` (sequence 101). The
+earlier lease `lease-…-028` at sequence 98 **expired**; the watchdog recovery
+(`system.lease_expired` at 99, `system.requeued` at 100) is durable history,
+the expired attempt's work was **discarded**, and this slice was redone from
+clean substrate. Substrate `a7bef61814b682df057fd97645e4077d27086b85` (PR
+#133, branch `phase-50a-r3-binding-and-proof-closure`) is **rejected,
+immutable substrate** per the sequence-95 audit of record (comment
+**5226776158**, digest
+`sha256:c7d5336da17483b4bc0bec74f11a8df2c907630cfb818ac2e29523e648c63427`,
+verdict REJECT): readable and branchable only, never amended, force-pushed,
+retargeted, closed or merged, and no review thread anywhere was resolved,
+dismissed or marked outdated. `patch_cycle` remains **3**; this creates no
+`patch_cycle` 4.
+
+Everything below §22 is a **pure end-of-file append**. No byte of §1–§21 is
+rewritten. The prefix this append follows is exactly **225 786 bytes**, SHA-256
+`dcf420c088e4306dc5a46147ade5043a8135ba393fb1c2e6bd7537fe4d83b38e` — the
+file's complete content at substrate
+`a7bef61814b682df057fd97645e4077d27086b85` — including the sequence-93 §21
+text this REJECT supersedes, which stands unmodified as historical record.
+
+### 22.1 The finding (sequence-95 F-04, HIGH)
+
+The sequence-89 fix decided which query parameters are credential-bearing by
+running `decodeURIComponent(rawName)` and comparing the result against the six
+credential option names. That is an **independent approximation** of the
+parser: `pg-connection-string` never decodes the raw name directly. It
+preprocesses the whole string, constructs a **WHATWG `URL`**, and reads
+`searchParams` — and WHATWG URL parsing **strips tab, LF and CR outright
+before any percent-decoding**. So for a query name spelled
+`pass<LF>word` (a literal newline byte inside the name):
+
+- the parser normalizes the name to `password` and `pg` **honours the value
+  as the credential**, while
+- `decodeURIComponent('pass\nword')` returns `pass\nword` unchanged — not a
+  credential name — so the substrate redactor **printed the secret verbatim**.
+
+The same holds for `pass<TAB>word` and `pass<CR>word`. Codex's three
+counterexamples were reproduced on the unmodified substrate before any fix was
+written (§22.4): the substrate-fail run shows all three leaking, with the real
+parser simultaneously deriving the credential from the identical input.
+
+The audit rejected not just the miss but the **class** of fix that would
+patch it: adding CR/LF/TAB spellings, another normalization table, a
+hand-written WHATWG imitation, or a wider regex would each be a third
+independent approximation waiting for its own counterexample.
+
+### 22.2 The mechanism — the parser's own view, not a private reading
+
+The chosen seam is the **pure name-derivation prefix of
+`pg-connection-string` itself**, transcribed step-for-step into
+`src/straylight/storage/postgres/config.ts` and documented as such:
+
+| Step | Implementation | Parser source it mirrors |
+|---|---|---|
+| Preprocess | `parserPreprocess()` — `config.ts:140` | `pg-connection-string/index.js:20-23`: on a space or malformed escape, `encodeURI(str).replace(/%25(\d\d)/g,'%$1')` over the **whole** string |
+| URL construction | `parserView()` — `config.ts:198`, base literal at `config.ts:196` | `index.js:27` `new URL(str, …)` with the identical base, then `index.js:30` — the same `@/` → `@___DUMMY___/` dummy-host retry |
+| Name derivation | `view.url.searchParams` consumed at `config.ts:267` and `config.ts:325` | `index.js:40-42` — `for (const entry of result.searchParams.entries())` |
+| Credential naming | `isCredentialParameterName(parserName)` — `config.ts:225` | compares the **parser-supplied** name, case-folded, against the six real option names |
+
+**Why it cannot diverge.** The decision consumes the same objects the parser
+consumes: one preprocessing pass, one `URL`, one `searchParams`. There is no
+second normalization to drift from the first. If a future
+`pg-connection-string` behaviour changes how a name normalizes, the redaction
+decision changes with it, because the classification input **is** the parser's
+output, not a reconstruction of it. The only transcription in the module is
+the parser's own two-line preprocess and two-line URL construction, kept
+byte-faithful to `index.js` and annotated with why per-name probing is
+unsound: a malformed escape **anywhere** in the string (including a value)
+flips whole-string pre-encoding and rewrites **every** name (`?pass%6Ford=v`
+yields the harmless name `passoord`; `?pass%6Ford=v%ZZ` yields `password`) —
+which is exactly why the normalization runs once, over the whole string, at
+`config.ts:140`.
+
+**Why it is not an approximation.** An approximation predicts the parser; this
+consults it. The classification never sees the raw spelling at all — raw text
+is used only as the **rewrite surface** (`view.normalized`, the text the
+parser actually reads), never as the decision input.
+
+**Why `parse()` itself is not called.** The diagnostic path runs inside error
+construction. `parse()` reads files from disk for `sslkey`/`sslcert`/
+`sslrootcert` (`index.js:88-100`), can `process.emitWarning`
+(`index.js:219-231`), and can throw. Only its pure name-derivation prefix —
+the part that decides *which* parameter is the credential, and the part the
+audit requires agreement with — is used. The differential proof (§22.5) then
+closes the loop against the **whole real `parse()`**, so the prefix/whole
+distinction is itself under test.
+
+### 22.3 Fail-closed structure (packet B2/B3)
+
+`redactConnectionString` (`config.ts:411`) is total and never throws:
+
+1. **Non-string** → typed report, nothing interpolated (`config.ts:412`).
+2. **Parser view unavailable** — preprocess or both URL constructions fail —
+   → `<redacted> (uninterpretable connection target)`; nothing is echoed
+   (`config.ts:420`).
+3. **Unalignable query** — the rewrite pairs the normalized query's non-empty
+   `&`-segments positionally with `searchParams` entries; when the counts
+   disagree (a segment that normalizes away, a `#` inside the query), *which*
+   span carries the credential is unknowable, so `redactNormalizedQuery`
+   returns `null` (`config.ts:269`) and the **whole query is withheld**
+   (`config.ts:451`) rather than guessed at.
+4. **Checked post-condition** — the decisive property is *enforced*, not
+   argued: `parserCredentialValues` (`config.ts:309`) collects every value the
+   parser derives under a credential name — **every** duplicate entry, not
+   just the last-wins survivor — plus the userinfo password, each in decoded
+   and re-encoded form; the candidate output is scanned (raw and decoded) and
+   any hit escalates to the withheld form, then to the fully-redacted report
+   (`config.ts:423-456`). A credential value that coincidentally appears under
+   a non-credential name or in the path is caught here, because the property
+   binds the **value**, not its position.
+
+Non-secret detail (scheme, host, port, database, non-credential parameters)
+is preserved on the ordinary path, and the pass-through test pins that a
+clean loopback target emerges **byte-identical** — so "redact everything"
+cannot satisfy the suite.
+
+### 22.4 Substrate-fail / fix-pass (packet B5)
+
+The F-04 test region of `tests/phase-50a/safety-authority-closure.test.ts`
+was rewritten (only lines 214–523 at substrate; see §22.7 for the byte proof
+of everything around it). The named reproduction is
+**`SEQUENCE-95 REPRODUCTION: a bare LF, TAB or CR inside a credential name
+cannot leak`** (`safety-authority-closure.test.ts:453`): for every interior
+split of four credential names × {LF, TAB, CR}, it asks the **real parser**
+what it derives, and asserts the derived value absent from the redaction —
+with a non-vacuity floor of >15 parser-honoured counterexamples
+(`safety-authority-closure.test.ts:490`).
+
+**Substrate-fail run** — the new suite executed against the byte-identical
+substrate `config.ts` (`git show a7bef61…:src/straylight/storage/postgres/config.ts`
+swapped into the tree), command
+`vitest run tests/phase-50a/safety-authority-closure.test.ts`:
+
+```
+Tests  10 failed | 60 passed (70)
+FAIL … redacts every secret …: NORMALIZED name, bare LF inside the credential name
+  AssertionError: … raw secret survived in postgresql://<loopback>:55432/straylight_source?pass\nword=hunter2secret
+FAIL … redacts every secret …: NORMALIZED name, bare TAB inside the credential name
+FAIL … redacts every secret …: NORMALIZED name, bare CR inside the credential name
+FAIL … SEQUENCE-95 REPRODUCTION: a bare LF, TAB or CR inside a credential name cannot leak
+  AssertionError: PARSER DISAGREEMENT (bare LF in password): pg derives the
+  credential hunter2secret from "postgresql://<loopback>:55432/straylight_source?p\nassword=hunter2secret",
+  but the redactor printed it in "postgresql://<loopback>:55432/straylight_source?p\nassword=hunter2secret"
+FAIL … SEEK-DISAGREEMENT: no generated input makes the parser derive a credential the redactor prints
+FAIL … DUPLICATE TRAP … / … UNALIGNABLE query … / … DIAGNOSTIC REACHABILITY: a NORMALIZED credential name …
+```
+
+(10 failures total; the fifth through tenth named above. The three LF/TAB/CR
+matrix cases, the reproduction, and the seek-disagreement proof all fail on
+the defect, as B5 requires.)
+
+**Fix-pass run** — identical command, fixed `config.ts` restored:
+
+```
+Test Files  1 passed (1)
+Tests  70 passed (70)
+```
+
+### 22.5 The generated seek-disagreement proof (packet B4)
+
+**`SEEK-DISAGREEMENT: no generated input makes the parser derive a credential
+the redactor prints`** (`safety-authority-closure.test.ts:511`) generates its
+inputs by **composing transformations** — it does not enumerate known cases:
+
+- **case operations** (upper, capitalised, alternating) ×
+- **percent encoding** (first / middle / last letter, upper- and lower-case
+  escapes, fully-encoded name) ×
+- **interior insertions** (bare LF, CR, TAB; `+`; malformed `%ZZ`) ×
+- **value forms** (plain; percent-encoded letters; an encoded
+  reserved-character credential; `+`-separated words; a value ending in a
+  malformed escape) ×
+- **tails** (nothing; a benign parameter; a malformed escape in a *different*
+  parameter — which flips whole-string pre-encoding; a fragment; two duplicate
+  spellings) ×
+- **heads** (bare origin; userinfo-carrying; portless).
+
+For every generated input the **real `pg-connection-string` `parse()`** is
+the oracle: whatever value it places under a credential-named key must be
+absent from the redaction. Parser-refused inputs assert the no-throw
+contract instead. Every transformation class is **counted only when the
+parser actually honoured a credential from an input carrying it**, and the
+test fails if any required class — mixed-case, percent-encoding, lf/cr/tab
+normalization, plus-handling, duplicate-parameters, malformed-escape,
+encoded-credential-value, **interaction** (≥2 classes at once) — was never
+honoured (`safety-authority-closure.test.ts:700-712`).
+
+Observed at the final head (extracted by running the generator verbatim):
+
+| count | value |
+|---|---:|
+| checked (floor >5 000) | **64 800** |
+| parser-honoured (floor >1 000) | **42 090** |
+| parser-refused (floor >0) | 1 110 |
+| lf-normalization honoured | 7 504 |
+| cr-normalization honoured | 7 504 |
+| tab-normalization honoured | 7 504 |
+| percent-encoding honoured | 33 096 |
+| mixed-case honoured | 32 400 |
+| plus-handling honoured | 8 856 |
+| duplicate-parameters honoured | 17 334 |
+| malformed-escape honoured | 13 638 |
+| encoded-credential-value honoured | 17 712 |
+| interaction (≥2 classes) honoured | **41 262** |
+
+The oracle is the parser package itself — `await import('pg-connection-string')`
+— **not** a helper reimplementing its assumptions; a helper that agreed with
+the implementation would agree with its bugs, which is the mistake the audit
+named. During development the identical harness was also run **against the
+substrate implementation**: 11 052 leaks out of 53 948 parser-honoured inputs,
+versus **0** for the fix — the same generator, the same oracle.
+
+**The duplicate trap** (packet B4's explicit care item) has its own named
+test (`safety-authority-closure.test.ts:723`): `searchParams` is last-wins
+for the parser's `config[name] = value` loop, so `?pass<LF>word=A&password=B`
+yields B — and the test proves the parser really derives the LATER value,
+then asserts **both** values absent, because the earlier duplicate is still a
+credential in the raw text however the tie resolves. The implementation side
+of the same obligation is `parserCredentialValues` collecting **every**
+credential-named entry (`config.ts:325-327`), not just the survivor.
+
+### 22.6 The structural mutation (packet B6)
+
+**The exact mutation.** Both parser-derived decision sites in the fixed
+`config.ts` were replaced with the substrate's independent approximation —
+`decodeURIComponent(rawName.replace(/\+/g,' '))` on the raw segment name —
+via a scripted edit (asserting exactly one occurrence of each replaced
+block): the `searchParams`-driven rewrite loop (`config.ts:267-280`) and the
+`searchParams`-driven credential-value derivation (`config.ts:325-327`). The
+mutated module **typechecks cleanly** (`tsc --noEmit` exit 0), so no failure
+below is a type or import error.
+
+**Command.** `vitest run tests/phase-50a/safety-authority-closure.test.ts`
+
+**Named failing proofs, for the intended reason.** 10 tests fail, among them
+the two the packet names, each with a parser/redactor-disagreement assertion
+message, e.g.:
+
+```
+FAIL … SEQUENCE-95 REPRODUCTION: a bare LF, TAB or CR inside a credential name cannot leak
+  AssertionError: PARSER DISAGREEMENT (bare LF in password): pg derives the
+  credential hunter2secret from "…?p\nassword=hunter2secret", but the
+  redactor printed it in "…?p\nassword=hunter2secret"
+FAIL … SEEK-DISAGREEMENT: no generated input makes the parser derive a credential the redactor prints
+  AssertionError: PARSER DISAGREEMENT: pg derives credential "hunter2secret"
+  from "…?pass\nword=hunter2secret" (classes: lf-normalization), but the
+  redactor printed it in …
+```
+
+The failure is the disagreement the mutation reintroduces — a normalized
+credential name honoured by the parser and printed by the redactor — not a
+crash and not an unrelated assertion.
+
+**Positive control and reversion.** The unmutated file was restored from the
+pre-mutation snapshot and verified by SHA-256 equality
+(`e910da6b70ff2328b25f795ba61d72ed257fe8e4813931038c5efbe4fbe81eb5`, both
+before mutation and after reversion); the suite then passes 70/70. The
+mutation exists nowhere in the committed tree — it was applied and reverted
+in the working tree only, and the final commit's `config.ts` hashes to the
+same digest.
+
+### 22.7 Preservation proof (packet B7/B8)
+
+**Test file regions.** At substrate the file is 54 687 bytes / 1 172 lines.
+At the final head:
+
+- the **F-01 block** (lines 133–213, unchanged in both content and position)
+  is **4 308 bytes**, SHA-256
+  `43cfce3c3920d94bb4305780ef5f550d2d337865fdc7f303b3b5e3dba7f0bf70` —
+  byte-identical to the packet's pin;
+- the **F-09/F-10/F-14/F-15 suffix** (from `describe('Phase 50A F-09 …`,
+  now beginning at line 918) is **30 644 bytes**, SHA-256
+  `1f5159d65cafe3a4a5e7bf643d6c6a9e925e4f3310ee70df9e03d5f365f22117` —
+  byte-identical to the packet's pin;
+- only the F-04 region between them was rewritten.
+
+These are not only asserted here: the suite now carries a **preservation
+negative control** (`safety-authority-closure.test.ts:873`) that recomputes
+both byte counts and digests from the file's own bytes on every run, and a
+**surface control** (`safety-authority-closure.test.ts:901`) that pins the
+module's runtime exports to exactly `SHIPPED_SCHEMA_VERSIONS`,
+`redactConnectionString` (arity 1, same name) and `resolveConfig` — with the
+two `interface` exports (`PostgresStoreConfig`,
+`ResolvedPostgresStoreConfig`) unchanged in source and erased at runtime as
+before. No export was added or removed; no call site changed.
+
+**This document.** The change is a pure EOF append over the 225 786-byte
+prefix `dcf420c088e4306dc5a46147ade5043a8135ba393fb1c2e6bd7537fe4d83b38e`
+(§22 head note). No existing byte was rewritten, reflowed, renumbered or
+deleted.
+
+**Everything else.** Of the 661 tree entries at substrate
+`a7bef61814b682df057fd97645e4077d27086b85`, exactly **three** differ at the
+final head — the three `allowed_paths`, each actually written. The other
+**658** are identical by mode, type and blob object id, verified by a full
+`git ls-tree -r` comparison of the two trees. In particular the F-09/F-10
+implementation (`scripts/phase-50a/hosts.ts`, `pg-tools.ts`,
+`two-host-proof.ts`), the F-14 implementation
+(`scripts/phase-50a/verify-existing-restore.ts`), the runbook,
+`tests/phase-31f-operator-recall-wedge-demo.test.ts` (blob
+`820221ec773cdd24fdd9e386aaaf06a4a17c5206`), the conformance workflow
+(7 287 bytes, `sha256:b95509fb82142d647e425d8c9a0ca10a7cf289d5fbfedc4573193a20c499fd7b`),
+`package.json`, `package-lock.json`, every other
+`src/straylight/storage/postgres/**` file, `.straylight/**` and
+`migrations/postgres/**` are byte-identical to substrate.
+
+### 22.8 Suite results at the final head
+
+| Check | Result |
+|---|---|
+| Focused F-04 suite (`safety-authority-closure.test.ts`) | 70/70 passed |
+| Full repository suite (`npm test`) | 90 files passed, 2 346 passed / 150 skipped |
+| Control-plane suite (`npm run control-plane:test`) | 29 files, 1 025 passed |
+| Phase 50A suite (`npm run phase-50a:test`) | 16 files, 386 passed |
+| Typecheck (`tsc --noEmit`) | clean |
+| Build (`npm run build` + prune + postbuild) | clean |
+| Two-host proof (`npm run phase-50a:proof`) | PASS (export, cross-host restore, identical chains, cold load, governed recall, continued writes) |
+| Artifact C1..C9 (`npm run phase-50a:verify-artifact`) | PASS — 30 tracked = 30 generated = 30 packed declarations, 44 packed files |
+| No-leak / neutrality scan | passes UNCHANGED (suite not edited) |
+
+One disclosure for the no-leak scan: the fixed `config.ts` needs the parser's
+base-URL literal for `new URL(str, base)`; a spelled-out URL literal that
+names a non-loopback host is forbidden by the committed-connection-string
+scan, so the literal is assembled from fragments at `config.ts:196` with a
+comment stating exactly why — the same convention the test file already uses
+for its `SCHEME` constant. The scan itself is untouched.
+
+### 22.9 Standing scope statement
+
+F-09/F-10 and F-14 remain **UNAUDITED** — not passed, not failed, not closed,
+not accepted. Sequence 95 recorded them unaudited because Codex stopped at
+the blocking F-04 finding; their implementation is preserved byte-for-byte by
+this slice (§22.7), and the next Codex audit owes, independently: (i) this
+F-04 parser-equivalence closure, (ii) inherited F-09/F-10 structural target
+binding, and (iii) inherited F-14 real-query observation. F-01 and F-15
+remain preserved as closed absent new regression evidence.
+
+No provider, production, living-estate, sibling-repository or external-API
+authority is claimed. No Tracks B/C/D work, no Phase 50B progression, no
+control-plane change, no workflow / package / dependency change, no gate
+closure, no MVP-2 closure, and no acceptance, readiness or merge claim —
+closing this finding does not make any PR merge-eligible. Merge remains
+**operator-only** (`operator:eileen`, ADR-049 §6). The audit of this slice is
+Codex's; the implementer does not audit its own work.
+
+**Implementation provenance.** Exactly **one** Claude agent at high effort did
+this work, under lease `lease-phase-50a-implementer-parser-equivalence-029`
+(lane #122 sequence 101). **No** Ultracode, **no** `/batch`, **no** teams,
+**no** subagents, and **no** delegation of any kind.
