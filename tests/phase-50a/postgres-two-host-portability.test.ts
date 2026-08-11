@@ -47,7 +47,6 @@ import {
 } from '../../scripts/phase-50a/pg-tools.js';
 import {
   assertDistinctHosts,
-  databaseNameOf,
   openScratchDatabase,
   openUnmigratedDatabase,
   phase50aEnabled,
@@ -56,43 +55,51 @@ import {
   requireReachable,
   sourceHost,
 } from './_support.js';
-// `toolTargetOf` comes straight from the descriptor module: `_support.ts` is
-// outside this packet's allowed paths, so it cannot re-export it, and importing
-// it here keeps the SINGLE SOURCE of container/user/database intact (F-10).
+// `toolTargetOf` comes straight from the descriptor module, so the SINGLE SOURCE
+// of container/user/database stays intact (F-10). It is used only for a fixed
+// instance's OWN database; a scratch database's tool target arrives WITH the
+// grant that created it, as `ScratchDatabase#toolTarget`.
+import { toolTargetOf } from '../../scripts/phase-50a/hosts.js';
 import {
-  declareScratchDatabase,
-  toolTargetOf,
-  type ProofHost,
-} from '../../scripts/phase-50a/hosts.js';
-import {
-  provedNoDestructiveSql,
-  recordedStatements,
-  recordedStatementsAreReadOnly,
-  resetRecordedStatements,
+  observeQueries,
+  observedQueryProof,
+  recordedObservations,
+  resetRecordedObservations,
+  verificationExitCode,
   verifyExistingRestore,
 } from '../../scripts/phase-50a/verify-existing-restore.js';
 
 const NOW = '2026-05-05T12:00:00Z';
 const ESTATE_ID = loadEstate().estate_id;
 
+// ── WHERE A SCRATCH DATABASE'S TOOL TARGET COMES FROM (F-10) ──────────────
+//
+// It comes back from the creation. This suite used to hold a `scratchToolTarget`
+// helper that took a connection string, extracted the database NAME, handed the
+// name to `declareScratchDatabase` to have it registered, and then asked
+// `toolTargetOf` to issue a target for it. The sequence-104 audit rejected that
+// route: registration accepted any `p50a_`-shaped name, so the authority came
+// from the name's SHAPE rather than from the database's EXISTENCE.
+//
+// There is nothing left to help with. `_support.ts#openScratchDatabase`
+// delegates creation to `hosts.createScratchDatabase`, which creates the database
+// and issues its tool target in the same act, and the handle carries that target
+// as `toolTarget`. Every `pg_dump`/`psql` call below uses it directly, so the
+// target this suite dumps and restores through is provably the target for a
+// database the harness itself created.
+
 /**
- * The tool target for one of THIS suite's scratch databases.
+ * A client that OBSERVES a statement without executing it.
  *
- * ── THE GATED ISSUANCE ROUTE (sequence-89 audit, F-10) ────────────────────
- *
- * `toolTargetOf(host, name)` used to accept any name and register it as an
- * ISSUED (therefore authorized) target, so an arbitrary database could reach
- * `pg_dump`, `psql` and the destructive paths. A database other than the
- * descriptor's own must now be MINTED for that descriptor first.
- *
- * These scratch databases are legitimately ours — `_support.ts#openScratchDatabase`
- * created them inside the fixed instance, with its own `p50a_` naming — so this
- * helper declares the name against the same descriptor and then issues the
- * target from it. Container and user still come only from the descriptor.
+ * The F-14 injections below go through `observeQueries` — the very wrapper
+ * `readEstate` puts around its client, so the observation is taken at the real
+ * seam — but they are wrapped around this stub rather than a live connection,
+ * because the statement being injected is `DROP TABLE assertions`. The proof is
+ * that an observed destructive statement is REFUSED; actually executing one
+ * would destroy the estate whose survival the rest of this test asserts.
  */
-function scratchToolTarget(host: ProofHost, connectionString: string): PgToolTarget {
-  const database = declareScratchDatabase(host, databaseNameOf(connectionString));
-  return toolTargetOf(host, database);
+function inertClient(): { query: (sql: string) => Promise<{ rows: never[] }> } {
+  return { query: async () => ({ rows: [] }) };
 }
 
 phase50aGateReport('postgres-two-host-portability');
@@ -151,16 +158,11 @@ maybe('Phase 50A portability — export from source, restore into a different ho
         expect(seeded.value.tail).toBeDefined();
         expect(seeded.value.auditLength).toBeGreaterThanOrEqual(3);
 
-        // Same fixed descriptors, scoped to this test's scratch databases
-        // INSIDE those same instances. Container and user are never restated.
-        const sourceTarget: PgToolTarget = scratchToolTarget(
-          sourceHost(),
-          source.connectionString,
-        );
-        const replacementTarget: PgToolTarget = scratchToolTarget(
-          replacementHost(),
-          target.connectionString,
-        );
+        // The tool targets ISSUED BY the creation of these two scratch
+        // databases (F-10). Nothing here names a database, a container or a
+        // user: the grant that created each database is what authorizes it.
+        const sourceTarget: PgToolTarget = source.toolTarget;
+        const replacementTarget: PgToolTarget = target.toolTarget;
 
         // ── 2. ordinary export ────────────────────────────────────────────
         const dump = pgDump(sourceTarget);
@@ -293,14 +295,11 @@ maybe('Phase 50A portability — export from source, restore into a different ho
           expect(store.admit(observation('verify two'), NOW).ok).toBe(true);
         });
 
-        const dump = pgDump(scratchToolTarget(sourceHost(), source.connectionString));
-        psqlRestore(
-          scratchToolTarget(replacementHost(), target.connectionString),
-          dump.sql,
-        );
+        const dump = pgDump(source.toolTarget);
+        psqlRestore(target.toolTarget, dump.sql);
 
         // ── AGREEING CASE ────────────────────────────────────────────────
-        resetRecordedStatements();
+        resetRecordedObservations();
         const agreeing = await verifyExistingRestore(
           source.connectionString,
           target.connectionString,
@@ -308,6 +307,7 @@ maybe('Phase 50A portability — export from source, restore into a different ho
         expect(agreeing.differences).toEqual([]);
         expect(agreeing.brokenChains).toEqual([]);
         expect(agreeing.ok).toBe(true);
+        expect(verificationExitCode(agreeing)).toBe(0);
         // Redacted target descriptions — the harness password must not appear in
         // a report an operator is invited to paste into an escalation.
         expect(agreeing.source.target).toContain('<redacted>');
@@ -315,23 +315,57 @@ maybe('Phase 50A portability — export from source, restore into a different ho
         // OBSERVED AT EXECUTION: the record comes from the wrapped
         // `client.query`, so these are statements the verifier ACTUALLY issued
         // — not a description it wrote about itself (sequence-89 F-14).
-        const agreeingStatements = recordedStatements();
-        expect(agreeingStatements.length).toBeGreaterThan(0);
-        expect(recordedStatementsAreReadOnly(), `recorded: ${agreeingStatements.join(' | ')}`).toBe(
-          true,
-        );
-        // The NON-VACUOUS proof: evidence exists AND none of it is destructive.
-        // An empty record would fail this, which is the whole point.
-        expect(provedNoDestructiveSql(), `recorded: ${agreeingStatements.join(' | ')}`).toBe(true);
-        // Every observed statement is a real SQL text, and they are SELECTs.
-        for (const statement of agreeingStatements) {
-          expect(typeof statement).toBe('string');
-          expect(statement).not.toContain('UNRECOGNIZED QUERY SHAPE');
+        const agreeingObservations = recordedObservations();
+        const agreeingSql = agreeingObservations.map((o) => o.sql ?? '(unobservable)').join(' | ');
+        // NON-VACUITY, by count: two estate readings of eight queries each. A
+        // record that had observed nothing — the case the substrate's PASS could
+        // not distinguish — fails here.
+        expect(agreeingObservations.length, `recorded: ${agreeingSql}`).toBeGreaterThanOrEqual(16);
+        for (const observation of agreeingObservations) {
+          expect(observation.shape, `unobservable query in: ${agreeingSql}`).toBe('text');
+          expect(observation.verdict.recognized, `unrecognized in: ${agreeingSql}`).toBe(true);
+          expect(observation.sql).toMatch(/\bSELECT\b/i);
         }
-        expect(
-          agreeingStatements.some((s) => /\bSELECT\b/i.test(s)),
-          'no observed statement was a SELECT — the seam did not observe the reads',
-        ).toBe(true);
+        // THE PROOF THE VERDICT USED, not a separate re-derivation: the report
+        // carries it, so what governed `ok` is what is asserted here.
+        expect(agreeing.queryProof.observed).toBe(agreeingObservations.length);
+        expect(agreeing.queryProof.recognized).toBe(agreeingObservations.length);
+        expect(agreeing.queryProof.refusals).toEqual([]);
+        expect(agreeing.queryProof.proved).toBe(true);
+        expect(observedQueryProof()).toEqual(agreeing.queryProof);
+
+        // ── AN OBSERVED DESTRUCTIVE STATEMENT FORCES FAILURE (B5.iv) ─────
+        // Injected THROUGH THE REAL SEAM — `observeQueries` is the same wrapper
+        // `readEstate` puts around its client — over a stub client, so the
+        // statement is observed and never executed. The two estates still
+        // AGREE, so `differences` stays empty and the observation is provably
+        // the only reason the verification fails.
+        resetRecordedObservations();
+        await observeQueries(inertClient()).query('DROP TABLE assertions');
+        const destructive = await verifyExistingRestore(
+          source.connectionString,
+          target.connectionString,
+        );
+        expect(destructive.differences, 'the estates still agree').toEqual([]);
+        expect(destructive.brokenChains).toEqual([]);
+        expect(destructive.ok, 'an observed DROP must not be reported as agreement').toBe(false);
+        expect(verificationExitCode(destructive)).toBe(1);
+        expect(destructive.queryProof.proved).toBe(false);
+        expect(destructive.queryProof.refusals.join(' ')).toMatch(/DROP TABLE assertions/);
+
+        // ── AN OBSERVED UNKNOWN FORM FORCES FAILURE (B5.iv) ──────────────
+        // Not destructive, not recognized. The substrate's classifier presumed
+        // unknown forms read-only and passed; the grammar refuses them.
+        resetRecordedObservations();
+        await observeQueries(inertClient()).query('WITH cte AS (SELECT 1) SELECT * FROM cte');
+        const unknown = await verifyExistingRestore(
+          source.connectionString,
+          target.connectionString,
+        );
+        expect(unknown.differences).toEqual([]);
+        expect(unknown.ok, 'an unrecognized observed form must not pass').toBe(false);
+        expect(verificationExitCode(unknown)).toBe(1);
+        expect(unknown.queryProof.refusals.join(' ')).toMatch(/UNRECOGNIZED/);
 
         // NOTHING WAS ERASED: both estates still hold what they held.
         const countsAfter = await source.host.withEstateSession(ESTATE_ID, (storage) => ({
@@ -351,24 +385,29 @@ maybe('Phase 50A portability — export from source, restore into a different ho
           expect(store.admit(observation('divergence on the target only'), NOW).ok).toBe(true);
         });
 
-        resetRecordedStatements();
+        resetRecordedObservations();
         const mismatching = await verifyExistingRestore(
           source.connectionString,
           target.connectionString,
         );
         expect(mismatching.ok, 'a divergent target must NOT be reported as agreement').toBe(false);
+        expect(verificationExitCode(mismatching)).toBe(1);
         expect(mismatching.differences.length).toBeGreaterThan(0);
         expect(mismatching.differences.join(' ')).toMatch(/digest|assertions|audit/i);
         // A divergence is not a BROKEN chain — both chains still verify — so the
         // two verdicts stay distinguishable.
         expect(mismatching.brokenChains).toEqual([]);
         // OBSERVED: still only reads, on the mismatching path too — and proven
-        // non-vacuously, from statements the verifier actually issued.
-        expect(recordedStatementsAreReadOnly()).toBe(true);
-        expect(
-          provedNoDestructiveSql(),
-          `mismatch path recorded: ${recordedStatements().join(' | ')}`,
-        ).toBe(true);
+        // non-vacuously, from statements the verifier actually issued. So this
+        // failure is the DIVERGENCE, distinguishable from the two failures above.
+        const mismatchSql = recordedObservations()
+          .map((o) => o.sql ?? '(unobservable)')
+          .join(' | ');
+        expect(mismatching.queryProof.observed, `recorded: ${mismatchSql}`).toBeGreaterThanOrEqual(
+          16,
+        );
+        expect(mismatching.queryProof.refusals, `recorded: ${mismatchSql}`).toEqual([]);
+        expect(mismatching.queryProof.proved).toBe(true);
 
         // And STILL nothing erased: the source is exactly as it was.
         const sourceUntouched = await source.host.withEstateSession(ESTATE_ID, (storage) => ({
@@ -401,11 +440,8 @@ maybe('Phase 50A portability — export from source, restore into a different ho
         tails[estate] = written.value;
       }
 
-      const dump = pgDump(scratchToolTarget(sourceHost(), source.connectionString));
-      psqlRestore(
-        scratchToolTarget(replacementHost(), target.connectionString),
-        dump.sql,
-      );
+      const dump = pgDump(source.toolTarget);
+      psqlRestore(target.toolTarget, dump.sql);
 
       const sourceSnapshot = await source.host.withClient(readStoreSnapshot);
       const targetSnapshot = await target.host.withClient(readStoreSnapshot);
@@ -450,11 +486,8 @@ maybe('Phase 50A portability — export from source, restore into a different ho
       await source.host.withEstateSession(ESTATE_ID, (storage) => {
         newStore(storage).admit(observation('immutable after restore'), NOW);
       });
-      const dump = pgDump(scratchToolTarget(sourceHost(), source.connectionString));
-      psqlRestore(
-        scratchToolTarget(replacementHost(), target.connectionString),
-        dump.sql,
-      );
+      const dump = pgDump(source.toolTarget);
+      psqlRestore(target.toolTarget, dump.sql);
 
       // The dump carries the triggers, so append-only enforcement survives the
       // move. Without this, a restored store would silently lose the strongest

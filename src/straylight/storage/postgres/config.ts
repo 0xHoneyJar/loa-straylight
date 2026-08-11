@@ -128,11 +128,16 @@ function isProvablyCredentialFreeAuthority(authority: string): boolean {
  * and then un-escapes the `%25NN` that step introduced. It is copied rather
  * than approximated because it is the parser's, and because it is
  * load-bearing in a way that is easy to miss: a malformed escape ANYWHERE in
- * the string — including in a VALUE — changes how EVERY NAME in that string
- * normalizes. `?pass%6Ford=v` yields the harmless name `passoord`, but
- * `?pass%6Ford=v%ZZ` yields `password`, the credential. That coupling is why
- * a per-parameter probe cannot be faithful and why the whole string must be
- * normalized ONCE, as one unit, exactly here.
+ * the string — including in a VALUE — changes how NAMES ELSEWHERE in that
+ * string normalize. The un-escape restores only escapes whose two characters
+ * are DIGITS, so `?pass%6Ford=v` yields the harmless name `passoord` while
+ * `?pass%6Ford=v%ZZ` yields `pass%6Ford` — `%6F` survives as literal text,
+ * because `6F` is not two digits — and `?pass%77ord=…` yields the credential
+ * name `password` either way, because `77` is. That coupling is why a
+ * per-parameter probe cannot be faithful and why the whole string must be
+ * normalized ONCE, as one unit, exactly here. The `%`-bearing name it can
+ * produce is also why an uncertain query reading is WITHHELD rather than
+ * classified (see `redactNormalizedQuery`).
  *
  * Returns `null` when even this step cannot be completed, which the caller
  * treats as total ambiguity.
@@ -246,6 +251,21 @@ function isCredentialParameterName(parserName: string): boolean {
  * returns `null` and the caller withholds the entire query rather than
  * rewriting a span it cannot identify. Guessing here would be the exact
  * failure the audit named: printing a value the parser honours.
+ *
+ * THE CERTAINTY REQUIREMENT, AND WHY A LEFTOVER `%` DEFEATS IT. A malformed
+ * percent escape ANYWHERE in the string sends the whole string through
+ * `encodeURI` (see `parserPreprocess`), which changes how EVERY name in it
+ * normalizes. A parser-derived name that comes back still carrying a `%` is the
+ * observable evidence that this happened AND did not resolve: `?pass%ZZword=…`
+ * arrives as the name `pass%ZZword`, a name nobody wrote, produced by a
+ * degrading rewrite of text that was not a valid URI to begin with. What such
+ * an input means is not decidable from this side — a different URI reader
+ * (libpq, a future parser release, a proxy that re-encodes) can land on
+ * `password` where this one landed on `pass%ZZword`, and the reading that
+ * matters is whichever one receives the string. So a query whose reading is
+ * UNCERTAIN in this way is withheld WHOLE, exactly as an unalignable one is.
+ * This is the fail-closed answer to malformed and ambiguous credential-shaped
+ * query content: it is not classified, it is not printed.
  */
 function redactNormalizedQuery(view: ParserView): string | null {
   const queryStart = view.normalized.indexOf('?');
@@ -267,6 +287,8 @@ function redactNormalizedQuery(view: ParserView): string | null {
   const entries = [...view.url.searchParams.entries()];
   // UNALIGNABLE ⇒ the sensitive span is unidentifiable ⇒ fail closed.
   if (meaningful.length !== entries.length) return null;
+  // UNCERTAIN ⇒ what the reader receives is not decidable here ⇒ fail closed.
+  if (entries.some(([parserName]) => parserName.includes('%'))) return null;
 
   meaningful.forEach((segmentIndex, entryIndex) => {
     const [parserName] = entries[entryIndex]!;
@@ -305,6 +327,17 @@ function withheldQuery(view: ParserView): string {
  * (`…//straylight:…@<host>/straylight`), and treating it as
  * unmentionable text would erase the target from every diagnostic for no
  * credential benefit.
+ *
+ * DIRECTIONALITY — THE ONE PLACE AN EXTRA FORM IS PERMITTED. `encodeURIComponent`
+ * here is not a second normalization competing with the parser's: it only ever
+ * ADDS a form to the FORBIDDEN set, so its every effect is to withhold more.
+ * That is the invariant this module now holds to, and it is what the sequence-104
+ * audit's rejection actually turns on — the substrate's `contains()` used a
+ * decoder to decide that output was SAFE, and an approximation on the PERMIT
+ * side authorizes exactly what it fails to model. No approximation appears on
+ * the permit side of this module: `parserReadings` (below), which is the only
+ * thing that can license output, is built from the parser's own view and the
+ * parser's own decoder and nothing else.
  */
 function parserCredentialValues(view: ParserView): string[] {
   const values: string[] = [];
@@ -332,6 +365,102 @@ function parserCredentialValues(view: ParserView): string[] {
     /* malformed escape: the raw form added above is the check */
   }
   return values;
+}
+
+/** The query span of a text: after its first `?`, up to the `#` that ends it. */
+function querySpanOf(text: string): string {
+  const start = text.indexOf('?');
+  if (start < 0) return '';
+  const rest = text.slice(start + 1);
+  const fragment = rest.indexOf('#');
+  return fragment >= 0 ? rest.slice(0, fragment) : rest;
+}
+
+/**
+ * Everything a reader of THIS TEXT would obtain from it, using the same
+ * effective parser and query semantics that decide what `pg` receives.
+ *
+ * This is the permit side of the decisive property, and the sequence-104 audit
+ * rejected the class of thing that used to sit here. The substrate asked
+ * "does the raw text, or `decodeURIComponent` of it, contain the secret?" —
+ * a HAND-WRITTEN DECODER standing in for the parser, and therefore wrong in
+ * precisely the ways the parser is not:
+ *
+ *   * `?application_name=hunter+2+secret` — `searchParams` form-decodes `+` to
+ *     a space, so the reader receives `hunter 2 secret`; `decodeURIComponent`
+ *     leaves the `+` alone, sees a different string, and permitted the output.
+ *   * `?x=sec%72et` under a non-credential name — the reader receives `secret`;
+ *     the two-form scan only matched if the WHOLE text decoded cleanly.
+ *
+ * Both are the same defect: a private decoder deciding that text is safe to
+ * print. The replacement asks the parser instead. Every reading below is
+ * produced by the SAME machinery `pg-connection-string` uses on the string it
+ * is handed:
+ *
+ *   * `parserView(text)` — the parser's preprocessing and its `URL`
+ *     construction, including the dummy-host retry;
+ *   * that URL's `username`, `password`, `hostname`, `pathname`, `hash`, and
+ *     every `searchParams` NAME and VALUE — which is where `+` becomes a
+ *     space, `%77` becomes `w`, and a stripped TAB/LF/CR disappears, because
+ *     `URL`'s own `searchParams` is doing it and not this module;
+ *   * the two decodings the parser applies on top of the URL —
+ *     `decodeURIComponent` on userinfo and `decodeURI` on the path — because
+ *     those are what land in `config.user` / `config.password` /
+ *     `config.database`;
+ *   * `URLSearchParams` over the raw text and over its query span.
+ *     `URLSearchParams` IS the decoder `searchParams` is — the same
+ *     `application/x-www-form-urlencoded` reading, not an imitation of it —
+ *     and unlike `URL` it is TOTAL: it cannot throw. That matters because a
+ *     candidate output is not required to be URL-constructible (`<redacted>`
+ *     is not a host), and a permit side that went blind on unconstructible
+ *     text would be a permit side that leaked on it.
+ *
+ * The raw text is included first and unconditionally, so nothing this list
+ * fails to model can ever REMOVE a reading: every entry after the first only
+ * widens what is checked. A reading this misses cannot authorize output that
+ * the raw scan already refuses.
+ */
+function parserReadings(text: string): string[] {
+  const readings: string[] = [text];
+  const push = (value: string): void => {
+    if (value.length > 0) readings.push(value);
+  };
+  const view = parserView(text);
+  if (view !== null) {
+    push(view.normalized);
+    push(view.url.username);
+    push(view.url.password);
+    push(view.url.hostname);
+    push(view.url.pathname);
+    push(view.url.hash);
+    for (const [name, value] of view.url.searchParams.entries()) {
+      push(name);
+      push(value);
+    }
+    // `config.user` / `config.password` / `config.database` as the parser
+    // assigns them, which is one decode further on than the URL itself.
+    try {
+      push(decodeURIComponent(view.url.username));
+      push(decodeURIComponent(view.url.password));
+    } catch {
+      /* malformed escape: the undecoded forms pushed above stand */
+    }
+    try {
+      push(decodeURI(view.url.pathname));
+    } catch {
+      /* malformed escape: the undecoded form pushed above stands */
+    }
+  }
+  // Total, and the parser's own form decoding. Applied to the whole text as
+  // well as its query span, because which one a reader treats as the query
+  // depends on how the text reached it.
+  for (const span of [text, querySpanOf(text)]) {
+    for (const [name, value] of new URLSearchParams(span).entries()) {
+      push(name);
+      push(value);
+    }
+  }
+  return readings;
 }
 
 /**
@@ -375,14 +504,25 @@ function redactAuthority(text: string): string {
  * verbatim by the redactor. Adding those spellings would have been the same
  * mistake a third time.
  *
- * THE STRUCTURAL FIX: the decision is no longer this module's to make. Which
- * parameters exist, and what each is CALLED, comes from `parserView` — the
- * parser's own preprocessing and URL construction, its own `searchParams`.
- * This module only matches those parser-supplied names against the six real
- * option names and rewrites the text the parser read. There is no second
- * normalization to drift from the first, so no future encoding or
+ * The sequence-104 audit then found the SAME CLASS surviving one level down. The
+ * naming decision had been handed to the parser, but the post-condition that
+ * licenses the output had not: it asked whether the raw text or
+ * `decodeURIComponent` of it contained the secret — a hand-written decoder on
+ * the PERMIT side. So `?password=hunter+2+secret&application_name=hunter+2+secret`
+ * redacted the first parameter, printed the second, and the reader
+ * form-decoded it straight back to the password.
+ *
+ * THE STRUCTURAL FIX, ON BOTH SIDES: the decision is no longer this module's to
+ * make. Which parameters exist, and what each is CALLED, comes from `parserView`
+ * — the parser's own preprocessing and URL construction, its own `searchParams`.
+ * WHETHER THE RESULT IS SAFE TO PRINT comes from `parserReadings`, which reads
+ * the candidate back through that same machinery, so what is checked is what a
+ * reader would receive and not what a local decoder imagines. This module only
+ * matches parser-supplied names against the six real option names, rewrites the
+ * text the parser read, and re-reads its own output with the parser. There is no
+ * second normalization to drift from the first, so no future encoding or
  * normalization behaviour can put the two out of step: if the parser's view of
- * a name changes, this decision changes with it, in the same code.
+ * a name or a value changes, both decisions change with it, in the same code.
  *
  * NON-SECRET DETAIL IS PRESERVED on purpose: scheme, host, port, database and
  * every non-credential parameter survive, so a diagnostic still names which
@@ -403,8 +543,11 @@ function redactAuthority(text: string): string {
  * confusing one, or mask it entirely. Every step is therefore total: a
  * non-string argument is reported as its type; an input the parser's own
  * construction cannot read, a query that cannot be aligned to the parser's
- * reading, or a result that fails the check above WITHHOLDS the unresolvable
- * part rather than echoing it. Ambiguity always resolves toward saying less.
+ * reading, a query whose reading is UNCERTAIN because a malformed escape left a
+ * `%` in a parser-derived name, or a result that fails the check above WITHHOLDS
+ * the unresolvable part rather than echoing it. MALFORMED AND AMBIGUOUS
+ * CREDENTIAL-SHAPED QUERY CONTENT IS THEREFORE NEVER PRINTED AND NEVER THROWN
+ * OVER — it is withheld. Ambiguity always resolves toward saying less.
  * Note that `parse()` itself is never called — it touches the filesystem for
  * SSL material and can throw — only its pure name-derivation prefix is used.
  */
@@ -421,35 +564,32 @@ export function redactConnectionString(connectionString: string): string {
   }
 
   const credentials = parserCredentialValues(view);
-  // A credential value can reach the text in an ENCODED alias — `secret` written
-  // as `sec%72et` under some OTHER, non-credential name. The raw scan below
-  // would miss that, so the candidate is also scanned once DECODED. This is a
-  // post-condition on output text, not a second classification: which values are
-  // credentials still comes only from the parser.
-  const contains = (text: string): boolean => {
+  // The decisive property, checked over the candidate AS A READER WOULD READ IT.
+  // A credential value can reach the printed text under some OTHER, non-
+  // credential name and in a form only the parser resolves — `+`-encoded,
+  // `%`-encoded, control-character-bearing. `parserReadings` obtains those forms
+  // from the parser itself, so there is no private decoder on this side to be
+  // wrong. Which VALUES are credentials still comes only from the parser too;
+  // this is a post-condition on output, not a second classification.
+  const leaks = (candidate: string): boolean => {
     if (credentials.length === 0) return false;
-    const forms = [text];
-    try {
-      const decoded = decodeURIComponent(text);
-      if (decoded !== text) forms.push(decoded);
-    } catch {
-      /* malformed escape: the raw form is the whole check */
-    }
-    return credentials.some((value) => forms.some((form) => form.includes(value)));
+    return parserReadings(candidate).some((reading) =>
+      credentials.some((value) => reading.includes(value)),
+    );
   };
 
-  // Query present but unalignable: withhold the query, so no unidentified span
-  // is printed.
+  // Query present but unalignable or uncertain: withhold the query, so no
+  // unidentified span is printed.
   const rewritten = redactNormalizedQuery(view);
   if (rewritten !== null) {
     const out = redactAuthority(rewritten);
-    if (!contains(out)) return out;
+    if (!leaks(out)) return out;
   }
 
   // The rewrite either could not be aligned or did not suffice. Withhold the
   // whole query.
   const withheld = redactAuthority(withheldQuery(view));
-  if (!contains(withheld)) return withheld;
+  if (!leaks(withheld)) return withheld;
 
   // Even the query-withheld form still carries a credential value — it is in
   // the scheme, authority or path. Nothing structural can be salvaged.

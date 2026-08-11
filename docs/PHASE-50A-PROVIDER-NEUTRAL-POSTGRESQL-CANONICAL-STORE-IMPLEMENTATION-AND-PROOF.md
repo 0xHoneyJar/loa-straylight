@@ -4064,3 +4064,704 @@ Codex's; the implementer does not audit its own work.
 this work, under lease `lease-phase-50a-implementer-parser-equivalence-029`
 (lane #122 sequence 101). **No** Ultracode, **no** `/batch`, **no** teams,
 **no** subagents, and **no** delegation of any kind.
+
+## 23. Phase 50A Track-A structural closure (lane #122 sequence 106)
+
+The sequence-104 audit REJECTED the head at `fb91b94` and named four BLOCKER
+findings — F-04, F-09, F-10 and F-14 — with one shared verdict: each seam had
+been repaired by an **abstraction that stands in for the thing it is supposed
+to check**. A decoder list standing in for the parser. A self-description
+standing in for a store. A name registration standing in for the act of
+creation. A narration standing in for an observation. In every case the
+substrate's guard was *about* the property rather than *bound to* it, and in
+every case the audit produced a counterexample that walked straight through
+the gap.
+
+This section is the record of closing all four **together**, by replacement
+rather than repair. It is the ninth and last file of the sequence-106
+replacement INITIAL packet (`5250533905`,
+digest `sha256:5b0cdffa11faae0db19772ae1c1576c77f5454e95943d5f4933df3d8e4fa3f55`),
+implemented from substrate `fb91b94f2b2bffd4165b41612eef091ddc0eba78` on branch
+`phase-50a-r3-track-a-structural-closure` under lease
+`lease-phase-50a-implementer-track-a-structural-031`.
+
+`fb91b94` and its pull request remain **immutable**: nothing in this slice
+amends, reopens, force-pushes or retargets them. The rejected substrate is
+readable and branchable evidence, and that is all it is.
+
+### 23.1 The four rejected abstractions and their replacements
+
+| Finding | The rejected abstraction (substrate site) | What replaced it |
+|---|---|---|
+| F-04 | `contains()` — scanning the raw text and its `decodeURIComponent` form; a **hand-written decoder on the PERMIT side** (`config.ts:429`) | Every permit decision reads the **parser's own view**: `parserView` builds the same preprocessed WHATWG `URL` `pg-connection-string` builds, and `parserReadings` enumerates what a reader of the emitted text obtains through `URL`, `searchParams` and `URLSearchParams` (`config.ts:203`, `config.ts:423`) |
+| F-09 | `bindStore(host, store, redact)` — minting destructive authority when `store.describeTarget()` **text matched** an expected string (`hosts.ts:410`) | **The parameter is gone.** `openBoundProofStore(descriptor)` constructs the store itself from the descriptor's connection string and records possession in a module-private `WeakMap`; `authorizedBoundStore` returns the **registry's** store, never the handle's field (`hosts.ts:552`, `hosts.ts:581`) |
+| F-10 | `declareScratchDatabase(host, name)` — accepting any `p50a_*`-shaped **supplied name** into the issuable set (`hosts.ts:236`) | **Creation is the only issuer.** `createScratchDatabase` mints the name itself, runs the `CREATE DATABASE`, and issues the tool target only after that statement committed; `toolTargetOf` lost its database parameter entirely (`hosts.ts:353`, `hosts.ts:264`, `hosts.ts:275`) |
+| F-14 | `provedNoDestructiveSql` computed and then **discarded** — `result.ok` and the CLI PASS branch never consulted it; unknown statement forms presumed read-only (`:145`, `:267`, `:328`) | The proof is a **conjunct of `ok`** and `ok` is the sole input to the exit status; classification **refuses by default** via a positive read-only grammar (`verify-existing-restore.ts:387`, `verify-existing-restore.ts:405`, `verify-existing-restore.ts:199`) |
+
+The pattern the audit was pointing at is the same one in all four rows: a guard
+may not be built out of this module's *idea* of the authority it is guarding.
+It has to be built out of the authority itself — the real parser, the real
+store, the real creating act, the real execution seam.
+
+### 23.2 F-04 — parser equivalence on BOTH sides of the decision
+
+#### What the sequence-104 counterexample showed
+
+`pg-connection-string` constructs a WHATWG `URL` and then iterates
+`result.searchParams.entries()`, assigning `config[name] = value`. That means
+the credential `pg` receives is produced by `URLSearchParams` semantics, which
+include **form decoding**: `+` becomes a space. The substrate's redactor
+correctly identified the credential parameter and replaced its value with
+`<redacted>` — and then licensed the output using its own two-form scan.
+
+Given `?password=hunter+2+secret&application_name=hunter+2+secret`, the
+substrate emitted
+
+```
+postgresql://<loopback>:55432/straylight_source?password=<redacted>&application_name=hunter+2+secret
+```
+
+and the credential `hunter 2 secret` is recoverable from that text by
+`URLSearchParams`-decoding it — the very operation the parser performs. The
+substrate's `decodeURIComponent` scan leaves `+` alone, saw a different string,
+and permitted the emission. The credential survived under a **non-credential
+parameter name**, in a **form the parser produces and the private decoder does
+not**.
+
+#### The replacement mechanism
+
+*One normalization exists, and it belongs to the parser.*
+
+`parserPreprocess` (`config.ts:145`) is a verbatim transcription of the
+parser's first step — `encodeURI` over the whole string when it contains a
+space or a malformed percent escape, then un-escaping only the `%25NN` that
+step introduced, and only when `NN` is two **digits**. It is copied rather than
+approximated because it is load-bearing in a way that is easy to miss: a
+malformed escape anywhere in the string, *including in a value*, changes how
+names elsewhere in that string normalize. That coupling is why a per-parameter
+probe cannot be faithful, and why the string is normalized once, as one unit.
+
+`parserView` (`config.ts:203`) then constructs the `URL` — with the same
+dummy-host retry the parser uses — and every subsequent decision reads that
+object. `isCredentialParameterName` (`config.ts:230`) asks the URL what name it
+produced and compares case-insensitively against the parameter names `pg`
+itself treats as credential-bearing (`config.ts:72`). The comparison set is
+about **names**, matching what the driver honours; the **normalization** that
+turns `pass<LF>word`, `pass<TAB>word`, `pass%77ord` and
+`%70%61%73%73%77%6Frd` all into `password` is the URL's, not this module's.
+That is the distinction the sequence-95 audit drew and the sequence-104 audit
+re-drew: a spelling table is only a defect when it substitutes for the
+parser's normalization, and here it does not — it sits downstream of it.
+
+*The permit side asks the parser too.*
+
+`parserReadings` (`config.ts:423`) is the whole of the containment check, and it
+is the replacement for `contains()`. For a candidate output it collects:
+
+- the **raw text first and unconditionally**, so nothing the list fails to
+  model can ever *remove* a reading;
+- the parser's normalized text, and the URL's `username`, `password`,
+  `hostname`, `pathname`, `hash`;
+- every `searchParams` **name and value** — which is where `+` becomes a space
+  and `%77` becomes `w`, done by `URL` and not by this module;
+- the two decodings the parser applies *on top of* the URL —
+  `decodeURIComponent` on userinfo and `decodeURI` on the path — because those
+  are what land in `config.user` / `config.password` / `config.database`;
+- `new URLSearchParams(...)` over **both** the whole text and its query span.
+  `URLSearchParams` *is* the decoder `searchParams` is, and unlike `URL` it is
+  **total** — it cannot throw. That matters because a candidate output is not
+  required to be URL-constructible (`<redacted>` is not a host), and a permit
+  side that went blind on unconstructible text would be a permit side that
+  leaked on it.
+
+The forbidden set is built by `parserCredentialValues` (`config.ts:342`) and
+covers **every duplicate entry, winning and losing**. The parser's
+`config[name] = value` assignment is last-wins, so only the final duplicate is
+honoured — but an earlier duplicate is still a credential someone wrote down,
+and it must not leak merely because it lost. Both `url.password` and its
+`decodeURIComponent` form are included, and each value contributes its
+`encodeURIComponent` form as well.
+
+The one place an extra form is permitted is **directional**:
+`encodeURIComponent` in `parserCredentialValues` only ever ADDS to the
+forbidden set, so its every effect is to withhold more. That is precisely the
+invariant the sequence-104 rejection turns on — the substrate used a decoder to
+decide output was *safe*, and an approximation on the permit side authorizes
+exactly what it fails to model. No approximation appears on the permit side of
+this module.
+
+*The closure.* `redactConnectionString` (`config.ts:554`) rewrites, then checks
+containment (`config.ts:574`), then falls back to withholding the whole query
+surface (`withheldQuery`, `config.ts:308`), then re-checks, and if a credential
+is *still* recoverable emits `<redacted> (uninterpretable connection target)`
+(`config.ts:596`). Every step of that ladder narrows the output; none of them
+widens it.
+
+#### Fail-closed without throwing
+
+`redactConnectionString` runs inside error construction, so throwing is not
+available to it. Ambiguity is therefore resolved by **saying less**:
+
+- `parserPreprocess` returning `null` (even `encodeURI` failed) is treated as
+  total ambiguity;
+- `redactNormalizedQuery` (`config.ts:270`) refuses when the rewritten query
+  cannot be aligned to the original span (`config.ts:289`) and when a
+  parser-produced NAME still contains a `%` (`config.ts:291`) — an undecodable
+  name such as `pass%ZZword` could align to a credential name, so the query is
+  **withheld rather than classified**;
+- `isProvablyCredentialFreeAuthority` (`config.ts:110`) preserves a bare
+  `host` / `host:port` authority only when it is *provably* one, recognizing
+  bracketed IPv6 by skipping past the closing bracket; a `host:name` that is
+  not a port cannot be told from `user:password`, so it is redacted;
+- a non-string target produces a type report, never an interpolated value.
+
+Non-secret detail — scheme, host, port, database, non-credential parameters —
+is preserved wherever it is provably non-secret, which is what keeps the
+diagnostic useful.
+
+#### Exported surface unchanged
+
+`config.ts` still exports exactly `SHIPPED_SCHEMA_VERSIONS`, `resolveConfig`
+and `redactConnectionString` at runtime, plus the type exports
+`PostgresStoreConfig` and `ResolvedPostgresStoreConfig`.
+`redactConnectionString` keeps its name, its arity of 1 and its signature. That
+is asserted mechanically, not stated: see §23.9.
+
+### 23.3 F-09 — destructive authority by trusted construction
+
+The history of this seam is three steps long. It began as a descriptor and a
+store passed *separately* to the destructive step, with nothing checked about
+the database actually being erased. The first fix folded the pair into
+`bindStore(host, store, redact)`, which accepted the pair when
+`store.describeTarget()` returned the descriptor's redacted connection string.
+
+That was still **testimony**. `describeTarget()` is a method the caller's
+object implements; returning the right string proves the object can produce a
+string. A hostile store — three lines: return the expected text, delegate every
+real operation elsewhere — satisfied it exactly, and so did any subclass that
+overrode the description while inheriting a different connection.
+
+So the parameter is gone. `openBoundProofStore(target)` (`hosts.ts:552`) takes
+a descriptor and nothing else: it resolves the descriptor first (so an unfixed
+one is refused *before* a store is constructed and before any connection could
+open), constructs the `PostgresEstateHost` here from that descriptor's own
+connection string, and returns a frozen handle. **There is no caller-supplied
+store object anywhere on the destructive path**, so no imitation, subclass,
+proxy or self-description has a surface to act through. The question "is this
+store really the authorized one?" is not answered better — it is never asked,
+because the only store that exists is the one this module just built.
+
+Two further properties make the handle unforgeable:
+
+1. **It is opaque.** The brand is a type-only
+   `declare const BOUND_PROOF_STORE: unique symbol` (`hosts.ts:532`), erased at
+   runtime, so there is no property and no symbol for
+   `Object.getOwnPropertySymbols` to copy. Possession is recorded in
+   `BOUND_PROOF_STORES`, a module-private `WeakMap` (`hosts.ts:534`) — a caller
+   cannot mint an entry and cannot construct a handle at all.
+2. **The consumer reads the registry, not the handle.**
+   `authorizedBoundStore` (`hosts.ts:581`) returns the record from
+   `BOUND_PROOF_STORES`, so a spread of a genuine handle with a substituted
+   `store` field is both unregistered *and* unused. That is the sequence-89
+   divergence case in its final form.
+
+The destructive step `emptySchema` (`two-host-proof.ts:273`) reaches the store
+only through `requireBoundStore` (`two-host-proof.ts:302`), which delegates to
+`authorizedBoundStore`. `isBoundProofStore` (`hosts.ts:568`) exists so an
+untyped JavaScript caller fails closed rather than being dereferenced.
+
+### 23.4 F-10 — creation-bound issuance
+
+`declareScratchDatabase` was **told** a name and believed it: any string
+matching `^p50a_[a-z0-9_]{1,54}$` entered the issuable set, and
+`toolTargetOf(host, name)` then converted it into a real `pg_dump`/`psql`
+target. An independently selected name was one call away from destructive tool
+authority over a database the harness had never created.
+
+The replacement makes **the act of creation the sole issuer**.
+`createScratchDatabase(target, label)` (`hosts.ts:353`):
+
+- resolves the descriptor, then **mints the name itself** via `mintScratchName`
+  (`hosts.ts:317`) from the process id and a module-private counter; the
+  `label` argument is sanitized to the harness character set, truncated, and
+  contributes nothing but readability. **A caller cannot select the name** —
+  which is what makes the name meaningless as a route to authority;
+- runs the `CREATE DATABASE`, and only then calls `issueToolTarget`
+  (`hosts.ts:380`). Reaching that line means the DDL committed, so a name
+  belonging to something that already exists cannot be authorized —
+  `CREATE DATABASE` fails on it and the function throws before issuing
+  anything;
+- returns a `ScratchGrant` (`hosts.ts:293`) carrying the connection string, the
+  issued tool target, and a `drop()` that **revokes** the issuance
+  (`hosts.ts:391`) before dropping the database. Authority over a scratch
+  database ends when the database does.
+
+`toolTargetOf` (`hosts.ts:264`) now takes **only** a descriptor and returns
+`issueToolTarget(host, host.database)`. Deleting the second parameter is the
+load-bearing change: there is no longer an argument through which a name could
+be supplied, so the refusal is not a check that could be forgotten — it is an
+absence of surface. `issueToolTarget` (`hosts.ts:275`) is the only producer of
+an issued target and has exactly two callers, and it records the target
+**with its authorizing descriptor and its exact field values** in
+`ISSUED_TOOL_TARGETS` (`hosts.ts:424`).
+
+`authorizedToolTarget` (`hosts.ts:457`) is what closes the divergence case:
+issuance alone is not authority. An object that carries a legitimate issuance
+but whose `database`, `container` or `user` has since drifted is not the target
+that was authorized, and it is refused. `pg-tools` consults the gate through
+`requireIssuedTarget` (`pg-tools.ts:98`) before spawning anything, so a
+hand-built target cannot reach `pgDump` (`pg-tools.ts:141`), `psqlRestore`
+(`pg-tools.ts:167`), `psqlExec` (`pg-tools.ts:190`) or
+`clusterSystemIdentifier` (`pg-tools.ts:214`) at all — the refusal precedes the
+invocation instead of depending on every call site remembering to ask.
+
+The descriptor's own database remains issuable from the descriptor itself,
+which is what the fixed two-host exercise needs and all it needs.
+
+### 23.5 F-14 — the observation governs the verdict
+
+The substrate computed its non-destruction proof and then threw it away:
+`result.ok` was `differences.length === 0 && brokenChains.length === 0`, and
+the CLI's PASS branch consulted only that. **The proof existed, was correct,
+and decided nothing** — a run that had issued a `DROP` would still have
+reported PASS and exited 0. Separately, its classifier presumed unknown
+statement forms read-only, so a form nobody had considered passed by default.
+
+Both are replaced.
+
+*The seam observes execution.* `observeQueries` (`verify-existing-restore.ts:286`)
+is a `Proxy` over the live client, so recording is not something a call site
+opts into: any statement issued through the object this module holds passes
+through `query` and is recorded **before the driver sees it**. It is exported on
+purpose — the proof of F-14 has to be taken at this seam and not at a replica
+of it, because a test recording through its own imitation would prove a
+property of the imitation.
+
+*Recognition is affirmative and refuses by default.* `classifyObservedSql`
+(`verify-existing-restore.ts:199`) collapses whitespace and then tests the
+statement against `READ_ONLY_PROJECTION` (`verify-existing-restore.ts:187`), a
+**positive grammar** for exactly the shape the verification issues:
+`SELECT <identifiers> FROM <identifier> [ORDER BY ...]`. Anything else is
+`recognized: false` with the statement named in the reason. This is the
+inversion the audit demanded: a keyword denylist has a **default of PASS**, and
+its silence about a form is indistinguishable from approval; a positive grammar
+has a default of REFUSE, and a new read on the "non-destructive verification"
+path is exactly the change that ought to be looked at rather than assumed
+benign.
+
+`observationOf` (`verify-existing-restore.ts:211`) handles all three shapes `pg`
+accepts — `query(text)`, `query(text, values)`, `query(config)` — and records
+anything else as **`unobservable`** rather than dropping it or assuming it
+benign. A statement whose text this seam cannot read is still a statement, and
+one whose text is unavailable cannot be recognized.
+
+*Emptiness is not proof.* `observedQueryProof`
+(`verify-existing-restore.ts:252`) sets `proved` only when
+`observations.length > 0 && refusals.length === 0`. "No destructive statement
+was observed" answers `[].every(...)` — i.e. `true` — over an empty record, so
+used alone it passed **vacuously**: a verifier that observed nothing at all, or
+whose seam had been removed entirely, "proved" that it destroyed nothing. An
+empty record is *unproven*, not *proven safe*.
+
+*The proof decides.* In `decideVerification`
+(`verify-existing-restore.ts:361`), `queryProof.proved` is a conjunct of `ok`
+(`verify-existing-restore.ts:387`) on the same footing as the digest
+comparison. A PASS therefore asserts three things at once: the estates agree,
+every chain verifies, and the statements this process actually issued were
+observed and every one of them was affirmatively recognized as read-only.
+`verificationExitCode` (`verify-existing-restore.ts:405`) is the only thing
+that decides the exit status and it is a function of `report.ok` alone.
+
+The observation record is deliberately **not** cleared inside
+`verifyExistingRestore` (`verify-existing-restore.ts:425`): a statement observed
+at any point in the process counts against the verification, because clearing it
+would let the very statement the proof exists to catch be forgotten before the
+verdict was taken. A MISMATCH remains a distinct verdict from an inability to
+verify.
+
+### 23.6 Substrate-fail / fix-pass (packet B5)
+
+A reproduction that passes on the defect proves nothing. Each of the four
+counterexamples was therefore run against the **substrate implementation**
+before being run at the final head.
+
+*Method.* The substrate tree was materialized at `fb91b94`, the final
+`tests/phase-50a/safety-authority-closure.test.ts` (129858 bytes,
+`sha256:a2a29655a3fae8e374b8e484fec0122d0c0c9772f7b6afb47419602ff6479ebf`) was
+placed into it unchanged, and the suite was run. This is why the suite's static
+import list is the **intersection** of the two trees' exports and every
+one-sided symbol is reached through a dynamic `import()` and probed as a
+property: a static `import { openBoundProofStore }` of a symbol the substrate
+does not export is an ESM **link error**, the file would not load, and every
+substrate run would fail for the wrong reason — which the packet forbids
+explicitly. The probe helper `missingExports` states the absence of a
+replacement seam as a **named assertion** rather than letting a
+`TypeError: x is not a function` stand in for it.
+
+Substrate result — `4 failed | 80 skipped (84)`, each for its intended reason:
+
+| Counterexample | Failure observed on the substrate |
+|---|---|
+| `COUNTEREXAMPLE (F-04)` (suite `:665`) | `the credential is RECOVERABLE. Spelling "hunter 2 secret" appears in the reading "...?password=<redacted>&application_name=hunter 2 secret" of "...?password=<redacted>&application_name=hunter+2+secret"` |
+| `COUNTEREXAMPLE (F-09)` (suite `:1508`) | `these exports minted destructive authority for an object that merely DESCRIBED itself as the harness source` — received `['bindStore(3 arg(s))', 'bindStore(3 arg(s))', 'bindStore(4 arg(s))', 'bindStore(3 arg(s))']` |
+| `COUNTEREXAMPLE (F-10)` (suite `:1912`) | `the creation-bound issuance seam is absent from this module` — received `['createScratchDatabase']` |
+| `COUNTEREXAMPLE (F-14)` (suite `:2226`) | `the observation-governs-verdict seam is absent from this module` — received `['observeQueries', 'observedQueryProof', 'recordedObservations', 'resetRecordedObservations', 'classifyObservedSql', 'decideVerification', 'verificationExitCode']` |
+
+The F-04 line is the important one to read closely: it is not an absence, it is
+a **live leak**. The substrate loads, runs, redacts, and the audit's credential
+comes back out of its own diagnostic. The other three fail on the named absence
+of the replacement seam, then — with the seam present at the head — go on to
+assert the behaviour.
+
+At the final head the same suite reports **84 passed (84)**.
+
+The malformed-name half of the F-04 counterexample (`?pass%ZZword=leakedsecret`)
+and the sequence-95 control-character reproduction (`SEQUENCE-95 REPRODUCTION`,
+suite `:711`) both assert that the value does not survive in any recoverable
+form, and `DUPLICATE TRAP` (suite `:1082`) asserts the losing value of a
+duplicated credential name does not leak either.
+
+### 23.7 Generated seek-disagreement (packet B6)
+
+`SEEK-DISAGREEMENT` (suite `:783`) does not sample a fixed table of inputs. It
+**generates** connection strings from a cross-product of credential-name
+spellings, values, transformations and tails, hands each to the real effective
+parser, and — for every input where the parser derives a credential — asserts
+that value is unrecoverable from the redacted output under the full decoding
+family (raw, percent-decoded, form-decoded, `URLSearchParams`-decoded,
+re-encoded). Its inputs are derived from the parser rather than from a belief
+about the parser, which is what makes it a disagreement hunt rather than a
+regression list.
+
+Measured coverage at the final head:
+
+```
+checked                     75600
+honoured as query credential 48837
+refused by the parser         1323
+failed closed                 7200
+```
+
+Every declared class is honoured by at least one input, with the counts:
+
+| Class | Honoured |
+|---|---|
+| interaction (two or more transformations combined) | 35076 |
+| mixed-case | 27864 |
+| percent-encoding | 27588 |
+| encoded-credential-value | 15867 |
+| duplicate-parameters | 15414 |
+| plus-handling | 8073 |
+| lf-normalization | 7032 |
+| cr-normalization | 7032 |
+| tab-normalization | 7032 |
+| value-echoed-under-noncredential-name | 4827 |
+| malformed-value | 3825 |
+| malformed-name | 1800 |
+| plus-in-name | 1800 |
+| foreign-malformed-escape | 1116 |
+
+`malformed-name` also accounts for all 7200 fail-closed outcomes, which is the
+expected shape: an undecodable name that could align to a credential name is
+withheld rather than classified.
+
+The non-vacuity guard is the point of publishing those numbers. A generator
+whose cross-product silently collapsed to nothing would still "pass" every
+assertion inside its loop; the suite asserts substantial `checked` and
+`honoured` counts and asserts that **each** class was honoured, so a class that
+stopped being generated fails rather than disappearing.
+
+**One coverage gap was found and closed during this work, by the mutation
+harness rather than by review.** The generator's original tails did not include
+a case where the credential value is echoed under a **non-credential**
+parameter name — so blanking the credential parameter's own value was
+sufficient to satisfy it, and the sequence-104 leak shape (the value surviving
+elsewhere in the string, in a form only the parser produces) was outside its
+reach. Restoring the substrate's decoder list (mutation M1, §23.8) therefore
+left the generator passing. The `tails` function now emits
+`&application_name=<the credential value>` alongside the duplicate-parameter and
+foreign-malformed-escape tails, the class
+`value-echoed-under-noncredential-name` was added to the required-classes set,
+and M1 now fails the generator with
+`(classes: plus-handling, value-echoed-under-noncredential-name)`. The gap is
+recorded here because it is the honest provenance of that assertion: the
+generator was strengthened *because a mutation survived it*, which is the
+entire reason the mutation stage exists.
+
+**NOT MODELLED**, stated by the suite itself: the generator does not model
+`service=` file resolution, `sslkey`/`sslcert` file reads (the redactor never
+invokes `parse()` and therefore never touches the filesystem), IDNA host
+normalization, non-`//`-form key=value DSNs, lone surrogates in values, or
+credential material arriving through the environment rather than the connection
+string. Those boundaries are declared rather than implied so a later reader
+knows what the count does and does not cover.
+
+### 23.8 Four structural mutations, one per finding (packet B7)
+
+Each mutation **restores the rejected abstraction** for its finding — taken
+verbatim from the substrate where the substrate had one — and must make a
+**named** proof fail for the intended reason, not by type error, import error
+or unrelated assertion.
+
+The harness applies each mutation by exact **single-occurrence** replacement and
+throws if the anchor count is not 1, so a drifted anchor fails loudly instead of
+silently mutating nothing. Reverts restore from a `sha256`-pinned backup and
+verify the restored digest against a manifest, so "reverted cleanly" is measured
+rather than asserted. Mutation diffs below are `diff -u` against that backup,
+because the working tree's `git diff` at this point is the whole closure diff.
+
+Positive control on the unmutated tree, before and after every mutation:
+
+```
+npx vitest run tests/phase-50a/safety-authority-closure.test.ts
+  → Test Files 1 passed (1) | Tests 84 passed (84)
+```
+
+#### M1 (F-04) — restore the `decodeURIComponent` decoder list
+
+Replaces the `parserReadings`-based containment check in
+`redactConnectionString` (`config.ts:574`) with the substrate's two-form scan:
+
+```diff
+-    return parserReadings(candidate).some((reading) =>
+-      credentials.some((value) => reading.includes(value)),
+-    );
++    const forms = [candidate];
++    try {
++      const decoded = decodeURIComponent(candidate);
++      if (decoded !== candidate) forms.push(decoded);
++    } catch {
++      /* malformed escape: the raw form is the whole check */
++    }
++    return credentials.some((value) => forms.some((form) => form.includes(value)));
+```
+
+Command: `npx vitest run tests/phase-50a/safety-authority-closure.test.ts`
+Result: **3 failed | 81 passed**. Named failures:
+
+- `COUNTEREXAMPLE (F-04): a form-decoded credential and an undecodable credential name cannot leak`
+- `SEEK-DISAGREEMENT: no generated input makes the parser derive a credential the redactor prints`
+- `DIAGNOSTIC REACHABILITY: a FORM-DECODED credential is redacted at describeTarget() too`
+
+Intended reason observed: `the credential is RECOVERABLE` — `hunter 2 secret`
+appears in a parser reading of the emitted text. The private decoder cannot see
+what `URLSearchParams` sees, exactly as the audit said.
+
+#### M2 (F-09) — restore `describeTarget()`-text binding
+
+Reintroduces the substrate's `bindStore`, re-typed onto the current registry
+record shape so the mutation is a behaviour change rather than a compile error:
+
+```diff
++export function bindStore<TStore extends { describeTarget(): string }>(
++  target: ProofHost | ProofHost['name'],
++  store: TStore,
++  redact: (connectionString: string) => string,
++): Readonly<{ host: ProofHost; store: TStore }> {
++  ...
++  const expected = redact(host.connectionString);
++  const actual = store.describeTarget();
++  if (actual !== expected) { throw new ProofHostRefusedError(...); }
++  return Object.freeze({ host, store });
++}
+```
+
+Result: **2 failed | 82 passed**. Named failures:
+
+- `COUNTEREXAMPLE (F-09): NO export mints destructive authority for a self-describing store`
+- `the destructive path takes NO store and reads NO self-description`
+
+Intended reason observed: the counterexample's export enumeration reports
+`['bindStore(3 arg(s))', 'bindStore(3 arg(s))', 'bindStore(4 arg(s))', 'bindStore(3 arg(s))']`
+— the hostile object, which returns the expected description while delegating
+every real operation elsewhere, obtained authority. The second failure is the
+structural companion: with a store parameter back on the path, the assertion
+that no such parameter exists no longer holds.
+
+#### M3 (F-10) — restore name registration as issuance
+
+Restores `declareScratchDatabase` and the two-argument `toolTargetOf`:
+
+```diff
++const SCRATCH_DATABASES = new WeakMap<ProofHost, Set<string>>();
++
++export function declareScratchDatabase(target, database: string): string {
++  ...
++  if (!/^p50a_[a-z0-9_]{1,54}$/.test(database)) { throw ... }
++  names.add(database);
++  return database;
++}
++
++export function toolTargetOf(target, database?: string): ProofToolTarget {
++  ...
++  return issueToolTarget(host, database ?? host.database);
++}
+```
+
+Result: **4 failed | 80 passed**. Named failures:
+
+- `COUNTEREXAMPLE (F-10): NO export grants authority over an INDEPENDENTLY SUPPLIED name`
+- `REPRO (F-10): a supplied database NAME is not a parameter of tool issuance at all`
+- `creation is the ONLY issuer of a scratch target, and it refuses an unfixed descriptor before connecting`
+- `the tool-target issuer takes NO database name, so cross-instance reuse has no surface`
+
+Intended reason observed: the enumeration lists eight grants obtained for the
+independently supplied name `p50a_independently_chosen`, and
+`toolTargetOf.length` is 2 where the closure requires 1. The arity assertion is
+worth noting on its own: it is the mechanical form of "there is no surface", and
+it catches the regression before any behavioural test has to.
+
+#### M4 (F-14) — restore the destructive-keyword denylist
+
+Replaces the positive read-only grammar with the substrate's denylist, whose
+default is PASS:
+
+```diff
+   const collapsed = sql.replace(/\s+/g, ' ').trim();
+-  if (READ_ONLY_PROJECTION.test(collapsed)) {
++  const DESTRUCTIVE_SQL =
++    /\b(?:DROP|TRUNCATE|DELETE|ALTER|CREATE|INSERT|UPDATE|MERGE|GRANT|REVOKE|VACUUM|REINDEX|COPY)\b/i;
++  if (!DESTRUCTIVE_SQL.test(collapsed)) {
+```
+
+Result: **2 failed | 82 passed**. Named failures:
+
+- `COUNTEREXAMPLE (F-14): a destructive or unrecognized observed statement forces failure`
+- `the recognition grammar REFUSES BY DEFAULT rather than denying by keyword`
+
+Intended reason observed:
+`certified read-only: SELECT pg_terminate_backend(pid) FROM pg_stat_activity: expected +0 to be 1`
+— a statement that is state-reducing but contains none of the denylisted
+keywords was certified read-only. That is the denylist's structural defect in
+one line: its silence about a form is indistinguishable from its approval of
+one.
+
+#### Reverts
+
+All four reverted cleanly, each verified by digest:
+
+```
+m1 (F-04) REVERTED; src/straylight/storage/postgres/config.ts        sha256 verified
+m2 (F-09) REVERTED; scripts/phase-50a/hosts.ts                        sha256 verified
+m3 (F-10) REVERTED; scripts/phase-50a/hosts.ts                        sha256 verified
+m4 (F-14) REVERTED; scripts/phase-50a/verify-existing-restore.ts      sha256 verified
+```
+
+with the 84/84 positive control re-run after each.
+
+### 23.9 Preservation and scope (packet B8/B9/B10)
+
+*F-01 and F-15 evidence, pinned in-file.* Two content blocks inside the closure
+suite are preserved **byte-for-byte** and located by their first line, so their
+positions may shift while their bytes may not:
+
+| Block | Bytes | Digest |
+|---|---|---|
+| F-01 `describe` block (suite `:218`) | 4308 | `sha256:43cfce3c3920d94bb4305780ef5f550d2d337865fdc7f303b3b5e3dba7f0bf70` |
+| F-14/F-15 runbook `describe` block (suite `:2612` to EOF) | 3442 | `sha256:8773f4faf1958567178ececb3ab31a03a8d1b46f2c0e585ed55b87e861c26046` |
+
+The suite assembler verifies both digests in the substrate bytes *and* re-verifies
+them in the assembled output, and the suite itself pins them at runtime:
+`PRESERVATION: the F-01 block and the F-14/F-15 runbook block are byte-identical to the substrate`
+(suite `:1280`).
+
+*F-01 and F-15 source evidence.*
+`PRESERVATION: the F-01 seam file and the F-14/F-15 runbook are the substrate blobs`
+(suite `:1307`) pins `tests/phase-31f-operator-recall-wedge-demo.test.ts` to
+blob `820221ec773cdd24fdd9e386aaaf06a4a17c5206` and the runbook to blob
+`d295948c1b97ccf9c6932e400a8861ca0466f396`. Neither file is in this slice's
+allowed paths and neither was written.
+
+*Exported surface.*
+`PRESERVATION: config.ts exports exactly the audited surface, unchanged`
+(suite `:1332`) asserts the sorted runtime export names are exactly
+`['SHIPPED_SCHEMA_VERSIONS', 'redactConnectionString', 'resolveConfig']`, and
+that `redactConnectionString` keeps its name and an arity of 1.
+
+*Frozen consumers.* `tests/phase-50a/_support.ts` keeps exporting `OPT_IN_VAR`,
+`phase50aEnabled`, `phase50aGateReport`, `requireReachable`,
+`openScratchDatabase`, `openUnmigratedDatabase`, `replaceDatabase`,
+`databaseNameOf` and `ScratchDatabase`, together with the `hosts` re-exports —
+its export lines are byte-identical to the substrate's. `hosts.ts` keeps
+`sourceHost`, `replacementHost` and `assertDistinctHosts` with **loopback-only**
+defaults, which the frozen no-leak/neutrality suite evaluates by value, and
+`describeTarget()` still carries the `<redacted>` placeholder the frozen
+negative suite asserts. Every suite outside the allowed paths passes unchanged.
+
+*Tree-wide identity.* Of the **661** tree entries at `fb91b94` — 660 blobs plus
+the `.loa` gitlink at `207639f9f48e307b0a373281ccdd3a379ba0eaf4` — exactly the
+allowed paths written by this slice differ. `git diff --raw` against the
+substrate lists only those paths, every one `100644` → `100644`, with no
+additions, no deletions, no mode changes and no untracked files in the tree.
+
+*Documentation.* This section is a **pure end-of-file append**. The substrate's
+first 246118 bytes
+(`sha256:44c53ac387bdb9390ff5af13f3d4895b643e261d3c1291549e5964e5a3e36155`)
+are preserved byte-for-byte as this file's prefix: no existing byte is
+rewritten, reflowed, renumbered or deleted, and the section numbering continues
+from §22 rather than disturbing it.
+
+### 23.10 Suite results at the final head
+
+| Check | Result |
+|---|---|
+| `npx vitest run tests/phase-50a/safety-authority-closure.test.ts` | 84 passed (84) |
+| packet-required focused set | 90 passed |
+| `npm run phase-50a:test` | 400 passed (16 files) |
+| `npm run phase-50a:proof` (two-host, live) | PASS |
+| `npm run phase-50a:verify-artifact` | PASS — C1..C9; 30 tracked / 30 generated / 30 packed; 44 packed files |
+| `npm run control-plane:validate` | all checks passed |
+| `npm run control-plane:test` | 1025 passed (29 files) |
+| `npm test` with the Phase 50A opt-in enabled | 2510 passed (90 files) |
+| `npm run build` | exit 0, no tracked file touched |
+| `npx tsc --noEmit` | clean |
+
+No test was weakened, skipped or deleted to reach any of those numbers; the
+suite grew from 1565 to 2674 lines and from 74315 to 129858 bytes.
+
+### 23.11 Residual limits
+
+- The F-04 boundaries listed as NOT MODELLED in §23.7 are real boundaries, not
+  rhetorical ones. In particular the redactor deliberately never invokes
+  `parse()`, so `service=`, `sslkey`, `sslcert` and `sslrootcert` **file
+  resolution** is outside both the mechanism and its proof: those read the
+  filesystem, and a diagnostic path must not.
+- F-09's guarantee is about the store on the destructive path. It does not
+  constrain what a caller may do with a `PostgresEstateHost` it constructs for
+  itself outside the harness; it guarantees that such an object has no route to
+  `emptySchema`.
+- F-10's guarantee covers the harness's own issuance chain. A database created
+  by some other process, by hand, or by a future code path that does not route
+  through `createScratchDatabase` is not authorized — which is the intended
+  outcome, but it means adding a new legitimate creation path requires routing
+  it through the issuer rather than around it.
+- F-14's recognition grammar is intentionally narrow. A future read that is
+  genuinely read-only but not a simple projection will **fail closed** until the
+  grammar is widened deliberately. That is the cost of a default of REFUSE and
+  it is the cost the audit asked for.
+- The generated seek-disagreement counts in §23.7 are measurements at this
+  head, taken with temporary instrumentation that was removed afterwards and the
+  suite's digest re-verified. They are evidence of coverage, not a contract.
+- The coverage gap described in §23.7 was found by mutation, not by review. It
+  is the one place in this slice where a proof required strengthening after
+  first being written, and it is reported rather than smoothed over.
+
+### 23.12 Standing scope statement
+
+This section reports **implementation and proof** for four findings. It is not
+an audit, and it makes no claim that anything is accepted.
+
+No provider, production, living-estate, sibling-repository or external-API
+authority is claimed. No Tracks B/C/D work, no Phase 50B progression, no
+control-plane change, no workflow / package / dependency / lockfile change, no
+gate closure, no MVP-2 closure, and no acceptance, readiness or merge claim —
+closing these findings does not make any pull request merge-eligible. Merge
+remains **operator-only** (`operator:eileen`, ADR-049 §6). F-01 and F-15 remain
+preserved as closed absent new regression evidence. The audit of this slice is
+Codex's; the implementer does not audit its own work.
+
+**Implementation provenance.** Exactly **one** Claude agent at extra-high
+effort did this work, under lease
+`lease-phase-50a-implementer-track-a-structural-031` (lane #122 sequence 107).
+**No** Ultracode, **no** `/batch`, **no** teams, **no** subagents, and **no**
+delegation of any kind.

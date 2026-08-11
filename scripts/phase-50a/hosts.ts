@@ -11,6 +11,9 @@
 // loopback; they are not credentials for anything and grant nothing outside
 // this harness.
 //
+// The store class is imported because this module CONSTRUCTS the operational
+// store for a descriptor rather than accepting one (F-09, below).
+//
 // ── WHY THERE IS NO HOST OVERRIDE (sequence-83 audit, F-09/F-10) ──────────
 //
 // This module previously honoured `STRAYLIGHT_PHASE_50A_SOURCE_URL` and
@@ -36,6 +39,45 @@
 // The descriptors are therefore the SINGLE SOURCE for both the store
 // connection and the `pg_dump`/`psql` tool target (`toolTargetOf`), so those
 // two can no longer name different databases.
+//
+// ── WHY AUTHORITY IS NEVER TESTIMONY (sequence-104 audit, F-09/F-10) ──────
+//
+// Two earlier attempts made authority a JUDGEMENT ABOUT SOMETHING A CALLER
+// HANDED IN, and both were rejected:
+//
+//   F-09  `bindStore(host, store, redact)` minted destructive authority when
+//         `store.describeTarget()` returned the expected TEXT. That is the
+//         store's own account of itself: an object with a two-line
+//         `describeTarget()` could return the authorized string while every
+//         real operation went to a different database. The self-description was
+//         checked; the connection was not.
+//
+//   F-10  `declareScratchDatabase(host, name)` accepted ANY `p50a_`-shaped name
+//         and added it to the issuable set, after which `toolTargetOf(host,
+//         name)` produced a genuinely authorized destructive target. The name
+//         had been REGISTERED, never CREATED, so "the harness issued it" was
+//         true and empty.
+//
+// Both are replaced with the same move: THE AUTHORITY IS THE ACT, NOT A CLAIM
+// ABOUT THE ACT.
+//
+//   * `openBoundProofStore(descriptor)` CONSTRUCTS the store here, from the
+//     descriptor's own connection string. No caller-supplied store object
+//     exists anywhere on the destructive path, so there is nothing to imitate,
+//     subclass or describe. There is no parameter for one.
+//
+//   * `createScratchDatabase(descriptor, label)` MINTS the name itself, runs
+//     the `CREATE DATABASE` that brings the database into existence, and only
+//     then issues the tool target for it. Creation is the sole issuer, so an
+//     independently chosen name has no surface to enter through — the
+//     registration API is gone rather than guarded.
+//
+// Both capabilities are recorded in MODULE-PRIVATE WeakMaps and carry no own
+// symbol or property a caller could copy, so possession cannot be forged from a
+// genuine one; and both destructive consumers read what they act on OUT OF THAT
+// REGISTRY rather than off the handle they were passed.
+
+import { PostgresEstateHost } from '../../src/straylight/storage/postgres/index.js';
 
 /** The container each fixed harness instance runs in. */
 export type ProofContainer =
@@ -198,103 +240,166 @@ function describeRefusedTarget(target: ProofHost): string {
 }
 
 /**
- * Scratch databases the harness itself created, per fixed instance.
- *
- * ── WHY THIS REGISTRY EXISTS (sequence-89 audit, F-10) ────────────────────
- *
- * `toolTargetOf` used to take a free-text `database` and register whatever it
- * was handed as an ISSUED target. The tool gate downstream checks issuance, so
- * an arbitrary name — `somebody_elses_data` — became an authorized destructive
- * target just by being passed in. "It came from us" was true and meaningless:
- * we had not decided anything about the name.
- *
- * A database name is now issuable only if it is either the descriptor's OWN
- * database or a scratch database this module minted for that exact descriptor
- * through `declareScratchDatabase`. The portability suite's legitimate
- * per-test scratch databases go through that route; nothing else can.
- *
- * Keyed by fixed-descriptor OBJECT, so a scratch name declared for the source
- * instance can never authorize a target inside the replacement instance.
- */
-const SCRATCH_DATABASES = new WeakMap<ProofHost, Set<string>>();
-
-/**
- * Mint a scratch-database name inside a FIXED instance, and authorize it.
- *
- * The caller must present a descriptor that passes `resolveProofHost`, so the
- * instance is always one of the two disposable harness servers. The name is
- * additionally required to carry the harness's own scratch prefix — `p50a_`,
- * the form `tests/phase-50a/_support.ts#scratchName` generates — so a slip
- * cannot mint `postgres` or a developer's own database.
- *
- * That prefix check is a NAME-FORM check on a name THE HARNESS IS CREATING, not
- * an attempt to judge a caller-supplied target's disposability. The structural
- * authority is the descriptor binding: the name is scoped to the descriptor it
- * was minted for, and a scratch name minted for the source instance can never
- * authorize a target inside the replacement instance.
- */
-export function declareScratchDatabase(
-  target: ProofHost | ProofHost['name'],
-  database: string,
-): string {
-  const host = resolveProofHost(target);
-  if (typeof database !== 'string' || !/^p50a_[a-z0-9_]{1,54}$/.test(database)) {
-    throw new ProofHostRefusedError(
-      'phase-50a: refusing to declare a scratch database whose name is not a harness ' +
-        'scratch name (p50a_<lowercase/digits/underscore>, as _support.ts#scratchName ' +
-        'generates). The harness mints only its own disposable databases. Refused: ' +
-        `database=${String(database)}`,
-    );
-  }
-  let names = SCRATCH_DATABASES.get(host);
-  if (names === undefined) {
-    names = new Set<string>();
-    SCRATCH_DATABASES.set(host, names);
-  }
-  names.add(database);
-  return database;
-}
-
-/**
  * The `pg_dump`/`psql` target for a fixed descriptor — derived from the SAME
  * descriptor the store connects through (F-10).
  *
  * Goes through `resolveProofHost`, so an unfixed target cannot acquire a tool
  * target at all: the refusal precedes the tool invocation rather than following
- * it. `database` defaults to the descriptor's own database; a per-test scratch
- * database inside the SAME fixed instance may be named explicitly ONLY after
- * `declareScratchDatabase` minted it for that descriptor (F-10). The container
- * and the user always come from the descriptor and can never be restated
- * independently.
+ * it.
+ *
+ * ── THERE IS NO `database` PARAMETER (sequence-104 audit, F-10) ────────────
+ *
+ * This function used to take an optional `database`, and honour it for any name
+ * `declareScratchDatabase` had previously been TOLD about. Removing the
+ * parameter is the fix: the descriptor's own database is the only thing a
+ * descriptor can authorize, and the only other authorized database is one
+ * `createScratchDatabase` actually brought into existence — which issues its
+ * own target at the moment of creation and hands it back. A name that arrives
+ * from anywhere else has nowhere to arrive.
  *
  * The issued object is RECORDED WITH ITS AUTHORIZING DESCRIPTOR AND FIELDS, so
  * the tool gate can verify that what it was handed still says what it said when
  * it was issued — issuance alone is not authority (see `authorizedToolTarget`).
  */
-export function toolTargetOf(
-  target: ProofHost | ProofHost['name'],
-  database?: string,
-): ProofToolTarget {
+export function toolTargetOf(target: ProofHost | ProofHost['name']): ProofToolTarget {
   const host = resolveProofHost(target);
-  if (database !== undefined && database !== host.database) {
-    const declared = SCRATCH_DATABASES.get(host);
-    if (declared === undefined || !declared.has(database)) {
-      throw new ProofHostRefusedError(
-        'phase-50a: refusing to issue a tool target for a database this harness did not ' +
-          'create. A database other than the descriptor\'s own must first be minted by ' +
-          'declareScratchDatabase() for THIS descriptor — an arbitrary name is never an ' +
-          `authorized destructive, dump or restore target. Refused: host=${host.name} ` +
-          `database=${database}`,
-      );
-    }
-  }
+  return issueToolTarget(host, host.database);
+}
+
+/**
+ * Record and hand out a tool target. The ONLY producer of an issued target, so
+ * every authorized destructive/dump/restore target in the harness passes through
+ * here, and there are exactly two callers: `toolTargetOf` (the descriptor's own
+ * database) and `createScratchDatabase` (a database this module just created).
+ */
+function issueToolTarget(host: ProofHost, database: string): ProofToolTarget {
   const issued: ProofToolTarget = Object.freeze({
     container: host.container,
     user: host.user,
-    database: database ?? host.database,
+    database,
   });
   ISSUED_TOOL_TARGETS.set(issued, Object.freeze({ host, ...issued }));
   return issued;
+}
+
+/**
+ * A scratch database this module CREATED, and the authority that came with it.
+ *
+ * The grant is the whole capability: the connection string to reach it, the tool
+ * target authorized to dump/restore/destroy it, and the drop that ends both. It
+ * is returned only from `createScratchDatabase`, so holding one is evidence that
+ * the database exists because this module made it exist.
+ */
+export interface ScratchGrant {
+  /** The fixed instance the scratch database lives inside. */
+  readonly serverHost: ProofHost;
+  /** The minted database name. Chosen here; never supplied by a caller. */
+  readonly database: string;
+  /** Connection string for the scratch database on that instance. */
+  readonly connectionString: string;
+  /** The `pg_dump`/`psql` target issued BY the creation of this database. */
+  readonly toolTarget: ProofToolTarget;
+  /** Drop the database and REVOKE the issued tool target. Idempotent. */
+  readonly drop: () => Promise<void>;
+}
+
+let scratchCounter = 0;
+
+/**
+ * Mint a scratch database name. The label only *decorates* it.
+ *
+ * Uniqueness comes from the process id and a module-private counter, so two
+ * vitest workers running the same test file cannot collide; the label is
+ * sanitized to the harness's own character set and truncated, so it contributes
+ * nothing but readability. A caller therefore cannot select the name — which is
+ * what makes the name meaningless as a route to authority.
+ */
+function mintScratchName(label: string): string {
+  scratchCounter += 1;
+  const safe = String(label).toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 32);
+  return `p50a_${safe}_${process.pid}_${scratchCounter}`;
+}
+
+/** Swap the database component of a connection string, keeping everything else. */
+function withDatabase(connectionString: string, database: string): string {
+  const url = new URL(connectionString);
+  url.pathname = `/${database}`;
+  return url.toString();
+}
+
+/**
+ * CREATE a disposable scratch database inside a FIXED instance, and issue the
+ * authority for it in the same act (F-10).
+ *
+ * This is the replacement for `declareScratchDatabase`, and the difference is
+ * the whole point: that function was TOLD a name and believed it; this one
+ * chooses the name, runs the `CREATE DATABASE` that makes it real, and issues
+ * the tool target only after that statement succeeded. Creation and issuance are
+ * one operation with one outcome, so:
+ *
+ *   * an independently selected name cannot be authorized, because no parameter
+ *     accepts one — the `label` decorates a name minted here;
+ *   * a name belonging to something that ALREADY EXISTS cannot be authorized,
+ *     because `CREATE DATABASE` fails on it and this function throws before
+ *     issuing anything;
+ *   * the authority ends when the database does: `drop()` revokes the issued
+ *     target, so a retained reference to it stops being authority.
+ *
+ * The identifier is interpolated into the DDL because PostgreSQL has no
+ * parameter form for `CREATE DATABASE`. That is safe HERE and only here: the
+ * name came from `mintScratchName`, it is quoted, and the shape is re-checked
+ * below before it reaches the statement.
+ */
+export async function createScratchDatabase(
+  target: ProofHost | ProofHost['name'],
+  label: string,
+): Promise<ScratchGrant> {
+  const host = resolveProofHost(target);
+  const database = mintScratchName(label);
+  // A self-check on our OWN mint, not a judgement about caller input: if label
+  // sanitization ever produced something outside the harness's scratch form, the
+  // DDL below must not run at all.
+  if (!/^p50a_[a-z0-9_]{1,54}$/.test(database)) {
+    throw new ProofHostRefusedError(
+      'phase-50a: refusing to create a scratch database whose MINTED name is not in the ' +
+        `harness scratch form p50a_<lowercase/digits/underscore>. Minted: ${database}`,
+    );
+  }
+
+  const admin = new PostgresEstateHost({ connectionString: host.connectionString });
+  try {
+    await admin.withClient(async (client) => {
+      await client.query(`CREATE DATABASE "${database}"`);
+    });
+  } finally {
+    await admin.close();
+  }
+
+  // ISSUANCE FOLLOWS CREATION, and only creation. Reaching this line means the
+  // CREATE DATABASE above committed.
+  const toolTarget = issueToolTarget(host, database);
+  let revoked = false;
+
+  return Object.freeze({
+    serverHost: host,
+    database,
+    connectionString: withDatabase(host.connectionString, database),
+    toolTarget,
+    drop: async () => {
+      if (!revoked) {
+        revoked = true;
+        ISSUED_TOOL_TARGETS.delete(toolTarget);
+      }
+      const cleanup = new PostgresEstateHost({ connectionString: host.connectionString });
+      try {
+        await cleanup.withClient(async (client) => {
+          await client.query(`DROP DATABASE IF EXISTS "${database}" WITH (FORCE)`);
+        });
+      } finally {
+        await cleanup.close();
+      }
+    },
+  });
 }
 
 /**
@@ -311,6 +416,10 @@ export function toolTargetOf(
  * object that carries a legitimate issuance but whose `database` (or container,
  * or user) has since drifted is not the target that was authorized, and
  * `authorizedToolTarget` refuses it.
+ *
+ * Entries are REVOCABLE, and `ScratchGrant#drop` revokes: authority over a
+ * scratch database ends when the database does, so a retained reference to a
+ * dropped database's target is refused rather than dialled.
  */
 const ISSUED_TOOL_TARGETS = new WeakMap<
   object,
@@ -318,8 +427,9 @@ const ISSUED_TOOL_TARGETS = new WeakMap<
 >();
 
 /**
- * Did this exact object come from `toolTargetOf` (and therefore from a fixed
- * descriptor that passed `resolveProofHost`)?
+ * Did this exact object come from `toolTargetOf` or from the creation of a
+ * scratch database (and therefore from a fixed descriptor that passed
+ * `resolveProofHost`), and has its authority not been revoked?
  */
 export function isIssuedToolTarget(target: object): boolean {
   return ISSUED_TOOL_TARGETS.has(target);
@@ -331,8 +441,10 @@ export function isIssuedToolTarget(target: object): boolean {
  *
  * Two conditions, both structural:
  *
- *   1. the object was ISSUED by `toolTargetOf` (identity — a hand-built object
- *      with matching fields is not the same thing as an authorized one);
+ *   1. the object was ISSUED — by `toolTargetOf` for a descriptor's own
+ *      database, or by `createScratchDatabase` for a database it created — and
+ *      not since revoked (identity: a hand-built object with matching fields is
+ *      not the same thing as an authorized one);
  *   2. its CURRENT fields still equal the fields it was issued with, so a
  *      legitimately-issued target whose database was edited afterwards is
  *      refused rather than dialled.
@@ -348,9 +460,11 @@ export function authorizedToolTarget(
   const record = ISSUED_TOOL_TARGETS.get(target);
   if (record === undefined) {
     throw new ProofHostRefusedError(
-      'phase-50a: refusing a tool target that was never ISSUED by hosts.toolTargetOf(). ' +
-        'Build every target from a fixed descriptor; a hand-built or copied object is not ' +
-        `an authorization. Refused: container=${String(target?.container)} ` +
+      'phase-50a: refusing a tool target that was never ISSUED by hosts.toolTargetOf() or ' +
+        'by hosts.createScratchDatabase(), or whose issuance has been revoked. Build every ' +
+        'target from a fixed descriptor, or from the grant that created the database; a ' +
+        'hand-built, copied or independently named object is not an authorization. ' +
+        `Refused: container=${String(target?.container)} ` +
         `database=${String(target?.database)}`,
     );
   }
@@ -370,80 +484,113 @@ export function authorizedToolTarget(
 }
 
 /**
- * A store handle bound to the fixed descriptor that authorized it.
+ * DESTRUCTIVE AUTHORITY over one fixed instance: the descriptor, and the store
+ * this module CONSTRUCTED for it.
  *
- * ── WHY BINDING IS A TYPE, NOT A CHECK (sequence-89 audit, F-09) ──────────
+ * ── WHY THE STORE IS BUILT, NOT ACCEPTED (sequence-104 audit, F-09) ───────
  *
- * `emptySchema(host, store)` used to resolve `host` and then issue
- * `DROP SCHEMA public CASCADE` through the INDEPENDENTLY SUPPLIED `store`. The
- * gate proved something about one object while the destruction happened through
- * another, so a legitimate descriptor plus somebody else's store reached
- * destructive SQL with nothing checked about the database actually being erased.
+ * `emptySchema(host, store)` once resolved `host` and then issued
+ * `DROP SCHEMA public CASCADE` through the INDEPENDENTLY SUPPLIED `store`, so a
+ * legitimate descriptor plus somebody else's store reached destructive SQL with
+ * nothing checked about the database actually being erased. The first fix folded
+ * the pair into one value obtained from `bindStore(host, store, redact)`, which
+ * accepted the pair when `store.describeTarget()` returned the descriptor's
+ * redacted connection string.
  *
- * The fix removes the second parameter. A destructive operation now takes ONE
- * value that carries both halves, and the only way to obtain it is
- * `bindStore`, which resolves the descriptor and pairs it with the store the
- * caller intends to use — refusing the pair unless the store's own connection
- * target is that descriptor's connection string. There is no longer a
- * signature through which the two can disagree.
+ * That was still testimony. `describeTarget()` is a method the caller's object
+ * implements; returning the right string proves the object can produce a string.
+ * A hostile store — three lines: return the expected text, delegate every real
+ * operation elsewhere — satisfied it exactly, and so did any subclass that
+ * overrode the description while inheriting a different connection.
+ *
+ * SO THE PARAMETER IS GONE. `openBoundProofStore` takes a descriptor and NOTHING
+ * ELSE, and constructs the `PostgresEstateHost` here from that descriptor's own
+ * connection string. There is no caller-supplied store object anywhere on the
+ * destructive path, so no imitation, subclass, proxy or self-description has a
+ * surface to act through. The question "is this store really the authorized
+ * one?" is not answered better — it is never asked, because the only store that
+ * exists is the one this module just built.
+ *
+ * The handle is OPAQUE. It carries no brand property and no symbol: possession
+ * is recorded in `BOUND_PROOF_STORES`, a module-private WeakMap, so a caller
+ * holding a genuine handle cannot copy its keys onto an object of their own and
+ * cannot construct one at all. And `authorizedBoundStore` returns the store FROM
+ * THE REGISTRY rather than off the handle, so even a spread of a genuine handle
+ * with a substituted `store` field is both unregistered and unused.
  */
-export interface BoundProofStore<TStore> {
+export interface BoundProofStore {
   readonly host: ProofHost;
-  readonly store: TStore;
-  /** Brand: only `bindStore` produces this, so the type cannot be forged. */
-  readonly [BOUND]: true;
+  readonly store: PostgresEstateHost;
+  /**
+   * TYPE-ONLY brand. `declare const` is erased at runtime, so this property
+   * exists in the type system and NOWHERE on the object — there is nothing for
+   * `Object.getOwnPropertySymbols` to copy.
+   */
+  readonly [BOUND_PROOF_STORE]: true;
 }
 
-const BOUND: unique symbol = Symbol('phase-50a.bound-proof-store');
+declare const BOUND_PROOF_STORE: unique symbol;
+
+const BOUND_PROOF_STORES = new WeakMap<
+  object,
+  Readonly<{ host: ProofHost; store: PostgresEstateHost }>
+>();
 
 /**
- * Bind a store handle to the fixed descriptor it is allowed to operate on.
+ * Open the operational store for a fixed descriptor and return the destructive
+ * authority over it.
  *
- * The descriptor is resolved first (so an unfixed one is refused before
- * anything else happens), and the store is then required to describe the SAME
- * target the descriptor names. The store is asked for its own target through
- * the `describeTarget()` surface every `PostgresEstateHost` exposes, and the
- * comparison is against the REDACTED form of the descriptor's connection
- * string — so the check compares like with like and no credential is ever
- * interpolated into a refusal.
+ * The descriptor is resolved first, so an unfixed one is refused before a store
+ * is constructed and before any connection could be opened. The caller receives
+ * a handle it cannot have made and cannot forge; what it may do with the store
+ * is whatever `PostgresEstateHost` allows, and what a DESTRUCTIVE consumer may
+ * do is bounded by `authorizedBoundStore`.
+ *
+ * The store is the caller's to `close()` — through `bound.store`, which is the
+ * same object the registry holds.
  */
-export function bindStore<TStore extends { describeTarget(): string }>(
-  target: ProofHost | ProofHost['name'],
-  store: TStore,
-  redact: (connectionString: string) => string,
-): BoundProofStore<TStore> {
+export function openBoundProofStore(target: ProofHost | ProofHost['name']): BoundProofStore {
   const host = resolveProofHost(target);
-  if (store === null || typeof store !== 'object' || typeof store.describeTarget !== 'function') {
-    throw new ProofHostRefusedError(
-      'phase-50a: refusing to bind a store that cannot describe its own connection target. ' +
-        `A destructive operation is never performed through an unidentifiable handle. Host=${host.name}`,
-    );
-  }
-  const expected = redact(host.connectionString);
-  const actual = store.describeTarget();
-  if (actual !== expected) {
-    throw new ProofHostRefusedError(
-      'phase-50a: refusing to bind a store whose connection target is NOT the one the ' +
-        'descriptor authorizes. The destructive proof never validates one target and then ' +
-        `erases another. Descriptor ${host.name} names ${expected}; the store says ${actual}.`,
-    );
-  }
-  return Object.freeze({ host, store, [BOUND]: true as const });
+  const store = new PostgresEstateHost({ connectionString: host.connectionString });
+  const bound = Object.freeze({ host, store }) as BoundProofStore;
+  BOUND_PROOF_STORES.set(bound, Object.freeze({ host, store }));
+  return bound;
 }
 
 /**
- * Is this a genuine `bindStore` product?
+ * Is this exact object a handle `openBoundProofStore` produced?
  *
- * The brand is a module-private symbol, so no caller outside this module can
- * mint one. Exposed so a destructive entry point can fail closed on an untyped
- * JavaScript caller rather than dereferencing whatever it was handed.
+ * Membership of a module-private WeakMap, so no caller outside this module can
+ * mint one and no copy of a genuine one qualifies. Exposed so a destructive
+ * entry point can fail closed on an untyped JavaScript caller rather than
+ * dereferencing whatever it was handed.
  */
-export function isBoundProofStore<TStore>(value: unknown): value is BoundProofStore<TStore> {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    (value as Record<PropertyKey, unknown>)[BOUND] === true
-  );
+export function isBoundProofStore(value: unknown): value is BoundProofStore {
+  return typeof value === 'object' && value !== null && BOUND_PROOF_STORES.has(value);
+}
+
+/**
+ * THE DESTRUCTIVE AUTHORITY ACCESSOR. Returns the descriptor and the store THIS
+ * MODULE CONSTRUCTED for it, or throws.
+ *
+ * A destructive consumer must act on what comes back from here rather than on
+ * the fields of the handle it was given. The distinction is the sequence-89
+ * divergence case in its final form: the registry is the record of what was
+ * authorized, and a handle whose fields have been replaced is not it.
+ */
+export function authorizedBoundStore(
+  bound: BoundProofStore,
+): Readonly<{ host: ProofHost; store: PostgresEstateHost }> {
+  const record = BOUND_PROOF_STORES.get(bound);
+  if (record === undefined) {
+    throw new ProofHostRefusedError(
+      'phase-50a: refusing a destructive operation that was not handed a store this module ' +
+        'OPENED for a fixed harness descriptor. Obtain one from hosts.openBoundProofStore(); ' +
+        'a store handle, a self-describing imitation, a subclass and a copied handle are ' +
+        'none of them destructive authority.',
+    );
+  }
+  return record;
 }
 
 /**

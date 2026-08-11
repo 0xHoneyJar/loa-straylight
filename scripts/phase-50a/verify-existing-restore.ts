@@ -42,11 +42,17 @@
 // and REQUIRING the harness here would leave the operator with no executable
 // verification of the estate they actually restored, which is the finding.
 //
-// Exit status is the verdict: 0 = the estates agree and every chain verifies;
-// 1 = a MISMATCH or a broken chain (a real defect, reported field by field);
-// 2 = the verification could not be performed (unreachable host, bad argument).
-// A mismatch is never reported as a pass, and an inability to check is never
-// reported as a mismatch.
+// Exit status is the verdict: 0 = the estates agree, every chain verifies, AND
+// every statement this process actually issued was observed and recognized as
+// read-only; 1 = a MISMATCH, a broken chain, or reads that do not prove
+// themselves (a real defect, reported field by field); 2 = the verification could
+// not be performed (unreachable host, bad argument). A mismatch is never reported
+// as a pass, and an inability to check is never reported as a mismatch.
+//
+// That third clause of the PASS is not decoration. It is what the sequence-104
+// audit found missing: the observation proof existed but governed nothing, so a
+// destructive statement could not have changed the verdict. It governs now — see
+// `decideVerification`.
 
 import {
   PostgresEstateHost,
@@ -79,10 +85,41 @@ export interface VerificationReport {
   readonly differences: readonly string[];
   /** Chains that failed verification on either side. */
   readonly brokenChains: readonly string[];
+  /**
+   * What the observation seam actually saw. PART OF THE VERDICT, not commentary:
+   * `ok` cannot be true unless `queryProof.proved` is.
+   */
+  readonly queryProof: QueryProof;
+}
+
+/** One statement as the observation seam received it. */
+export interface QueryObservation {
+  /** How the argument arrived at `client.query`. */
+  readonly shape: 'text' | 'config' | 'unobservable';
+  /** The SQL text, or `null` when the argument carried none to read. */
+  readonly sql: string | null;
+  /** The affirmative recognition verdict for this observation. */
+  readonly verdict: ObservationVerdict;
+}
+
+export type ObservationVerdict =
+  | { readonly recognized: true; readonly form: 'read-only-projection' }
+  | { readonly recognized: false; readonly reason: string };
+
+/** What the observations, taken together, do or do not prove. */
+export interface QueryProof {
+  /** How many statements the seam saw. */
+  readonly observed: number;
+  /** How many of them were affirmatively recognized as read-only. */
+  readonly recognized: number;
+  /** One entry per observation that was NOT recognized, in order. */
+  readonly refusals: readonly string[];
+  /** True only when the seam saw something AND recognized all of it. */
+  readonly proved: boolean;
 }
 
 /**
- * Every SQL statement this module ACTUALLY ISSUED, in order.
+ * Every statement this module ACTUALLY ISSUED, in order, with its verdict.
  *
  * ── OBSERVED, NOT ANNOUNCED (sequence-89 audit, F-14) ─────────────────────
  *
@@ -93,57 +130,137 @@ export interface VerificationReport {
  * detected a statement the narration failed to mention, which is exactly the
  * property it was supposed to prove. The audit called it vacuous, correctly.
  *
- * Entries now arrive from `observeQueries`, which wraps the client's own `query`
+ * Entries arrive from `observeQueries`, which wraps the client's own `query`
  * method, so every statement that reaches PostgreSQL is recorded BY
  * CONSTRUCTION, at the moment it is issued, whether or not anybody remembered
- * to mention it. A statement this module did not intend to run would appear
- * here; under the old scheme it would not have.
- */
-const statements: string[] = [];
-
-export function recordedStatements(): readonly string[] {
-  return [...statements];
-}
-
-export function resetRecordedStatements(): void {
-  statements.length = 0;
-}
-
-/**
- * Statements that would erase data or change state. Any of these appearing on
- * the record above is a defect in this module, not a finding about the database.
- */
-const DESTRUCTIVE_SQL = /\b(?:DROP|TRUNCATE|DELETE|ALTER|CREATE|INSERT|UPDATE|MERGE|GRANT|REVOKE|VACUUM|REINDEX|COPY)\b/i;
-
-/**
- * Is every OBSERVED statement non-destructive?
+ * to mention it. A statement this module did not intend to run appears here;
+ * under the old scheme it would not have.
  *
- * True over an empty record — deliberately, because "no destructive statement
- * was observed" is a true and useful statement about a run that issued nothing.
- * It is NOT proof of a completed non-destructive verification; for that, use
- * `provedNoDestructiveSql` below, which requires the observation to exist.
+ * The record is CUMULATIVE and is never cleared by the verification path, so a
+ * statement observed before a verification still counts against it. Callers that
+ * want a fresh record call `resetRecordedObservations()` explicitly.
  */
-export function recordedStatementsAreReadOnly(): boolean {
-  return statements.every((s) => !DESTRUCTIVE_SQL.test(s));
+const observations: QueryObservation[] = [];
+
+export function recordedObservations(): readonly QueryObservation[] {
+  return [...observations];
+}
+
+export function resetRecordedObservations(): void {
+  observations.length = 0;
 }
 
 /**
- * Did this run PROVE that it verified without destroying anything?
+ * The ONE statement form this module's read path is allowed to issue, as a
+ * grammar rather than a list of spellings: a `SELECT` of bare columns from one
+ * bare relation, optionally ordered by bare columns.
+ *
+ * ── WHY A POSITIVE GRAMMAR AND NOT A DESTRUCTIVE-KEYWORD DENYLIST ─────────
+ *
+ * The substrate classified statements with
+ * `/\b(?:DROP|TRUNCATE|DELETE|…)\b/i` and treated everything it did not match
+ * as read-only. The sequence-104 audit rejected that, and the direction of the
+ * error is the whole point: a denylist's DEFAULT IS PASS, so every statement
+ * form nobody thought of — `SELECT pg_terminate_backend(…)`, `SELECT … INTO`,
+ * `WITH x AS (DELETE …) SELECT`, `LOCK`, `SET`, `CALL`, a second statement after
+ * a `;`, a `DO $$ … $$` block, anything a future PostgreSQL release adds — was
+ * certified safe by omission.
+ *
+ * This grammar's DEFAULT IS REFUSE. Nothing needs to be enumerated as dangerous,
+ * because nothing is permitted that is not recognized. That is also why
+ * "destructive" and "state-reducing" are not separate verdicts below: telling
+ * them apart would require exactly the denylist that was rejected, and it is
+ * unnecessary — they are refused as UNRECOGNIZED, which is strictly stronger
+ * than refusing them by name.
+ *
+ * The grammar is deliberately tight. It admits no parentheses (so no function
+ * call, no subquery, no CTE), no `;` (so no second statement), no `--` or slash-
+ * star comment, no `INTO`, no `JOIN`, no `WHERE`, no qualified or quoted
+ * identifier, and no literal. `readStoreSnapshot`'s eight queries are all it
+ * needs to admit, and a NEW read that this grammar does not recognize FAILS
+ * CLOSED — which is the correct outcome, because a new read on the
+ * "non-destructive verification" path is exactly the change that ought to be
+ * looked at rather than assumed benign.
+ */
+const IDENTIFIER = '[A-Za-z_][A-Za-z0-9_]*';
+const ORDER_TERM = `${IDENTIFIER}(?: ASC| DESC)?`;
+const READ_ONLY_PROJECTION = new RegExp(
+  `^SELECT ${IDENTIFIER}(?:, ${IDENTIFIER})*` +
+    ` FROM ${IDENTIFIER}` +
+    `(?: ORDER BY ${ORDER_TERM}(?:, ${ORDER_TERM})*)?$`,
+  'i',
+);
+
+/**
+ * Recognize one observed statement, affirmatively. Whitespace is collapsed first
+ * because the queries are written as indented template literals; nothing else
+ * about the text is rewritten, so what is recognized is what was issued.
+ */
+export function classifyObservedSql(sql: string): ObservationVerdict {
+  const collapsed = sql.replace(/\s+/g, ' ').trim();
+  if (READ_ONLY_PROJECTION.test(collapsed)) {
+    return { recognized: true, form: 'read-only-projection' };
+  }
+  return {
+    recognized: false,
+    reason: `UNRECOGNIZED statement form (not a read-only projection): ${collapsed}`,
+  };
+}
+
+/** The observation for a `pg` query argument, in any of its accepted shapes. */
+function observationOf(first: unknown): QueryObservation {
+  if (typeof first === 'string') {
+    return { shape: 'text', sql: first, verdict: classifyObservedSql(first) };
+  }
+  if (
+    typeof first === 'object' &&
+    first !== null &&
+    typeof (first as { text?: unknown }).text === 'string'
+  ) {
+    const text = (first as { text: string }).text;
+    return { shape: 'config', sql: text, verdict: classifyObservedSql(text) };
+  }
+  // UNOBSERVABLE: a statement was issued whose text this seam cannot read. It is
+  // never dropped and never assumed benign — an unattributable statement is
+  // still a statement, and one whose text is unavailable cannot be recognized.
+  return {
+    shape: 'unobservable',
+    sql: null,
+    verdict: {
+      recognized: false,
+      reason: `UNOBSERVABLE query argument of type ${typeof first}: its SQL text cannot be read`,
+    },
+  };
+}
+
+/**
+ * What the observations prove.
  *
  * ── WHY AN EMPTY RECORD MUST FAIL (sequence-89 audit, F-14) ───────────────
  *
- * `recordedStatementsAreReadOnly()` answers `[].every(...)` — i.e. `true` — over
- * an empty record. Used on its own as the non-destruction proof, it therefore
- * passed VACUOUSLY: a verifier that observed nothing at all, or whose seam had
- * been removed entirely, "proved" that it destroyed nothing. The audit
- * demonstrated exactly that.
+ * "No destructive statement was observed" answers `[].every(…)` — i.e. `true` —
+ * over an empty record, so used alone it passed VACUOUSLY: a verifier that
+ * observed nothing at all, or whose seam had been removed entirely, "proved"
+ * that it destroyed nothing.
  *
- * A proof requires evidence. This predicate demands BOTH: at least one observed
- * statement (so the seam demonstrably ran) AND no destructive statement among
- * them. An empty record is now "unproven", not "proven safe".
+ * A proof requires evidence. `proved` therefore demands BOTH: at least one
+ * observation (so the seam demonstrably ran) AND affirmative recognition of
+ * every one of them. An empty record is "unproven", not "proven safe"; a record
+ * with one unrecognized entry is unproven too, however many recognized entries
+ * sit beside it.
  */
-export function provedNoDestructiveSql(): boolean {
-  return statements.length > 0 && recordedStatementsAreReadOnly();
+export function observedQueryProof(): QueryProof {
+  const refusals: string[] = [];
+  observations.forEach((observation, index) => {
+    if (observation.verdict.recognized) return;
+    refusals.push(`#${index + 1} [${observation.shape}] ${observation.verdict.reason}`);
+  });
+  return {
+    observed: observations.length,
+    recognized: observations.length - refusals.length,
+    refusals,
+    proved: observations.length > 0 && refusals.length === 0,
+  };
 }
 
 /**
@@ -156,12 +273,17 @@ export function provedNoDestructiveSql(): boolean {
  * description of intent — and it is why a statement this module never meant to
  * issue could not hide from it.
  *
- * `pg` accepts `query(text)`, `query(text, values)` and `query(config)`; all
- * three are normalized to the SQL text here. Anything unrecognizable is recorded
- * as an explicit unknown-shape marker rather than dropped: an unrecorded
- * statement would be the one thing this seam exists to prevent.
+ * EXPORTED on purpose. The proof of F-14 has to be taken at THIS seam and not at
+ * a replica of it: a test that recorded through its own imitation would prove a
+ * property of the imitation. Any client-shaped object may be wrapped, which is
+ * what lets a test issue a statement through the real seam without a database
+ * and without any injection surface existing in the verification path.
+ *
+ * `pg` accepts `query(text)`, `query(text, values)` and `query(config)`; the
+ * first two carry text and the third may. Anything else is recorded as
+ * UNOBSERVABLE rather than dropped or assumed benign.
  */
-function observeQueries<TClient extends { query: (...args: never[]) => unknown }>(
+export function observeQueries<TClient extends { query: (...args: never[]) => unknown }>(
   client: TClient,
 ): TClient {
   return new Proxy(client, {
@@ -169,25 +291,11 @@ function observeQueries<TClient extends { query: (...args: never[]) => unknown }
       if (property !== 'query') return Reflect.get(target, property, receiver);
       const original = Reflect.get(target, property, receiver) as TClient['query'];
       return function observedQuery(this: unknown, ...args: unknown[]) {
-        statements.push(sqlTextOf(args[0]));
+        observations.push(observationOf(args[0]));
         return (original as (...a: unknown[]) => unknown).apply(target, args);
       };
     },
   });
-}
-
-/** The SQL text of a `pg` query argument, in any of its accepted shapes. */
-function sqlTextOf(first: unknown): string {
-  if (typeof first === 'string') return first;
-  if (
-    typeof first === 'object' &&
-    first !== null &&
-    typeof (first as { text?: unknown }).text === 'string'
-  ) {
-    return (first as { text: string }).text;
-  }
-  // Never dropped: an unattributable statement is still a statement.
-  return `(UNRECOGNIZED QUERY SHAPE: ${typeof first})`;
 }
 
 /**
@@ -227,22 +335,34 @@ export async function readEstate(connectionString: string): Promise<EstateReadin
 }
 
 /**
- * Compare an EXISTING source estate with an EXISTING restored target estate,
- * non-destructively.
+ * Assemble the verdict from two readings AND the observation proof.
  *
- * Reads both, compares canonical content, and verifies every per-estate chain on
- * both sides. Reports a MISMATCH when they differ — this is not a vacuous
- * pass: a target missing rows, carrying extra rows, or holding different content
- * produces field-level differences, and a target whose chain does not verify is
- * reported broken even when the content digests agree.
+ * ── THE OBSERVATION GOVERNS THE VERDICT (sequence-104 audit, F-14) ────────
+ *
+ * The substrate computed its non-destruction proof and then THREW IT AWAY:
+ * `result.ok` was `differences.length === 0 && brokenChains.length === 0`, and
+ * the CLI's PASS branch consulted only that. The proof existed, was correct, and
+ * decided nothing — so a run that had issued a `DROP` would still have reported
+ * PASS and exited 0. A proof that governs nothing is not a proof.
+ *
+ * Here `queryProof.proved` is a CONJUNCT of `ok`, on the same footing as the
+ * digest comparison. A PASS therefore asserts three things at once: the estates
+ * agree, every chain verifies, and the statements this process actually issued
+ * were observed and every one of them was affirmatively recognized as read-only.
+ * Any destructive, state-reducing, unrecognized or unobservable statement — or no
+ * statement at all — makes `ok` false, and `verificationExitCode` turns that into
+ * a nonzero exit.
+ *
+ * Exposed separately from `verifyExistingRestore` so the decision can be
+ * exercised over readings and a proof that a test obtained from the REAL seam,
+ * without a database and without the verification path holding any injection
+ * surface of its own.
  */
-export async function verifyExistingRestore(
-  sourceConnectionString: string,
-  targetConnectionString: string,
-): Promise<VerificationReport> {
-  const source = await readEstate(sourceConnectionString);
-  const target = await readEstate(targetConnectionString);
-
+export function decideVerification(
+  source: EstateReading,
+  target: EstateReading,
+  queryProof: QueryProof,
+): VerificationReport {
   const differences: string[] = [];
   if (source.digest !== target.digest) {
     differences.push(`whole-store digest: source ${source.digest} != target ${target.digest}`);
@@ -264,12 +384,51 @@ export async function verifyExistingRestore(
   ];
 
   return {
-    ok: differences.length === 0 && brokenChains.length === 0,
+    ok: differences.length === 0 && brokenChains.length === 0 && queryProof.proved,
     source,
     target,
     differences,
     brokenChains,
+    queryProof,
   };
+}
+
+/**
+ * The process exit status for a report. THE ONLY THING THAT DECIDES IT.
+ *
+ * `main` assigns `process.exitCode` from this and from nothing else, so the exit
+ * status is a function of `report.ok` — and therefore of the observation proof,
+ * which is one of its conjuncts. 0 = verified; 1 = not verified, whether because
+ * the estates disagree, a chain is broken, or the statements actually issued do
+ * not prove a read-only verification.
+ */
+export function verificationExitCode(report: VerificationReport): number {
+  return report.ok ? 0 : 1;
+}
+
+/**
+ * Compare an EXISTING source estate with an EXISTING restored target estate,
+ * non-destructively.
+ *
+ * Reads both, compares canonical content, verifies every per-estate chain on
+ * both sides, and folds in what the observation seam saw. Reports a MISMATCH when
+ * they differ — this is not a vacuous pass: a target missing rows, carrying extra
+ * rows, or holding different content produces field-level differences, and a
+ * target whose chain does not verify is reported broken even when the content
+ * digests agree.
+ *
+ * The observation record is NOT cleared here: a statement observed at any point
+ * in this process counts against this verification. That is deliberate — clearing
+ * it would let the very statement the proof exists to catch be forgotten before
+ * the verdict was taken.
+ */
+export async function verifyExistingRestore(
+  sourceConnectionString: string,
+  targetConnectionString: string,
+): Promise<VerificationReport> {
+  const source = await readEstate(sourceConnectionString);
+  const target = await readEstate(targetConnectionString);
+  return decideVerification(source, target, observedQueryProof());
 }
 
 /**
@@ -324,12 +483,22 @@ async function main(): Promise<void> {
   report(result.source, 'source');
   report(result.target, 'target');
 
+  // The observations are reported BEFORE the verdict, because they are part of
+  // it: a reader can see what was actually issued and why it was accepted.
+  line('observed statements', String(result.queryProof.observed));
+  line('recognized read-only', String(result.queryProof.recognized));
+  for (const refusal of result.queryProof.refusals) line('  REFUSED', refusal);
+
   process.stdout.write('\n');
+  // ONE exit assignment, from ONE decision function, on every path.
+  process.exitCode = verificationExitCode(result);
   if (result.ok) {
-    line('VERIFICATION', 'PASS — estates agree and every chain verifies');
+    line('VERIFICATION', 'PASS — estates agree, every chain verifies, reads observed');
     process.stdout.write(
       '\nThe restored target holds the same canonical content as the source and\n' +
-        'every per-estate audit chain verifies identically. Nothing was modified.\n',
+        'every per-estate audit chain verifies identically. Every statement this\n' +
+        'process issued was observed and recognized as read-only. Nothing was\n' +
+        'modified.\n',
     );
     return;
   }
@@ -337,13 +506,20 @@ async function main(): Promise<void> {
   line('VERIFICATION', 'MISMATCH — do NOT put the target into service');
   for (const difference of result.differences) line('  difference', difference);
   for (const broken of result.brokenChains) line('  broken chain', broken);
+  if (!result.queryProof.proved) {
+    line(
+      '  unproven reads',
+      result.queryProof.observed === 0
+        ? 'NO statement was observed: this run proves nothing about what it issued'
+        : `${result.queryProof.refusals.length} observed statement(s) were not recognized as read-only`,
+    );
+  }
   process.stdout.write(
     '\nThe source remains authoritative and UNTOUCHED. Quarantine the target\n' +
       'rather than serving it (P-4), record the differences above verbatim, and\n' +
       'follow §4.4 of the runbook. Re-taking the dump and restoring again is the\n' +
       'next step; erasing either estate is never the next step.\n',
   );
-  process.exitCode = 1;
 }
 
 // RUN ONLY AS A SCRIPT — importing this module must verify nothing by itself.

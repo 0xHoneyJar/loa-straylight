@@ -26,11 +26,9 @@ import {
   loadKeyring,
 } from '../../fixtures/index.js';
 import {
-  PostgresEstateHost,
   assertRestoreServiceable,
   compareSnapshots,
   readStoreSnapshot,
-  redactConnectionString,
   snapshotDigest,
   verifyChains,
 } from '../../src/straylight/storage/postgres/index.js';
@@ -39,8 +37,9 @@ import {
   type BoundProofStore,
   ProofHostRefusedError,
   assertDistinctHosts,
-  bindStore,
+  authorizedBoundStore,
   isBoundProofStore,
+  openBoundProofStore,
   type ProofHost,
   replacementHost,
   resolveProofHost,
@@ -86,17 +85,16 @@ async function main(): Promise<void> {
   }
   line('distinct instances', 'YES');
 
-  const sourceStore = new PostgresEstateHost({ connectionString: source.connectionString });
-  const replacementStore = new PostgresEstateHost({
-    connectionString: replacement.connectionString,
-  });
-
-  // BIND each store to the descriptor that authorizes it (F-09). `bindStore`
-  // refuses the pair unless the store's own target IS the descriptor's target,
-  // so the destructive step below cannot be handed a store for some other
-  // database. This is the only way to obtain a value `emptySchema` accepts.
-  const boundSource = bindStore(source, sourceStore, redactConnectionString);
-  const boundReplacement = bindStore(replacement, replacementStore, redactConnectionString);
+  // OPEN each store THROUGH the descriptor that authorizes it (F-09). This
+  // script never constructs a store itself and never hands one in: it asks
+  // `openBoundProofStore` for the authority over a fixed descriptor, and the
+  // store it works through is the one that call built from that descriptor's own
+  // connection string. There is no parameter through which some other store
+  // could arrive, so the destructive step below cannot be aimed elsewhere.
+  const boundSource = openBoundProofStore(source);
+  const boundReplacement = openBoundProofStore(replacement);
+  const sourceStore = boundSource.store;
+  const replacementStore = boundReplacement.store;
 
   try {
     heading('reset both hosts to a known starting state');
@@ -253,25 +251,30 @@ async function main(): Promise<void> {
  * then recorded on `destructiveOperations`, so a negative control can prove by
  * OBSERVATION that a refusal destroyed nothing.
  *
- * ── ONE BOUND VALUE, NOT TWO PARAMETERS (sequence-89 audit, F-09) ─────────
+ * ── ONE BOUND VALUE, AND THE STORE COMES FROM THE REGISTRY (F-09) ─────────
  *
  * This function used to take `(host, store)` and destroy through the store
  * after validating the host. Passing a legitimate descriptor with an unrelated
  * store therefore reached `DROP SCHEMA` with nothing checked about the database
  * actually being erased — the gate proved something about one object while the
- * destruction ran through another.
+ * destruction ran through another. The sequence-89 fix folded the two into one
+ * `bindStore` product; the sequence-104 audit then rejected that too, because
+ * `bindStore` accepted any caller object whose `describeTarget()` returned the
+ * expected TEXT.
  *
- * It now takes a SINGLE `BoundProofStore`, obtainable only from
- * `hosts.bindStore`, which resolves the descriptor and refuses the pair unless
- * the store's own target is the one the descriptor names. There is no longer a
- * signature through which the validated thing and the destroyed thing can
- * differ.
+ * It now takes a `BoundProofStore` obtainable ONLY from
+ * `hosts.openBoundProofStore`, which constructs the store itself from the
+ * descriptor — and it destroys through the store `authorizedBoundStore` returns
+ * out of the module-private registry, not through a field of the value it was
+ * handed. A self-describing imitation, a subclass with an overridden
+ * description, and a copy of a genuine handle with a substituted `store` are all
+ * refused HERE, and none of them is ever dereferenced.
  */
-export async function emptySchema(bound: BoundProofStore<PostgresEstateHost>): Promise<void> {
-  // The binding IS the gate, and it happened in `bindStore` — before this
-  // function was reachable, before a connection, before any DDL. Re-resolving
-  // here would be theatre: the descriptor in a bound store already passed
-  // `resolveProofHost`.
+export async function emptySchema(bound: BoundProofStore): Promise<void> {
+  // The binding IS the gate, and it happened in `openBoundProofStore` — before
+  // this function was reachable, before a connection, before any DDL.
+  // Re-resolving here would be theatre: the descriptor in a bound store already
+  // passed `resolveProofHost`.
   const fixed = requireBoundStore(bound);
   destructive.push(
     Object.freeze({
@@ -287,23 +290,25 @@ export async function emptySchema(bound: BoundProofStore<PostgresEstateHost>): P
 }
 
 /**
- * Refuse anything that is not a genuine `bindStore` product.
+ * Refuse anything that is not a genuine `openBoundProofStore` product, and
+ * return the descriptor and store THE REGISTRY holds for it.
  *
- * The brand is a module-private symbol, so a plain object cannot carry it — but
- * an untyped JavaScript caller can still pass anything, and the destructive path
- * must fail closed rather than read `undefined.withClient`.
+ * The membership test and the lookup are the same act deliberately: a
+ * destructive operation must not be able to check one object and then act on
+ * another, which is the shape of every defect this seam has had. An untyped
+ * JavaScript caller can still pass anything, and the path fails closed rather
+ * than reading `undefined.withClient`.
  */
-function requireBoundStore(
-  bound: BoundProofStore<PostgresEstateHost>,
-): BoundProofStore<PostgresEstateHost> {
+function requireBoundStore(bound: BoundProofStore): ReturnType<typeof authorizedBoundStore> {
   if (!isBoundProofStore(bound)) {
     throw new ProofHostRefusedError(
-      'phase-50a: refusing a destructive operation that was not handed a store BOUND to a ' +
-        'fixed harness descriptor. Obtain one from hosts.bindStore(); a bare store handle is ' +
-        'never destructive authority.',
+      'phase-50a: refusing a destructive operation that was not handed a store this harness ' +
+        'OPENED for a fixed descriptor. Obtain one from hosts.openBoundProofStore(); a bare ' +
+        'store handle, a self-describing imitation and a copied handle are none of them ' +
+        'destructive authority.',
     );
   }
-  return bound;
+  return authorizedBoundStore(bound);
 }
 
 /** One recorded destructive operation: what was erased, and where. */

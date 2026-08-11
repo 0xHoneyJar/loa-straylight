@@ -23,9 +23,12 @@ import { expect, it } from 'vitest';
 import { PostgresEstateHost } from '../../src/straylight/storage/postgres/index.js';
 import {
   assertDistinctHosts,
+  createScratchDatabase,
   replacementHost,
   sourceHost,
   type ProofHost,
+  type ProofToolTarget,
+  type ScratchGrant,
 } from '../../scripts/phase-50a/hosts.js';
 
 export { replacementHost, sourceHost, assertDistinctHosts };
@@ -88,45 +91,29 @@ export async function requireReachable(host: ProofHost): Promise<void> {
  * still the harness instance — the two-host proof's "different host" claim
  * rests on `source` vs `replacement` being different servers, never on
  * database names.
+ *
+ * ── CREATION IS DELEGATED, NOT PERFORMED HERE (sequence-104 audit, F-10) ──
+ *
+ * This function used to mint the name and run `CREATE DATABASE` itself, and a
+ * caller who wanted a tool target for the result asked
+ * `hosts.declareScratchDatabase` to register the name — which it did for ANY
+ * `p50a_`-shaped string, from anywhere. Creation and authorization were separate
+ * acts, so authorization could happen without creation.
+ *
+ * They are now the same act, and it lives in `hosts.createScratchDatabase`: it
+ * chooses the name, creates the database, and issues the `pg_dump`/`psql` target
+ * for it. What this function does with the grant — migrate the fresh database
+ * and hand back a disposable handle — carries no authority of its own, and
+ * `toolTarget` below is the grant's, not something reconstructed from the name.
  */
 export async function openScratchDatabase(
   host: ProofHost,
   label: string,
 ): Promise<ScratchDatabase> {
-  const name = scratchName(label);
-  const admin = new PostgresEstateHost({ connectionString: host.connectionString });
-  try {
-    await admin.withClient(async (client) => {
-      // The identifier comes from `scratchName` — a sanitized label plus pid
-      // and counter, never caller-supplied free text — and PostgreSQL has no
-      // parameter form for CREATE DATABASE. It is additionally quoted.
-      await client.query(`CREATE DATABASE "${name}"`);
-    });
-  } finally {
-    await admin.close();
-  }
-
-  const connectionString = replaceDatabase(host.connectionString, name);
-  const scoped = new PostgresEstateHost({ connectionString });
+  const grant = await createScratchDatabase(host, label);
+  const scoped = new PostgresEstateHost({ connectionString: grant.connectionString });
   await scoped.migrate();
-
-  return {
-    host: scoped,
-    connectionString,
-    database: name,
-    serverHost: host,
-    dispose: async () => {
-      await scoped.close();
-      const cleanup = new PostgresEstateHost({ connectionString: host.connectionString });
-      try {
-        await cleanup.withClient(async (client) => {
-          await client.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
-        });
-      } finally {
-        await cleanup.close();
-      }
-    },
-  };
+  return scratchDatabaseOf(grant, scoped);
 }
 
 export interface ScratchDatabase {
@@ -134,6 +121,13 @@ export interface ScratchDatabase {
   connectionString: string;
   database: string;
   serverHost: ProofHost;
+  /**
+   * The tool target ISSUED BY the creation of this database (F-10). A test that
+   * needs `pg_dump`/`psql` against a scratch database uses this; there is no
+   * other way to obtain one, because there is no longer an API that turns a
+   * database NAME into authority.
+   */
+  toolTarget: ProofToolTarget;
   dispose: () => Promise<void>;
 }
 
@@ -142,42 +136,32 @@ export async function openUnmigratedDatabase(
   host: ProofHost,
   label: string,
 ): Promise<ScratchDatabase> {
-  const name = scratchName(label);
-  const admin = new PostgresEstateHost({ connectionString: host.connectionString });
-  try {
-    await admin.withClient(async (client) => {
-      await client.query(`CREATE DATABASE "${name}"`);
-    });
-  } finally {
-    await admin.close();
-  }
-  const connectionString = replaceDatabase(host.connectionString, name);
-  const scoped = new PostgresEstateHost({ connectionString });
-  return {
-    host: scoped,
-    connectionString,
-    database: name,
-    serverHost: host,
-    dispose: async () => {
-      await scoped.close();
-      const cleanup = new PostgresEstateHost({ connectionString: host.connectionString });
-      try {
-        await cleanup.withClient(async (client) => {
-          await client.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`);
-        });
-      } finally {
-        await cleanup.close();
-      }
-    },
-  };
+  const grant = await createScratchDatabase(host, label);
+  return scratchDatabaseOf(
+    grant,
+    new PostgresEstateHost({ connectionString: grant.connectionString }),
+  );
 }
 
-let counter = 0;
-
-function scratchName(label: string): string {
-  counter += 1;
-  const safe = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 32);
-  return `p50a_${safe}_${process.pid}_${counter}`;
+/**
+ * Wrap a creation grant as a disposable per-test handle.
+ *
+ * `dispose` closes the scoped store and then hands the database back to the
+ * grant, which drops it AND revokes the issued tool target — so the authority
+ * ends when the database does.
+ */
+function scratchDatabaseOf(grant: ScratchGrant, scoped: PostgresEstateHost): ScratchDatabase {
+  return {
+    host: scoped,
+    connectionString: grant.connectionString,
+    database: grant.database,
+    serverHost: grant.serverHost,
+    toolTarget: grant.toolTarget,
+    dispose: async () => {
+      await scoped.close();
+      await grant.drop();
+    },
+  };
 }
 
 /** Swap the database component of a standard PostgreSQL connection string. */

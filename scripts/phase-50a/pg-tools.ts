@@ -72,9 +72,16 @@ export function resetToolInvocations(): void {
 
 /**
  * THE TOOL GATE. Every client-tool invocation in this module passes through
- * here, and every one must be aimed at a target `hosts.toolTargetOf` ISSUED —
- * i.e. one derived from a fixed disposable harness descriptor that already
- * passed `resolveProofHost` (F-09/F-10).
+ * here, and every one must be aimed at a target the harness ISSUED — either
+ * `hosts.toolTargetOf` for a fixed descriptor's own database, or
+ * `hosts.createScratchDatabase` for a database it actually created — so every
+ * target derives from a descriptor that already passed `resolveProofHost`
+ * (F-09/F-10).
+ *
+ * SEQUENCE-104: a database NAME is no longer a route to issuance. The gate is
+ * unchanged because it never trusted names in the first place; what changed is
+ * that the only other issuer is now an act of creation, so "issued" implies
+ * "created by us" rather than "declared to us".
  *
  * Checked BEFORE the invocation is recorded and before anything is spawned, so
  * a hand-built target — a foreign container, a non-harness database, a copy of
