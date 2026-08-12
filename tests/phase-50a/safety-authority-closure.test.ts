@@ -9,14 +9,13 @@
 //   F-01  the Phase 31F observation seam preserves and restores the EXACT
 //         ORIGINAL `process.kill` object — reference identity, on the resolved,
 //         rejected and throwing paths.
-//   F-04  `redactConnectionString` decides with the SAME effective parser
-//         semantics that determine which credentials `pg` receives — on the
-//         decision side AND on the output-containment side — so a
-//         parser-derived credential is unrecoverable from a diagnostic under
-//         the whole decoding family: raw, percent-decoded, form-decoded (`+`
-//         to space), URLSearchParams-decoded, re-encoded, and for duplicate
-//         parameters in the winning and the losing role alike. Malformed or
-//         ambiguous credential-shaped query content fails closed WITHOUT
+//   F-04  the store DECIDES NOTHING about a connection string. It names its
+//         target from the identity the DRIVER resolved, so the rendered target
+//         is invariant under every change to userinfo and query, no credential
+//         is recoverable from it under the whole decoding family, and the two
+//         disagreement classes a transcription had — UPPERCASE parameter keys
+//         and LEADING-SLASH SOCKET forms — are irrelevant BY CONSTRUCTION. A
+//         target the driver never resolved is named as unnameable, without
 //         throwing.
 //   F-09  destructive authority binds to the store this harness CONSTRUCTED
 //         for a fixed descriptor. No self-description, subclass override,
@@ -59,7 +58,7 @@
 // remembered to guard.
 
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -68,7 +67,6 @@ import { describe, expect, it } from 'vitest';
 import {
   PostgresEstateHost,
   readStoreSnapshot,
-  redactConnectionString,
 } from '../../src/straylight/storage/postgres/index.js';
 import {
   ProofHostRefusedError,
@@ -297,32 +295,78 @@ describe('Phase 50A F-01 — the Phase 31F seam preserves the exact original pro
 // percent-decoded — never merely the presence of `<redacted>`, which a
 // partially redacted string would also satisfy.
 
-// SUPERSEDED BY THE SEQUENCE-104 AUDIT. The two-line header immediately above
-// belongs to the F-01 block this slice must preserve byte-for-byte, so it still
-// says "raw and percent-decoded". That framing is the one the audit REJECTED:
-// "raw and percent-decoded" is a DECODER LIST, and a list is a claim about the
-// spellings somebody thought of. What follows states the property instead —
-// absence under the whole decoding family the reader of a diagnostic can apply
-// — and `expectUnrecoverable` below is where that is enforced.
+// SUPERSEDED BY THE SEQUENCE-110 AUDIT — THERE IS NO REDACTION MATRIX NOW.
+//
+// The two-line header immediately above belongs to the F-01 block this slice
+// must preserve byte-for-byte, so it still announces a matrix of redactions of a
+// connection string. That whole shape is what the sequence-110 audit rejected.
+//
+// A redactor has to KNOW where the credential is, and knowing that means
+// reproducing what the real connection parser does: its pre-encoding, its WHATWG
+// `URL` construction, its parameter-name normalization, its case rules and its
+// credential-name list. The substrate reproduced all of it. Safe probes then
+// found the reproduction DISAGREEING with the authority it was imitating on
+// UPPERCASE parameter keys and on LEADING-SLASH SOCKET forms — and no matrix
+// closes that, because a second parser is wrong in ways that are discovered
+// rather than designed out.
+//
+// So `redactConnectionString` is GONE, with every helper that fed it, and no
+// module in the store renders connection-string material at all. What follows
+// proves the replacement property, which is both stronger and smaller: the store
+// names its target from the identity the DRIVER ITSELF resolved, emits no
+// userinfo and no query text in any form, and is therefore INVARIANT under every
+// change to the credential-bearing parts of a connection string. That invariance
+// is the proof that both disagreement classes are IRRELEVANT BY CONSTRUCTION —
+// not handled, not closed case by case, but unable to reach the output at all.
 
-describe('Phase 50A F-04 — redactConnectionString decides WITH the real connection parser', () => {
+describe('Phase 50A F-04 — the store names its target from the driver and transcribes no parser', () => {
+  /** The adapter boundary: every module allowed to know a connection string exists. */
+  const POSTGRES_DIR = resolve(ROOT, 'src/straylight/storage/postgres');
+  const storeModules = (): ReadonlyArray<{ name: string; executable: string }> =>
+    readdirSync(POSTGRES_DIR)
+      .filter((name) => name.endsWith('.ts'))
+      .map((name) => ({
+        name,
+        executable: executableText(readFileSync(resolve(POSTGRES_DIR, name), 'utf8')),
+      }));
+
   /**
-   * The option names `pg` treats as carrying a credential.
+   * A target `pg` can resolve and never reach: a dead loopback port.
    *
-   * Used ONLY as the test's oracle key set — to ask "did the parser put a value
-   * under a name pg would use as a credential?" — never as a redaction rule.
-   * The implementation derives its own names from the parser; if this list and
-   * the implementation ever disagreed about a name the parser honours, the
-   * seek-disagreement proof below would fail, which is the point.
+   * Assembled and interpolated for the reason the constants above are — the
+   * committed-loopback scan in `no-leak-and-neutrality.test.ts` reads this file
+   * and must keep passing unchanged.
    */
-  const CREDENTIAL_KEYS: readonly string[] = [
-    'password',
-    'passwd',
-    'pgpassword',
-    'pgpassfile',
-    'sslpassword',
-    'sslkey',
-  ];
+  const DEAD_TARGET = `${SCHEME}${LOOPBACK}:1`;
+  /** A socket directory that cannot exist, so the socket form fails immediately. */
+  const ABSENT_SOCKET_DIR = '/nonexistent/straylight-absent-socket';
+
+  /**
+   * Open a host and make `pg` BUILD A CLIENT for it, then hand the host back.
+   *
+   * Nothing here inspects the connection string; the point is the opposite. The
+   * store learns its target only when the driver resolves one, so a proof about
+   * what the store PRINTS has to let the driver do that first. Every target used
+   * with this helper is a dead loopback port or an absent unix socket, so the
+   * acquisition MUST fail — and its failure is exactly what forces `pg` to
+   * construct the client whose resolved identity the store reports.
+   */
+  const forceResolve = async (connectionString: string): Promise<PostgresEstateHost> => {
+    const host = new PostgresEstateHost({
+      connectionString,
+      maxConnections: 1,
+      connectionTimeoutMs: 5_000,
+    });
+    await host.withClient(async () => undefined).then(
+      () => {
+        throw new Error(
+          `phase-50a: ${connectionString} was expected to be unreachable but connected`,
+        );
+      },
+      () => undefined,
+    );
+    return host;
+  };
 
   /** The query span of a text, as a reader would slice it: after `?`, before `#`. */
   const querySpan = (text: string): string => {
@@ -336,30 +380,21 @@ describe('Phase 50A F-04 — redactConnectionString decides WITH the real connec
   /**
    * EVERY FORM A READER COULD RECOVER FROM A TEXT.
    *
-   * ── WHY A DECODER LIST IS NOT THE SAME THING (sequence-104 audit, F-04) ──
+   * ── WHY THIS IS NOT A TRANSCRIPTION (sequence-110 audit, F-04) ────────────
    *
-   * The audited helper asked three questions: is the secret present raw, is it
-   * present percent-decoded, is it present percent-ENCODED. Each is a decoder
-   * somebody remembered. The sequence-104 counterexample was the one nobody
-   * remembered: `?password=hunter+2+secret` gives `pg` the credential
-   * `hunter 2 secret`, and a diagnostic containing the LITERAL `hunter+2+secret`
-   * passed all three checks while handing the credential to anyone who read it
-   * the way the query itself is read — with `URLSearchParams`, where `+` is a
-   * space.
+   * The audit rejected a decoder matrix that DECIDED WHAT TO PRINT. This one
+   * decides nothing: it is the test's ATTACKER, applied to output the store has
+   * already produced. It models the readings a consumer of a diagnostic can
+   * apply — the text itself, percent decoding, form decoding (`+` to space),
+   * `URLSearchParams` over the whole text and over its query span, and WHATWG
+   * `URL` field extraction — and asks whether a credential survives any of them.
    *
-   * So the question here is not "which decoders did we list" but "what can be
-   * recovered". The forms are generated by APPLYING the readings a consumer of a
-   * connection-string diagnostic actually applies — the text itself, percent
-   * decoding, form decoding (`+` to space), `URLSearchParams` over the whole
-   * text AND over its query span, and WHATWG `URL` field extraction — and the
-   * secret is compared against all of them, in its decoded, encoded and
-   * form-encoded spellings alike. Adding a reading can only strengthen this;
-   * REMOVING one is what the mutation proof detects.
-   *
-   * Deliberately independent of the implementation: `parserReadings` in
-   * `config.ts` is module-private and the export surface is pinned below, so
-   * this is a second, separately written witness rather than the same code
-   * grading its own homework.
+   * It is also no longer mirroring anything: after this slice the store has NO
+   * decoder, NO parameter-name rule and NO second `URL` construction for this to
+   * be a copy of. `config.ts` exports exactly two symbols (pinned below), and the
+   * absence of the whole transcription surface is asserted mechanically further
+   * down. Adding a reading here can only strengthen the assertion; removing one
+   * is what the F-04 mutation proof detects.
    */
   const recoverableForms = (text: string): readonly string[] => {
     const forms = new Set<string>([text]);
@@ -377,8 +412,7 @@ describe('Phase 50A F-04 — redactConnectionString decides WITH the real connec
     const formDecoded = text.replace(/\+/g, ' ');
     add(formDecoded);
     add(decoded(formDecoded));
-    // `URLSearchParams` NEVER throws, and it form-decodes: this is the reading
-    // the sequence-104 counterexample used.
+    // `URLSearchParams` NEVER throws, and it form-decodes.
     for (const span of [text, querySpan(text)]) {
       for (const [name, value] of new URLSearchParams(span)) {
         add(name);
@@ -402,17 +436,14 @@ describe('Phase 50A F-04 — redactConnectionString decides WITH the real connec
   };
 
   /**
-   * A credential is UNRECOVERABLE from a redaction: no spelling of it appears in
-   * any form a reader can obtain from the text.
-   *
-   * The replacement for the audited `expectNoSecret`. Both sides are widened:
-   * the TEXT is read every way (`recoverableForms`), and the SECRET is sought in
-   * every spelling it could have been written as — decoded, percent-encoded and
-   * form-encoded (space as `+`) — because the credential `pg` receives may have
-   * been written into the URI in any of them.
+   * A credential is UNRECOVERABLE from a text: no spelling of it appears in any
+   * form a reader can obtain. Both sides are widened — the TEXT is read every
+   * way, and the SECRET is sought in every spelling it could have been written
+   * as, because the credential the driver receives may have been written into
+   * the URI decoded, percent-encoded or form-encoded.
    */
-  const expectUnrecoverable = (redacted: string, secret: string, label: string): void => {
-    const forms = recoverableForms(redacted);
+  const expectUnrecoverable = (emitted: string, secret: string, label: string): void => {
+    const forms = recoverableForms(emitted);
     const spellings = new Set<string>([secret]);
     const push = (value: string | undefined): void => {
       if (value !== undefined && value.length > 0) spellings.add(value);
@@ -430,838 +461,580 @@ describe('Phase 50A F-04 — redactConnectionString decides WITH the real connec
         expect(
           form.includes(spelling),
           `${label}: the credential is RECOVERABLE. Spelling ${JSON.stringify(spelling)} ` +
-            `appears in the reading ${JSON.stringify(form)} of ${JSON.stringify(redacted)}`,
+            `appears in the reading ${JSON.stringify(form)} of ${JSON.stringify(emitted)}`,
         ).toBe(false);
       }
     }
   };
 
-  const MATRIX: ReadonlyArray<{
-    label: string;
-    input: string;
-    secrets: readonly string[];
-    preserved: readonly string[];
-  }> = [
+  /**
+   * NOTHING PARSER-SENSITIVE IS EMITTED AT ALL.
+   *
+   * Stronger than "the secret is absent", and the reason the disagreement
+   * classes cannot matter: a rendered target carries no query span, no
+   * parameter separator and no percent escape, so there is no material in it for
+   * a credential to hide inside — encoded, decoded or otherwise.
+   */
+  const expectNoParserSensitiveMaterial = (emitted: string, label: string): void => {
+    for (const forbidden of ['?', '&', '%', '=', '#']) {
+      expect(
+        emitted.includes(forbidden),
+        `${label}: the rendered target carries ${JSON.stringify(forbidden)}: ${emitted}`,
+      ).toBe(false);
+    }
+    // The userinfo POSITION is a constant, so the only thing before the `@` is
+    // the placeholder — never a user, never a password, never a fragment of one.
+    const at = emitted.indexOf('@');
+    expect(at, `${label}: a rendered target names a userinfo position`).toBeGreaterThan(0);
+    expect(emitted.slice(0, at).endsWith('<redacted>'), `${label}: userinfo is not the constant`).toBe(
+      true,
+    );
+  };
+
+  // ── THE TRANSCRIPTION IS GONE, AND NOT ANYWHERE ELSE EITHER ──────────────
+  //
+  // The audit's finding was about a SECOND PARSER, so the closure has to be
+  // stated over the whole adapter boundary rather than over the one function
+  // that used to hold it. This scans EXECUTABLE TEXT, because every comment in
+  // `config.ts` names the constructs it no longer performs — a raw-bytes scan
+  // would be satisfied by the explanation and would keep passing if the code
+  // came back.
+  it('NO SECOND PARSER: no module in the store decodes, folds, re-spells or re-parses a connection string', () => {
+    const TRANSCRIPTION: readonly string[] = [
+      'pg-connection-string',
+      'decodeURIComponent',
+      'encodeURIComponent',
+      'URLSearchParams',
+      'new URL(',
+      'toLowerCase',
+      'toUpperCase',
+      'normalize(',
+      'password',
+      'passwd',
+      'pgpassword',
+      'sslpassword',
+      'sslkey',
+      'pgpassfile',
+    ];
+    const modules = storeModules();
+    // The scan is worthless if it scanned nothing.
+    expect(modules.length, 'the adapter boundary must have modules to scan').toBeGreaterThan(8);
+    for (const { name, executable } of modules) {
+      for (const token of TRANSCRIPTION) {
+        expect(
+          executable.includes(token),
+          `${name} must not transcribe connection-string semantics: found ${JSON.stringify(token)}`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it('NO SECOND PARSER: the connection string is passed to the driver and interpolated nowhere', () => {
+    for (const { name, executable } of storeModules()) {
+      // No message anywhere in the store is built out of connection-string text.
+      expect(
+        /\$\{[^}]*connectionString[^}]*\}/.test(executable),
+        `${name} must not interpolate a connection string into a string`,
+      ).toBe(false);
+      expect(
+        /connectionString\s*\+|\+\s*[A-Za-z.]*connectionString/.test(executable),
+        `${name} must not concatenate a connection string into a string`,
+      ).toBe(false);
+    }
+    // And in the one module that holds it, the ONLY appearance is the single line
+    // that hands it to `pg` — the option name and the value read from config. Two
+    // occurrences, one statement, no other mention anywhere in the module.
+    const hostExecutable = executableText(readFileSync(resolve(POSTGRES_DIR, 'host.ts'), 'utf8'));
+    const lines = hostExecutable
+      .split('\n')
+      .filter((l) => l.includes('connectionString'))
+      .map((l) => l.trim());
+    expect(lines, 'host.ts mentions the connection string outside the one hand-off').toEqual([
+      'connectionString: this.config.connectionString,',
+    ]);
+  });
+
+  it('SOLE EMITTER: target identity is rendered in one place and reached only through describeTarget()', () => {
+    const hostExecutable = executableText(readFileSync(resolve(POSTGRES_DIR, 'host.ts'), 'utf8'));
+    // The renderer is defined once and called once, and the one call is the body
+    // of `describeTarget`. A second call site would be a second emitter.
+    expect((hostExecutable.match(/renderTarget\(/g) ?? []).length).toBe(2);
+    expect(hostExecutable).toContain('describeTarget(): string {\n    return renderTarget(this.targetIdentity);');
+    // Every other module in the store names a target by CALLING that emitter.
+    for (const { name, executable } of storeModules()) {
+      if (name === 'host.ts') continue;
+      expect(
+        /renderTarget\(|targetIdentity/.test(executable),
+        `${name} must not render a target itself`,
+      ).toBe(false);
+    }
+  });
+
+  // ── THE IDENTITY IS THE DRIVER'S OWN ANSWER ──────────────────────────────
+  //
+  // ── WHY THIS ORACLE IS INDEPENDENT (packet condition C6) ─────────────────
+  //
+  // The oracle is `pg`'s OWN `Client`, constructed by THIS TEST from the same
+  // connection string. It is not a copy of anything in `host.ts`: `host.ts`
+  // computes nothing to copy — it reads three fields off the client `pg` built
+  // for its pool. So the two sides reach the same authority by different routes
+  // (a pooled client the driver constructs for itself versus a client the test
+  // constructs directly), and the assertion is that the store reports what the
+  // driver resolved rather than something it worked out beside it.
+  //
+  // Independent source, stated: the `pg` package's published `Client` surface
+  // (`host`, `port`, `database`), which is where the connection parameters a
+  // connection actually uses are observable.
+  const IDENTITY_CASES: ReadonlyArray<{ label: string; input: string }> = [
+    { label: 'ordinary URI, no userinfo', input: `${DEAD_TARGET}/straylight_source` },
     {
-      label: 'password-only userinfo',
-      input: 'postgresql://:hunter2secret@127.0.0.1:55432/straylight_source',
-      secrets: ['hunter2secret'],
-      preserved: ['postgresql://', '127.0.0.1', '55432', 'straylight_source'],
-    },
-    {
-      label: 'mixed user and password userinfo',
-      input: 'postgresql://appuser:hunter2secret@127.0.0.1:55432/straylight_source',
-      secrets: ['hunter2secret', 'appuser'],
-      preserved: ['postgresql://', '127.0.0.1', '55432', 'straylight_source'],
+      label: 'userinfo carrying a credential',
+      input: `${SCHEME}appuser:hunter2secret@${LOOPBACK}:1/straylight_source`,
     },
     {
       label: 'credential ONLY in a query parameter',
-      input: `${SOURCE_ORIGIN}/straylight_source?password=hunter2secret`,
-      secrets: ['hunter2secret'],
-      preserved: ['127.0.0.1', '55432', 'straylight_source', 'password='],
+      input: `${DEAD_TARGET}/straylight_source?password=hunter2secret`,
+    },
+    // THE FIRST SEQUENCE-110 DISAGREEMENT CLASS, asked of the authority itself.
+    {
+      label: 'UPPERCASE parameter key',
+      input: `${DEAD_TARGET}/straylight_source?PASSWORD=UPPERSECRET`,
+    },
+    // THE SECOND. A leading-slash socket form has no authority component at all,
+    // and the driver resolves its host from a query parameter — the exact shape
+    // the substrate's transcription had no rule for.
+    {
+      label: 'LEADING-SLASH SOCKET form (host from the query)',
+      input: `${SCHEME}/straylight_source?host=${ABSENT_SOCKET_DIR}`,
     },
     {
-      label: 'percent-encoded credential value',
-      input: `${SOURCE_ORIGIN}/straylight_source?password=p%40ss%3Aw%2Frd`,
-      secrets: ['p%40ss%3Aw%2Frd', 'p@ss:w/rd'],
-      preserved: ['127.0.0.1', 'straylight_source'],
+      label: 'PERCENT-ENCODED socket directory in the host position',
+      input: `${SCHEME}${encodeURIComponent(ABSENT_SOCKET_DIR)}/straylight_source`,
     },
-    {
-      label: 'UPPERCASE parameter name',
-      input: `${SOURCE_ORIGIN}/straylight_source?PASSWORD=hunter2secret`,
-      secrets: ['hunter2secret'],
-      preserved: ['127.0.0.1', 'straylight_source'],
-    },
-    {
-      label: 'Capitalised parameter name',
-      input: `${SOURCE_ORIGIN}/straylight_source?Password=hunter2secret`,
-      secrets: ['hunter2secret'],
-      preserved: ['127.0.0.1', 'straylight_source'],
-    },
-    {
-      label: 'multiple credential parameters in one URI',
-      input:
-        `${SOURCE_ORIGIN}/straylight_source?password=firstsecret&passwd=secondsecret&pgpassword=thirdsecret`,
-      secrets: ['firstsecret', 'secondsecret', 'thirdsecret'],
-      preserved: ['127.0.0.1', 'straylight_source'],
-    },
-    {
-      label: 'credential parameter FIRST',
-      input:
-        `${SOURCE_ORIGIN}/straylight_source?password=hunter2secret&application_name=straylight&connect_timeout=5`,
-      secrets: ['hunter2secret'],
-      preserved: ['application_name=straylight', 'connect_timeout=5'],
-    },
-    {
-      label: 'credential parameter MIDDLE',
-      input:
-        `${SOURCE_ORIGIN}/straylight_source?application_name=straylight&password=hunter2secret&connect_timeout=5`,
-      secrets: ['hunter2secret'],
-      preserved: ['application_name=straylight', 'connect_timeout=5'],
-    },
-    {
-      label: 'credential parameter LAST',
-      input:
-        `${SOURCE_ORIGIN}/straylight_source?application_name=straylight&connect_timeout=5&password=hunter2secret`,
-      secrets: ['hunter2secret'],
-      preserved: ['application_name=straylight', 'connect_timeout=5'],
-    },
-    {
-      label: 'SSL key material and its passphrase',
-      input:
-        `${SOURCE_ORIGIN}/straylight_source?sslkey=/keys/privatesecret.pem&sslpassword=hunter2secret&sslmode=require`,
-      secrets: ['/keys/privatesecret.pem', 'hunter2secret'],
-      preserved: ['sslmode=require', 'straylight_source'],
-    },
-    {
-      label: 'userinfo AND query parameter together, with a fragment',
-      input: 'postgresql://appuser:firstsecret@127.0.0.1:55432/straylight_source?password=secondsecret#note',
-      secrets: ['firstsecret', 'secondsecret', 'appuser'],
-      preserved: ['127.0.0.1', 'straylight_source', '#note'],
-    },
-    // ── ENCODED PARAMETER NAMES (sequence-89 F-04) ──────────────────────────
-    //
-    // The sequence-89 audit demonstrated that the credential decision was made
-    // on the RAW parameter name while `pg` decides on the DECODED one, so
-    // `pass%77ord` reached a diagnostic verbatim. Each case below is a name the
-    // connection parser HONOURS as a credential; the parser-agreement test
-    // further down proves that agreement mechanically rather than by assertion.
-    {
-      label: 'ENCODED parameter name (pass%77ord)',
-      input: `${SOURCE_ORIGIN}/straylight_source?pass%77ord=hunter2secret`,
-      secrets: ['hunter2secret'],
-      preserved: ['127.0.0.1', 'straylight_source'],
-    },
-    {
-      label: 'ENCODED parameter name, first letter (p%61ssword)',
-      input: `${SOURCE_ORIGIN}/straylight_source?p%61ssword=hunter2secret`,
-      secrets: ['hunter2secret'],
-      preserved: ['127.0.0.1', 'straylight_source'],
-    },
-    {
-      label: 'ENCODED parameter name, UPPERCASE escape (PASS%57ORD)',
-      input: `${SOURCE_ORIGIN}/straylight_source?PASS%57ORD=hunter2secret`,
-      secrets: ['hunter2secret'],
-      preserved: ['127.0.0.1', 'straylight_source'],
-    },
-    {
-      label: 'ENCODED parameter name, mixed case + escape (PaSs%77oRd)',
-      input: `${SOURCE_ORIGIN}/straylight_source?PaSs%77oRd=hunter2secret`,
-      secrets: ['hunter2secret'],
-      preserved: ['127.0.0.1', 'straylight_source'],
-    },
-    {
-      label: 'ENCODED sslpassword name (sslp%61ssword)',
-      input: `${SOURCE_ORIGIN}/straylight_source?sslp%61ssword=hunter2secret&sslmode=require`,
-      secrets: ['hunter2secret'],
-      preserved: ['sslmode=require', 'straylight_source'],
-    },
-    {
-      label: 'ENCODED name mid-query, non-credential parameters preserved',
-      input: `${SOURCE_ORIGIN}/straylight_source?application_name=straylight&pass%77ord=hunter2secret&connect_timeout=5`,
-      secrets: ['hunter2secret'],
-      preserved: ['application_name=straylight', 'connect_timeout=5'],
-    },
-    {
-      label: 'FULLY ENCODED credential name (%70%61%73%73%77%6Frd)',
-      input: `${SOURCE_ORIGIN}/straylight_source?%70%61%73%73%77%6Frd=hunter2secret`,
-      secrets: ['hunter2secret'],
-      preserved: ['127.0.0.1', 'straylight_source'],
-    },
-    // ── NORMALIZED PARAMETER NAMES (sequence-95 F-04) ───────────────────────
-    //
-    // The sequence-95 audit demonstrated the NEXT divergence: the fix for the
-    // cases above decided on `decodeURIComponent(rawName)`, but the parser
-    // builds a WHATWG `URL` first, and URL parsing STRIPS tab, LF and CR BEFORE
-    // anything is decoded. So a bare control character inside a credential name
-    // normalizes AWAY at the parser and the value is honoured as the credential,
-    // while a decode-only decision sees an unrecognised name and prints it.
-    // These are Codex's three counterexamples, as cases.
-    {
-      label: 'NORMALIZED name, bare LF inside the credential name',
-      input: `${SOURCE_ORIGIN}/straylight_source?pass\nword=hunter2secret`,
-      secrets: ['hunter2secret'],
-      preserved: ['127.0.0.1', 'straylight_source'],
-    },
-    {
-      label: 'NORMALIZED name, bare TAB inside the credential name',
-      input: `${SOURCE_ORIGIN}/straylight_source?pass\tword=hunter2secret`,
-      secrets: ['hunter2secret'],
-      preserved: ['127.0.0.1', 'straylight_source'],
-    },
-    {
-      label: 'NORMALIZED name, bare CR inside the credential name',
-      input: `${SOURCE_ORIGIN}/straylight_source?pass\rword=hunter2secret`,
-      secrets: ['hunter2secret'],
-      preserved: ['127.0.0.1', 'straylight_source'],
-    },
-    {
-      label: 'NORMALIZED name, control character AND an escape (P%61ss\nWORD)',
-      input: `${SOURCE_ORIGIN}/straylight_source?P%61ss\nWORD=hunter2secret`,
-      secrets: ['hunter2secret'],
-      preserved: ['127.0.0.1', 'straylight_source'],
-    },
-    {
-      label: 'NORMALIZED name mid-query, non-credential parameters preserved',
-      input: `${SOURCE_ORIGIN}/straylight_source?application_name=straylight&pgpass\rword=hunter2secret&connect_timeout=5`,
-      secrets: ['hunter2secret'],
-      preserved: ['application_name=straylight', 'connect_timeout=5'],
-    },
-    // ── FORM-DECODED CREDENTIAL VALUES (sequence-104 F-04) ──────────────────
-    //
-    // The sequence-104 counterexample. `+` is a SPACE to `URLSearchParams`, so
-    // the parser hands `pg` the credential `hunter 2 secret` — and a redaction
-    // that removed only that decoded spelling left the literal
-    // `hunter+2+secret` in the text, which is the same credential to anyone who
-    // reads the query the way the query is read. The second case repeats it
-    // where the credential ALSO appears under a non-credential parameter name,
-    // which is what forces the whole query to be withheld rather than rewritten
-    // parameter by parameter.
-    {
-      label: 'FORM-DECODED credential value (+ is a space)',
-      input: `${SOURCE_ORIGIN}/straylight_source?password=hunter+2+secret`,
-      secrets: ['hunter+2+secret', 'hunter 2 secret'],
-      preserved: ['127.0.0.1', 'straylight_source'],
-    },
-    {
-      label: 'FORM-DECODED value repeated under a NON-credential name',
-      input: `${SOURCE_ORIGIN}/straylight_source?password=hunter+2+secret&application_name=hunter+2+secret`,
-      secrets: ['hunter+2+secret', 'hunter 2 secret'],
-      preserved: ['127.0.0.1', 'straylight_source'],
-    },
-    {
-      label: 'FORM-DECODED value under a percent-encoded credential name',
-      input: `${SOURCE_ORIGIN}/straylight_source?pass%77ord=hunter+2+secret`,
-      secrets: ['hunter+2+secret', 'hunter 2 secret'],
-      preserved: ['127.0.0.1', 'straylight_source'],
-    },
+    { label: 'IPv6 loopback literal', input: `${SCHEME}[::1]:1/straylight_source` },
   ];
 
-  for (const entry of MATRIX) {
-    it(`redacts every secret and preserves non-secret detail: ${entry.label}`, () => {
-      const out = redactConnectionString(entry.input);
-      for (const secret of entry.secrets) expectUnrecoverable(out, secret, entry.label);
-      for (const keep of entry.preserved) {
-        expect(out.includes(keep), `${entry.label}: lost non-secret detail ${keep} from ${out}`).toBe(
-          true,
-        );
+  for (const { label, input } of IDENTITY_CASES) {
+    it(`DRIVER AGREEMENT: the store reports the identity pg resolved — ${label}`, async () => {
+      // The oracle. Constructing a client does not connect and issues nothing.
+      const { Client } = await import('pg');
+      const oracle = new Client({ connectionString: input });
+      const expected = {
+        host: oracle.host,
+        port: oracle.port,
+        database: oracle.database ?? null,
+      };
+
+      const host = await forceResolve(input);
+      try {
+        // AGREEMENT, on the structured value — not on a rendered string, which
+        // would only prove this test can reproduce a template.
+        expect(host.resolvedTarget()).toEqual(expected);
+
+        // REACHABILITY: that identity is what an operator is shown.
+        const described = host.describeTarget();
+        expect(described).toContain(String(expected.host));
+        expect(described).toContain(String(expected.port));
+        expect(described).toContain(String(expected.database));
+        expectNoParserSensitiveMaterial(described, `describeTarget ${label}`);
+      } finally {
+        await host.close();
       }
-      // A diagnostic must still say something was hidden.
-      expect(out).toContain('<redacted>');
     });
   }
 
-  // ── THE SEQUENCE-104 COUNTEREXAMPLES, AS A SINGLE NAMED PROOF ────────────
+  // ── THE COUNTEREXAMPLE: IRRELEVANT BY CONSTRUCTION ───────────────────────
   //
-  // The packet requires each rejected abstraction to be shown FAILING against
-  // the substrate and PASSING here. This is the F-04 one, and it is written so
-  // that a substrate run fails on the DEFECT: it asks the real parser what
-  // credential the input yields, then asserts that credential is unrecoverable
-  // from the diagnostic under every reading. Against the substrate the first
-  // case leaks `hunter+2+secret` verbatim (its decoder list had no form
-  // decoding) and the second prints `leakedsecret` under an undecodable name
-  // (its alignment check had no uncertainty rule), so both fail HERE, on the
-  // recoverability assertion, and neither passes on the defect.
-  it('COUNTEREXAMPLE (F-04): a form-decoded credential and an undecodable credential name cannot leak', async () => {
-    const { parse } = await import('pg-connection-string');
-
-    // (i) FORM DECODING. The parser derives `hunter 2 secret`; the text contains
-    // `hunter+2+secret`. They are the SAME credential, read two ways.
-    const formInput = `${SOURCE_ORIGIN}/straylight_source?password=hunter+2+secret&application_name=hunter+2+secret`;
-    const formParsed = parse(formInput) as unknown as Record<string, unknown>;
-    expect(
-      formParsed['password'],
-      'the parser must really form-decode the credential, or this proves nothing',
-    ).toBe('hunter 2 secret');
-    const formOut = redactConnectionString(formInput);
-    expectUnrecoverable(formOut, 'hunter 2 secret', 'F-04 counterexample: parser-derived form');
-    expectUnrecoverable(formOut, 'hunter+2+secret', 'F-04 counterexample: as-written form');
-    // Stated once more the way the audit stated it, so the failure names the
-    // reading rather than a generic containment check.
-    expect(
-      [...new URLSearchParams(querySpan(formOut)).values()].includes('hunter 2 secret'),
-      `URLSearchParams recovers the credential from ${JSON.stringify(formOut)}`,
-    ).toBe(false);
-    // Fail closed is not fail silent: the target is still named.
-    expect(formOut).toContain('<redacted>');
-    expect(formOut).toContain('straylight_source');
-    expect(formOut).toContain('127.0.0.1');
-
-    // (ii) AN UNDECODABLE CREDENTIAL-SHAPED NAME. `%ZZ` is not an escape, so the
-    // parser cannot fold the name to `password` and `pg` receives no credential
-    // from it — but what a READER receives is not decidable here, so the value
-    // must not be recoverable IN ANY FORM. Unproven must not mean printed.
-    const malformedInput = `${SOURCE_ORIGIN}/straylight_source?pass%ZZword=leakedsecret`;
-    const malformedOut = redactConnectionString(malformedInput);
-    expectUnrecoverable(malformedOut, 'leakedsecret', 'F-04 counterexample: undecodable name');
-    expect(malformedOut).toContain('<redacted>');
-    expect(malformedOut).toContain('straylight_source');
-    // …and the same input must not throw on a diagnostic path.
-    expect(() => redactConnectionString(malformedInput)).not.toThrow();
-  });
-
-  // ── THE SEQUENCE-95 REPRODUCTION, STATED AGAINST THE REAL PARSER ─────────
+  // The packet requires the rejected abstraction to be shown FAILING against the
+  // substrate and PASSING here, and requires this suite to STATE which of the two
+  // permitted resolutions of the disagreement classes it took. It took
+  // IRRELEVANCE BY CONSTRUCTION, and this is the proof of it.
   //
-  // This is the NAMED proof the structural mutation must break. It does not
-  // assert that a control character is handled; it asserts the PROPERTY: the
-  // real parser is asked what credential it derives, and that exact value must
-  // be absent from the redaction. Run against the substrate implementation —
-  // or against any reintroduction of a decode-only decision — it FAILS here,
-  // because `pg` receives the credential and the redactor prints it.
-  it('SEQUENCE-95 REPRODUCTION: a bare LF, TAB or CR inside a credential name cannot leak', async () => {
-    const { parse } = await import('pg-connection-string');
-    const CRED_VALUE = 'hunter2secret';
-    const controls: ReadonlyArray<{ label: string; ch: string }> = [
-      { label: 'bare LF', ch: '\n' },
-      { label: 'bare TAB', ch: '\t' },
-      { label: 'bare CR', ch: '\r' },
-    ];
-    let honoured = 0;
-    for (const { label, ch } of controls) {
-      for (const name of ['password', 'passwd', 'pgpassword', 'sslpassword']) {
-        // The control character goes INSIDE the name, at every interior split.
-        for (let at = 1; at < name.length; at += 1) {
-          const spelling = `${name.slice(0, at)}${ch}${name.slice(at)}`;
-          const uri = `${SOURCE_ORIGIN}/straylight_source?${spelling}=${CRED_VALUE}`;
-          // WHAT DOES THE REAL PARSER DO? The obligation exists only where the
-          // parser actually derives the credential, so this is asked, never
-          // assumed.
-          const parsed = parse(uri) as unknown as Record<string, unknown>;
-          const derives = Object.entries(parsed).some(
-            ([key, value]) =>
-              CREDENTIAL_KEYS.includes(key.toLowerCase()) && value === CRED_VALUE,
-          );
-          if (!derives) continue;
-          honoured += 1;
-          const out = redactConnectionString(uri);
-          expectUnrecoverable(out, CRED_VALUE, `PARSER DISAGREEMENT (${label} in ${name})`);
-        }
+  // Every input below differs from the credential-free base ONLY in userinfo and
+  // in query parameters that are not the target's identity, and every one of them
+  // is a case from a rejected head: the sequence-89 encoded names, the
+  // sequence-95 control-character normalizations, the sequence-104 form-decoded
+  // values and unalignable queries, and the sequence-110 UPPERCASE keys. The
+  // assertion is not that each was redacted correctly. It is that the rendered
+  // target is BYTE-IDENTICAL to the base's for all of them — so no property of
+  // userinfo or query, and no disagreement about any such property, can reach the
+  // output. A parser disagreement about material that is never read cannot leak.
+  //
+  // Against the substrate this fails on the defect: the substrate rendered the
+  // query with credential parameters rewritten, so a base with no query and a
+  // variant with `?application_name=straylight` produce DIFFERENT text, and the
+  // first assertion below reports exactly that. The surface assertion in the
+  // companion test fails there too, because the substrate still exports the
+  // transcription.
+  const CREDENTIAL_VARIANTS: ReadonlyArray<{
+    label: string;
+    query: string;
+    userinfo: string;
+    secrets: readonly string[];
+  }> = [
+    { label: 'no credential at all', query: '', userinfo: '', secrets: [] },
+    {
+      label: 'password-only userinfo',
+      query: '',
+      userinfo: ':hunter2secret@',
+      secrets: ['hunter2secret'],
+    },
+    {
+      label: 'user and password userinfo',
+      query: '',
+      userinfo: 'appuser:hunter2secret@',
+      secrets: ['hunter2secret', 'appuser'],
+    },
+    {
+      label: 'credential ONLY in a query parameter',
+      query: '?password=hunter2secret',
+      userinfo: '',
+      secrets: ['hunter2secret'],
+    },
+    {
+      label: 'percent-encoded credential value',
+      query: '?password=p%40ss%3Aw%2Frd',
+      userinfo: '',
+      secrets: ['p%40ss%3Aw%2Frd', 'p@ss:w/rd'],
+    },
+    // ── SEQUENCE-110: UPPERCASE PARAMETER KEYS ─────────────────────────────
+    {
+      label: 'UPPERCASE parameter name',
+      query: '?PASSWORD=UPPERSECRET',
+      userinfo: '',
+      secrets: ['UPPERSECRET'],
+    },
+    {
+      label: 'Capitalised parameter name',
+      query: '?Password=hunter2secret',
+      userinfo: '',
+      secrets: ['hunter2secret'],
+    },
+    {
+      label: 'UPPERCASE credential name with a lowercase twin',
+      query: '?PASSWORD=uppersecret&password=lowersecret',
+      userinfo: '',
+      secrets: ['uppersecret', 'lowersecret'],
+    },
+    {
+      label: 'multiple credential parameters in one URI',
+      query: '?password=firstsecret&passwd=secondsecret&pgpassword=thirdsecret',
+      userinfo: '',
+      secrets: ['firstsecret', 'secondsecret', 'thirdsecret'],
+    },
+    {
+      // The SSL passphrase only. `sslkey` is NOT here on purpose: the driver
+      // READS the key file while constructing its client, so an absent path
+      // makes the client construction itself fail and the target stay
+      // unresolved. That case is proven in the unresolved-target test below,
+      // where the outcome is "say less", not a different rendering.
+      label: 'SSL passphrase parameter',
+      query: '?sslpassword=hunter2secret',
+      userinfo: '',
+      secrets: ['hunter2secret'],
+    },
+    // ── SEQUENCE-89: ENCODED PARAMETER NAMES ───────────────────────────────
+    { label: 'ENCODED name (pass%77ord)', query: '?pass%77ord=hunter2secret', userinfo: '', secrets: ['hunter2secret'] },
+    {
+      label: 'FULLY ENCODED name (%70%61%73%73%77%6Frd)',
+      query: '?%70%61%73%73%77%6Frd=hunter2secret',
+      userinfo: '',
+      secrets: ['hunter2secret'],
+    },
+    // ── SEQUENCE-95: NAMES THE URL PARSER NORMALIZES ───────────────────────
+    {
+      label: 'NORMALIZED name, bare LF in the credential name',
+      query: '?pass\nword=hunter2secret',
+      userinfo: '',
+      secrets: ['hunter2secret'],
+    },
+    {
+      label: 'NORMALIZED name, bare TAB in the credential name',
+      query: '?pass\tword=hunter2secret',
+      userinfo: '',
+      secrets: ['hunter2secret'],
+    },
+    {
+      label: 'NORMALIZED name, bare CR in the credential name',
+      query: '?pgpass\rword=hunter2secret',
+      userinfo: '',
+      secrets: ['hunter2secret'],
+    },
+    // ── SEQUENCE-104: FORM DECODING AND UNALIGNABLE QUERIES ────────────────
+    {
+      label: 'FORM-DECODED credential value (+ is a space)',
+      query: '?password=hunter+2+secret',
+      userinfo: '',
+      secrets: ['hunter+2+secret', 'hunter 2 secret'],
+    },
+    {
+      label: 'FORM-DECODED value repeated under a NON-credential name',
+      query: '?password=hunter+2+secret&application_name=hunter+2+secret',
+      userinfo: '',
+      secrets: ['hunter+2+secret', 'hunter 2 secret'],
+    },
+    {
+      label: 'UNALIGNABLE query: raw segments and parsed entries do not correspond',
+      query: '?\r=1&\n&=hunter2secret',
+      userinfo: '',
+      secrets: ['hunter2secret'],
+    },
+    {
+      label: 'UNDECODABLE credential name with a form-encoded value',
+      query: '?pass%ZZword=leaked+secret',
+      userinfo: '',
+      secrets: ['leaked+secret', 'leaked secret'],
+    },
+    // NON-CREDENTIAL parameters, to prove the invariance is not "everything is
+    // withheld because the query happened to look dangerous".
+    {
+      label: 'only NON-credential parameters',
+      query: '?application_name=straylight&connect_timeout=5',
+      userinfo: '',
+      secrets: [],
+    },
+    {
+      label: 'userinfo AND query together, with a fragment',
+      query: '?password=secondsecret#note',
+      userinfo: 'appuser:firstsecret@',
+      secrets: ['firstsecret', 'secondsecret', 'appuser'],
+    },
+  ];
+
+  it('COUNTEREXAMPLE (F-04): the rendered target is INVARIANT under every credential-bearing change, so both disagreement classes are irrelevant by construction', async () => {
+    const base = await forceResolve(`${DEAD_TARGET}/straylight_source`);
+    let baseline: string;
+    try {
+      baseline = base.describeTarget();
+    } finally {
+      await base.close();
+    }
+    // The baseline must genuinely name the target, or invariance would be the
+    // trivial property of a renderer that says nothing.
+    expect(baseline).toContain(LOOPBACK);
+    expect(baseline).toContain('straylight_source');
+
+    // EVERY rendering is collected before ANY assertion, deliberately. The
+    // claim this counterexample makes is the INVARIANCE — that no rendering
+    // depends on userinfo or query at all — so that claim is asserted over the
+    // whole set first. A tree whose rendering does depend on them then fails on
+    // the dependency, which is the finding, rather than on a narrower guard
+    // about the shape of whichever rendering came first.
+    const rendered: { label: string; described: string; secrets: readonly string[] }[] = [];
+    for (const variant of CREDENTIAL_VARIANTS) {
+      const input = `${SCHEME}${variant.userinfo}${LOOPBACK}:1/straylight_source${variant.query}`;
+      const host = await forceResolve(input);
+      try {
+        rendered.push({
+          label: variant.label,
+          described: host.describeTarget(),
+          secrets: variant.secrets,
+        });
+      } finally {
+        await host.close();
       }
     }
-    // Non-vacuity: if the parser stopped normalizing these away, this test would
-    // silently assert nothing. The counterexamples must really be honoured.
-    expect(honoured, 'the parser must actually honour the control-character names').toBeGreaterThan(
-      15,
+    expect(rendered.length, 'no rendering was collected to compare').toBe(CREDENTIAL_VARIANTS.length);
+
+    // THE INVARIANCE. Nothing about userinfo or query reached the output,
+    // because the output does not depend on either.
+    for (const { label, described } of rendered) {
+      expect(
+        described,
+        `${label}: the rendered target CHANGED with credential-bearing material, ` +
+          'so something read it',
+      ).toBe(baseline);
+    }
+
+    // And the invariant value is itself free of parser-sensitive material, so
+    // the invariance is not the property of a renderer that leaks identically
+    // every time.
+    expectNoParserSensitiveMaterial(baseline, 'baseline');
+    for (const { label, described, secrets } of rendered) {
+      expectNoParserSensitiveMaterial(described, label);
+      for (const secret of secrets) {
+        expectUnrecoverable(described, secret, label);
+      }
+    }
+  });
+
+  it('COUNTEREXAMPLE (F-04): the store exports no connection-string renderer for anything to disagree with', async () => {
+    // The other half of the same finding, as a statement about the SURFACE: a
+    // transcription that no longer decides anything but still exists is still a
+    // second parser someone can call. Against the substrate this fails here.
+    const config = (await import('../../src/straylight/storage/postgres/config.js')) as unknown as
+      Record<string, unknown>;
+    const barrel = (await import('../../src/straylight/storage/postgres/index.js')) as unknown as
+      Record<string, unknown>;
+    for (const [label, surface] of [
+      ['config.ts', config],
+      ['the store barrel', barrel],
+    ] as const) {
+      for (const name of Object.keys(surface)) {
+        expect(
+          /redact|parserView|parserReadings|credentialParameter/i.test(name),
+          `${label} must not export a connection-string renderer: found ${name}`,
+        ).toBe(false);
+      }
+    }
+    expect(config['redactConnectionString'], 'config.ts must not export redactConnectionString').toBe(
+      undefined,
     );
   });
 
-  // ── THE GENERATED SEEK-DISAGREEMENT PROOF ────────────────────────────────
-  //
-  // The sequence-89, sequence-95 and sequence-104 audits each rejected a fix
-  // that enumerates spellings, and each was vindicated by the NEXT spelling. So
-  // this proof does not enumerate: it GENERATES inputs by composing the
-  // transformations that have historically produced divergence, asks the REAL
-  // parser what credential each one yields, and asserts that value is
-  // unrecoverable from the redaction under the whole decoding family.
-  //
-  // The oracle is `pg-connection-string` itself — not a local helper sharing the
-  // implementation's assumptions, which is exactly the mistake under audit. A
-  // helper that agreed with the implementation would agree with its bugs too.
-  //
-  // Every transformation class is COUNTED, and each required one must be
-  // honoured by the parser AS A QUERY CREDENTIAL at least once. Counting query
-  // delivery rather than "the parser produced some credential" matters: two of
-  // the three heads carry a userinfo password, which would otherwise let every
-  // class claim coverage it never earned.
-  //
-  // ── WHAT THIS GENERATOR DOES NOT MODEL ───────────────────────────────────
-  //
-  // Stated so the coverage claim has a boundary. It composes case folding,
-  // percent encoding (including escape-case and fully encoded names), CR/LF/TAB
-  // normalization, `+` in names and values, malformed `%ZZ` escapes in names,
-  // values and neighbouring parameters, duplicate credential parameters in both
-  // roles, the credential value REPEATED UNDER A NON-CREDENTIAL NAME, three
-  // authority shapes and a fragment. It does NOT model: non-ASCII
-  // or IDNA host forms; overlong or surrogate UTF-8 percent sequences; `%00`;
-  // credentials arriving through `PG*` environment variables or a service file;
-  // libpq keyword/value (non-URI) connection strings; `pgpassfile` contents;
-  // unix-socket paths; `postgres://` vs `postgresql://` scheme divergence; nor
-  // any transformation applied by a LATER version of `pg-connection-string` than
-  // the one this tree pins. Those are limits of the generator, not claims about
-  // them; `NOT_MODELLED` below is printed in the non-vacuity failure messages so
-  // the boundary travels with the evidence.
-  it('SEEK-DISAGREEMENT: no generated input makes the parser derive a credential the redactor prints', async () => {
-    const { parse } = await import('pg-connection-string');
-    const CRED_VALUE = 'hunter2secret';
-    const NOT_MODELLED =
-      'non-ASCII/IDNA hosts, overlong or surrogate UTF-8 escapes, %00, PG* environment ' +
-      'variables, service files, libpq keyword/value strings, pgpassfile contents, ' +
-      'unix-socket paths, and any newer pg-connection-string';
-
-    type Tagged = { readonly text: string; readonly classes: readonly string[] };
-    const hex = (ch: string, upper: boolean): string => {
-      const h = ch.charCodeAt(0).toString(16).padStart(2, '0');
-      return `%${upper ? h.toUpperCase() : h}`;
-    };
-
-    // CASE — the query is case-preserving, so `PASSWORD` and `PaSsWoRd` reach
-    // the parser unchanged and only the option lookup folds them.
-    const caseOps: ReadonlyArray<(n: string) => Tagged> = [
-      (n) => ({ text: n, classes: [] }),
-      (n) => ({ text: n.toUpperCase(), classes: ['mixed-case'] }),
-      (n) => ({ text: n[0]!.toUpperCase() + n.slice(1), classes: ['mixed-case'] }),
-      (n) => ({
-        text: [...n].map((c, i) => (i % 2 === 0 ? c.toUpperCase() : c)).join(''),
-        classes: ['mixed-case'],
-      }),
+  // ── FAIL CLOSED, WITHOUT THROWING ────────────────────────────────────────
+  it('MALFORMED and UNRESOLVABLE targets are named as unnameable rather than parsed', async () => {
+    // `describeTarget()` runs inside error construction, where throwing would
+    // replace a diagnostic with a different failure. These inputs are the ones a
+    // transcription would have had to have a rule for; here there is no rule,
+    // and the store says less.
+    const malformed: readonly string[] = [
+      `${SCHEME}@/db?password=leakedsecret`,
+      `${SCHEME}${LOOPBACK}:1/db?pass word=leakedsecret`,
+      `${SCHEME}${LOOPBACK}:1/db?password=leaked+secret#a?b=c`,
+      `${SCHEME}${LOOPBACK}:1/db?pass%ZZword=leaked+secret`,
+      // SSL KEY MATERIAL. The driver reads the key file when it builds a client,
+      // so an absent path leaves the target unresolved — the sanctioned "say
+      // less" outcome, and neither the path nor the passphrase is rendered.
+      `${SCHEME}${LOOPBACK}:1/db?sslkey=/keys/privatesecret.pem&sslpassword=leakedsecret`,
+      'not-a-connection-string-at-all',
+      ' ',
     ];
-
-    // PERCENT ENCODING — the sequence-89 class. First, middle and last letter
-    // (the middle one with an UPPERCASE escape, since escape case is itself a
-    // spelling), plus the fully encoded name.
-    const encodeOps = (n: string): Tagged[] => {
-      const mid = Math.floor(n.length / 2);
-      const at = (i: number, upper: boolean): Tagged => ({
-        text: n.slice(0, i) + hex(n[i]!, upper) + n.slice(i + 1),
-        classes: ['percent-encoding'],
-      });
-      return [
-        { text: n, classes: [] },
-        at(0, false),
-        at(mid, true),
-        at(n.length - 1, false),
-        { text: [...n].map((c) => hex(c, false)).join(''), classes: ['percent-encoding'] },
-      ];
-    };
-
-    // NORMALIZATION AND SEPARATORS — inserted INSIDE the name. CR/LF/TAB are the
-    // sequence-95 class; `+` and a malformed escape are the neighbouring
-    // transformations a decode-only decision confuses with them, and the proof
-    // must be told apart from them by the parser, not by us. Neither is honoured
-    // as a credential name — `pass+word` is `pass word` to the parser and
-    // `pass%ZZword` cannot be folded at all — so both are tracked as
-    // FAIL-CLOSED classes below rather than as honoured ones.
-    const insertOps: ReadonlyArray<{ ch: string; klass: string }> = [
-      { ch: '', klass: '' },
-      { ch: '\n', klass: 'lf-normalization' },
-      { ch: '\r', klass: 'cr-normalization' },
-      { ch: '\t', klass: 'tab-normalization' },
-      { ch: '+', klass: 'plus-in-name' },
-      { ch: '%ZZ', klass: 'malformed-name' },
-    ];
-
-    const spellings = (name: string): Tagged[] => {
-      const seen = new Set<string>();
-      const out: Tagged[] = [];
-      for (const caseOp of caseOps) {
-        const cased = caseOp(name);
-        for (const encoded of encodeOps(cased.text)) {
-          for (const insert of insertOps) {
-            // Insert at an interior position so the name is still recognisably
-            // the credential name the parser may normalize back to.
-            const at = Math.max(1, Math.floor(encoded.text.length / 2));
-            const text =
-              insert.ch === ''
-                ? encoded.text
-                : encoded.text.slice(0, at) + insert.ch + encoded.text.slice(at);
-            if (seen.has(text)) continue;
-            seen.add(text);
-            const classes = [
-              ...cased.classes,
-              ...encoded.classes,
-              ...(insert.klass ? [insert.klass] : []),
-            ];
-            out.push({ text, classes });
-          }
+    for (const input of malformed) {
+      // NEVER CONNECTED. The unresolved rendering is the one every host starts
+      // in, and it is reached without the driver having parsed anything.
+      const host = new PostgresEstateHost({ connectionString: input });
+      try {
+        let described = '';
+        expect(() => {
+          described = host.describeTarget();
+        }, `describeTarget threw on ${JSON.stringify(input)}`).not.toThrow();
+        expect(described).toContain('<redacted>');
+        expect(described).toContain('<target unresolved>');
+        for (const secret of [
+          'leakedsecret',
+          'leaked secret',
+          'leaked+secret',
+          '/keys/privatesecret.pem',
+        ]) {
+          expectUnrecoverable(described, secret, `unresolved ${JSON.stringify(input)}`);
         }
-      }
-      return out;
-    };
-
-    // VALUE FORMS — the parser DECODES values, so the decoded form is what `pg`
-    // receives and what must not survive. `+` becomes a space at the parser:
-    // that is the sequence-104 class, and the value's AS-WRITTEN spelling is
-    // sought too, because `expectUnrecoverable` looks for both.
-    const valueForms: ReadonlyArray<Tagged> = [
-      { text: CRED_VALUE, classes: [] },
-      { text: CRED_VALUE.replace(/e/g, '%65'), classes: ['encoded-credential-value'] },
-      { text: encodeURIComponent('p@ss:w/rd'), classes: ['encoded-credential-value'] },
-      { text: 'hunter+2+secret', classes: ['plus-handling'] },
-      { text: `${CRED_VALUE}%ZZ`, classes: ['malformed-value'] },
-    ];
-
-    // TAILS — what else is in the query. `&x=v%ZZ` puts a malformed escape in a
-    // DIFFERENT parameter, which forces the parser to pre-encode the WHOLE
-    // string and so rewrites every name; the duplicate tails exercise the
-    // last-wins trap in both roles, with the earlier value in the LOSING role.
-    //
-    // The LAST tail is the sequence-104 leak shape itself, generated rather than
-    // enumerated: the SAME value the credential parameter carries, repeated under
-    // a name that is NOT a credential. Redacting by name cannot reach it — the
-    // second parameter is `application_name`, which a diagnostic should print —
-    // so it is reachable only by the value-level post-condition, and only if that
-    // post-condition reads the candidate the way the parser does. Without this
-    // shape the generator would exercise the whole decoding family and still
-    // never observe the leak, because blanking the credential parameter's own
-    // value hides a weak decoder's failure. With it, the generator fails on a
-    // decoder list.
-    const tails = (spelling: string, value: string): ReadonlyArray<Tagged> => [
-      { text: '', classes: [] },
-      { text: '&application_name=straylight', classes: [] },
-      { text: '&x=v%ZZ', classes: ['foreign-malformed-escape'] },
-      { text: '#note', classes: [] },
-      { text: '&password=laterwins', classes: ['duplicate-parameters'] },
-      { text: `&${spelling}=laterwins`, classes: ['duplicate-parameters'] },
-      { text: `&application_name=${value}`, classes: ['value-echoed-under-noncredential-name'] },
-    ];
-
-    const heads: readonly string[] = [
-      `${SOURCE_ORIGIN}/straylight_source?`,
-      `${SCHEME}appuser:firstsecret@127.0.0.1:55432/straylight_source?`,
-      `${SCHEME}127.0.0.1/straylight_source?`,
-    ];
-
-    // Classes that must be HONOURED — the parser must really deliver a query
-    // credential under them at least once, or the coverage was not proven.
-    const REQUIRED_HONOURED: readonly string[] = [
-      'mixed-case',
-      'percent-encoding',
-      'lf-normalization',
-      'cr-normalization',
-      'tab-normalization',
-      'plus-handling',
-      'duplicate-parameters',
-      'value-echoed-under-noncredential-name',
-      'encoded-credential-value',
-      'malformed-value',
-      'foreign-malformed-escape',
-      'interaction',
-    ];
-    // Classes the parser does NOT honour as credential names. The obligation for
-    // them is the OTHER one the packet states: malformed or ambiguous
-    // credential-shaped query input must fail closed. `plus-in-name` is excluded
-    // deliberately — `pass+word` is `pass word` to the parser, unambiguously not
-    // a credential, and inventing a rule for it is the spelling list the audit
-    // rejected. It is generated, and the only obligation asserted for it is that
-    // the redactor does not throw.
-    const REQUIRED_FAIL_CLOSED: readonly string[] = ['malformed-name'];
-
-    const honouredByClass = new Map<string, number>();
-    const failedClosedByClass = new Map<string, number>();
-    const bump = (map: Map<string, number>, klass: string): void =>
-      void map.set(klass, (map.get(klass) ?? 0) + 1);
-
-    let checked = 0;
-    let honoured = 0;
-    let refusedByParser = 0;
-    let failedClosed = 0;
-
-    for (const name of CREDENTIAL_KEYS) {
-      for (const spelling of spellings(name)) {
-        for (const value of valueForms) {
-          for (const tail of tails(spelling.text, value.text)) {
-            for (const head of heads) {
-              const uri = `${head}${spelling.text}=${value.text}${tail.text}`;
-              checked += 1;
-              const classes = [...spelling.classes, ...value.classes, ...tail.classes];
-
-              // ASK THE PARSER. When it refuses the input outright, `pg` never
-              // receives a credential from it, so the decisive property imposes
-              // no obligation — but the redactor must still not throw, which is
-              // asserted here rather than deferred.
-              let parsed: Record<string, unknown>;
-              try {
-                parsed = parse(uri) as unknown as Record<string, unknown>;
-              } catch {
-                refusedByParser += 1;
-                expect(() => redactConnectionString(uri)).not.toThrow();
-                continue;
-              }
-
-              // THE ORACLE: every value the parser placed under a name `pg`
-              // treats as a credential. Derived from the parser's own output —
-              // never recomputed here.
-              const derived = Object.entries(parsed)
-                .filter(
-                  ([key, v]) =>
-                    CREDENTIAL_KEYS.includes(key.toLowerCase()) &&
-                    typeof v === 'string' &&
-                    v.length > 0,
-                )
-                .map(([, v]) => v as string);
-
-              // WHICH of those came from THIS QUERY rather than from the head's
-              // userinfo. Only query delivery earns a class its coverage.
-              const fromQuery = new Set<string>(['laterwins', value.text]);
-              try {
-                fromQuery.add(decodeURIComponent(value.text.replace(/\+/g, ' ')));
-              } catch {
-                fromQuery.add(value.text.replace(/\+/g, ' '));
-              }
-              const deliveredByQuery = derived.some((v) => fromQuery.has(v));
-
-              if (derived.length === 0) {
-                // NOT HONOURED. For a malformed credential-shaped name the
-                // packet's other obligation applies: fail closed. The value must
-                // still be unrecoverable, and the redactor must not throw.
-                let out = '';
-                expect(() => {
-                  out = redactConnectionString(uri);
-                }, `redaction threw on ${JSON.stringify(uri)}`).not.toThrow();
-                if (spelling.classes.includes('malformed-name')) {
-                  failedClosed += 1;
-                  bump(failedClosedByClass, 'malformed-name');
-                  expectUnrecoverable(
-                    out,
-                    value.text,
-                    `FAIL-CLOSED VIOLATION: undecodable credential-shaped name in ` +
-                      `${JSON.stringify(uri)}`,
-                  );
-                }
-                continue;
-              }
-
-              honoured += 1;
-              if (deliveredByQuery) {
-                for (const klass of new Set(classes)) bump(honouredByClass, klass);
-                // Two or more independent transformations at once — the
-                // INTERACTION requirement, counted only when it really happened.
-                if (new Set(classes).size > 1) bump(honouredByClass, 'interaction');
-              }
-
-              const out = redactConnectionString(uri);
-              for (const credential of derived) {
-                expectUnrecoverable(
-                  out,
-                  credential,
-                  `PARSER DISAGREEMENT: pg derives a credential from ${JSON.stringify(uri)} ` +
-                    `(classes: ${classes.join(', ') || 'none'})`,
-                );
-              }
-            }
-          }
-        }
+      } finally {
+        await host.close();
       }
     }
+  });
 
-    // NON-VACUITY. A generator that produced nothing, or inputs the parser never
-    // honours, would assert nothing at all and pass.
-    expect(
-      checked,
-      `the generator must produce a substantial input set. NOT MODELLED: ${NOT_MODELLED}`,
-    ).toBeGreaterThan(5_000);
-    expect(
-      honoured,
-      `the parser must honour a substantial share of them. NOT MODELLED: ${NOT_MODELLED}`,
-    ).toBeGreaterThan(1_000);
-    expect(refusedByParser, 'parser-refused inputs must also have been exercised').toBeGreaterThan(
-      0,
+  it('a NON-STRING connection string is REFUSED, with no part of it in the message', () => {
+    // Reachable from untyped JavaScript callers. The refusal happens before a
+    // host exists, and its message is a constant — there is no interpolation of
+    // the value into it, so an object carrying a credential cannot be stringified
+    // into a diagnostic.
+    for (const value of [undefined, null, 42, { password: 'hunter2secret' }, ['hunter2secret']]) {
+      let message = '';
+      expect(() => new PostgresEstateHost({ connectionString: value as never })).toThrow(
+        /connectionString is required/,
+      );
+      try {
+        new PostgresEstateHost({ connectionString: value as never });
+      } catch (err) {
+        message = err instanceof Error ? err.message : String(err);
+      }
+      expectUnrecoverable(message, 'hunter2secret', `non-string ${String(value)}`);
+    }
+  });
+
+  // ── THE PRODUCTION DIAGNOSTIC, AS AN OPERATOR SEES IT ────────────────────
+  it('DIAGNOSTIC REACHABILITY: the real connection-failure message names the target and carries no credential', async () => {
+    // The finding is only closed if this is what actually reaches an operator.
+    // `PostgresUnavailableError` from a failed acquisition is that surface — the
+    // message is built from `describeTarget()` and nothing else.
+    const host = new PostgresEstateHost({
+      connectionString: `${SCHEME}appuser:hunter2secret@${LOOPBACK}:1/straylight_source?password=secondsecret&application_name=straylight`,
+      maxConnections: 1,
+      connectionTimeoutMs: 5_000,
+    });
+    try {
+      let message = '';
+      try {
+        await host.withClient(async () => undefined);
+        throw new Error('phase-50a: the dead target was expected to refuse the connection');
+      } catch (err) {
+        message = err instanceof Error ? err.message : String(err);
+      }
+      expect(message).toContain('could not acquire a connection');
+      // It NAMES the target, which is the point of a diagnostic.
+      expect(message).toContain(LOOPBACK);
+      expect(message).toContain('straylight_source');
+      expect(message).toContain('<redacted>');
+      // And carries no credential in any reading.
+      for (const secret of ['hunter2secret', 'secondsecret', 'appuser']) {
+        expectUnrecoverable(message, secret, 'connection-failure message');
+      }
+      // The query is not in the message in any form.
+      expect(message).not.toContain('application_name');
+    } finally {
+      await host.close();
+    }
+  });
+
+  it('DIAGNOSTIC REACHABILITY: the closed-host message is the same emitter, with the same guarantees', async () => {
+    const host = new PostgresEstateHost({
+      connectionString: `${SCHEME}appuser:hunter2secret@${LOOPBACK}:1/straylight_source?password=secondsecret`,
+    });
+    await host.close();
+    let message = '';
+    try {
+      await host.withClient(async () => undefined);
+    } catch (err) {
+      message = err instanceof Error ? err.message : String(err);
+    }
+    expect(message).toContain('is closed');
+    for (const secret of ['hunter2secret', 'secondsecret', 'appuser']) {
+      expectUnrecoverable(message, secret, 'closed-host message');
+    }
+    expect(message).not.toContain('application_name');
+    expect(message).toContain('<redacted>');
+  });
+
+  // ── THE FROZEN RUNBOOK CLAIM ─────────────────────────────────────────────
+  //
+  // `docs/runbooks/phase-50a-postgresql-backup-restore-and-rollback.md` is
+  // FORBIDDEN to this slice, and it makes a claim about this behaviour. The
+  // packet requires the claim to REMAIN TRUE — and forbids editing the runbook to
+  // match a design. So the claim is read out of the frozen file and checked
+  // against what the store actually emits.
+  it('the frozen runbook claim about describeTarget() is still true of the code', async () => {
+    const runbook = readFileSync(
+      resolve(ROOT, 'docs/runbooks/phase-50a-postgresql-backup-restore-and-rollback.md'),
+      'utf8',
     );
-    expect(
-      failedClosed,
-      'undecodable credential-shaped names must have been exercised on the fail-closed path',
-    ).toBeGreaterThan(0);
-    // And every required transformation class must have been HONOURED AS A QUERY
-    // CREDENTIAL — not merely generated. This is what makes the coverage claim
-    // checkable.
-    for (const klass of REQUIRED_HONOURED) {
-      expect(
-        honouredByClass.get(klass) ?? 0,
-        `transformation class ${klass} was never honoured by the parser as a query ` +
-          `credential, so it was not proven. NOT MODELLED: ${NOT_MODELLED}`,
-      ).toBeGreaterThan(0);
-    }
-    for (const klass of REQUIRED_FAIL_CLOSED) {
-      expect(
-        failedClosedByClass.get(klass) ?? 0,
-        `transformation class ${klass} was never exercised on the fail-closed path`,
-      ).toBeGreaterThan(0);
-    }
-  });
+    const claim =
+      'Connection strings in diagnostics are redacted — `describeTarget()` replaces\n' +
+      'userinfo with `<redacted>`, so an error message can name the target without\n' +
+      'leaking a credential.';
+    expect(runbook, 'the frozen runbook claim must still be present, unedited').toContain(claim);
 
-  // ── THE DUPLICATE TRAP ───────────────────────────────────────────────────
-  //
-  // `searchParams` is last-wins for the parser's `config[name] = value` loop, so
-  // `?pass<LF>word=A&password=B` yields B — and it is tempting to conclude that
-  // A, having lost, is therefore ordinary text. It is not: A is still a
-  // credential someone wrote into the connection string, and it is still in the
-  // raw text the diagnostic would print. Both values are asserted unrecoverable,
-  // with both spelled out here by construction rather than read back from a
-  // helper, and the form-decoded pair covers a LOSING value that is only the
-  // same credential once `+` is read as a space.
-  it('DUPLICATE TRAP: an EARLIER credential value does not leak because a later duplicate wins', async () => {
-    const { parse } = await import('pg-connection-string');
-    const EARLIER = 'earlierpassvalue';
-    const LATER = 'laterpassvalue';
-    const cases: readonly string[] = [
-      `${SOURCE_ORIGIN}/straylight_source?password=${EARLIER}&password=${LATER}`,
-      `${SOURCE_ORIGIN}/straylight_source?pass\nword=${EARLIER}&password=${LATER}`,
-      `${SOURCE_ORIGIN}/straylight_source?pass%77ord=${EARLIER}&PASSWORD=${LATER}`,
-      `${SOURCE_ORIGIN}/straylight_source?password=${EARLIER}&pass\tword=${LATER}`,
-      `${SOURCE_ORIGIN}/straylight_source?pgpassword=${EARLIER}&pgpass\rword=${LATER}`,
-    ];
-    for (const uri of cases) {
-      // The parser really is last-wins here, so the trap is real rather than
-      // hypothetical.
-      const parsed = parse(uri) as unknown as Record<string, unknown>;
-      const derived = Object.entries(parsed)
-        .filter(([key]) => CREDENTIAL_KEYS.includes(key.toLowerCase()))
-        .map(([, v]) => v);
-      expect(derived, `${uri}: the parser must derive the LATER value`).toContain(LATER);
-
-      const out = redactConnectionString(uri);
-      expectUnrecoverable(out, LATER, `duplicate winner in ${uri}`);
-      expectUnrecoverable(out, EARLIER, `duplicate LOSER in ${uri}`);
-    }
-
-    // The same trap where the two spellings differ only by FORM ENCODING, so the
-    // losing value is recoverable from the winning one's reading and vice versa.
-    const formCases: ReadonlyArray<{ uri: string; winner: string; loser: string }> = [
-      {
-        uri: `${SOURCE_ORIGIN}/straylight_source?password=first+lost+secret&password=second+won+secret`,
-        winner: 'second won secret',
-        loser: 'first lost secret',
-      },
-      {
-        uri: `${SOURCE_ORIGIN}/straylight_source?pass%77ord=first+lost+secret&password=second+won+secret`,
-        winner: 'second won secret',
-        loser: 'first lost secret',
-      },
-    ];
-    for (const { uri, winner, loser } of formCases) {
-      const parsed = parse(uri) as unknown as Record<string, unknown>;
-      expect(parsed['password'], `${uri}: the parser must form-decode the winner`).toBe(winner);
-      const out = redactConnectionString(uri);
-      expectUnrecoverable(out, winner, `form-decoded duplicate WINNER in ${uri}`);
-      expectUnrecoverable(out, loser, `form-decoded duplicate LOSER in ${uri}`);
-    }
-  });
-
-  it('MALFORMED input FAILS CLOSED — it redacts rather than throwing or echoing', () => {
-    const malformed: ReadonlyArray<{ input: string; secret?: string }> = [
-      { input: '' },
-      { input: 'not-a-uri-at-all' },
-      { input: SCHEME },
-      // EMPTY AUTHORITY: no host at all, credential in the query.
-      { input: `${SCHEME}@/db?password=leakedsecret`, secret: 'leakedsecret' },
-      // TRUNCATED: the `@` that would have delimited userinfo is gone, so the
-      // userinfo rule alone would leave `user:password` in the clear.
-      { input: `${SCHEME}appuser:hunter2secret`, secret: 'hunter2secret' },
-      { input: `${SCHEME}appuser:hunter2secret@`, secret: 'hunter2secret' },
-      { input: '://:@?password=leakedsecret', secret: 'leakedsecret' },
-      { input: `${SOURCE_ORIGIN}/db?password`, secret: undefined },
-      { input: `${SOURCE_ORIGIN}/db?password=`, secret: undefined },
-      // UNDECODABLE NAME (%ZZ): the name cannot be interpreted, so it cannot be
-      // cleared. Unproven must not mean printed.
-      { input: `${SOURCE_ORIGIN}/db?pass%ZZword=leakedsecret`, secret: 'leakedsecret' },
-      { input: `${SOURCE_ORIGIN}/db?password=leaked%ZZsecret`, secret: 'leaked%ZZsecret' },
-      // UNALIGNABLE QUERY: a segment that normalizes away to nothing, and a
-      // fragment inside the query, so the raw segments and the parser's entries
-      // no longer correspond one-to-one.
-      { input: `${SOURCE_ORIGIN}/db?\r=1&\n&=leakedsecret`, secret: undefined },
-      { input: `${SOURCE_ORIGIN}/db?password=leakedsecret#a?b=c`, secret: 'leakedsecret' },
-      // SPACE forces the parser to pre-encode the whole string.
-      { input: `${SOURCE_ORIGIN}/db?pass word=leakedsecret`, secret: undefined },
-      // FORM-DECODED credential in a malformed authority, and a credential whose
-      // decoded form differs from its written form under an undecodable name.
-      { input: `${SCHEME}@/db?password=leaked+secret`, secret: 'leaked secret' },
-      { input: `${SOURCE_ORIGIN}/db?pass%ZZword=leaked+secret`, secret: 'leaked+secret' },
-    ];
-    for (const { input, secret } of malformed) {
-      let out = '';
-      expect(() => {
-        out = redactConnectionString(input);
-      }, `redaction threw on ${JSON.stringify(input)}`).not.toThrow();
-      expect(typeof out).toBe('string');
-      if (secret !== undefined) {
-        expectUnrecoverable(out, secret, `malformed ${JSON.stringify(input)}`);
+    const host = await forceResolve(
+      `${SCHEME}appuser:hunter2secret@${LOOPBACK}:1/straylight_source?password=secondsecret`,
+    );
+    try {
+      const described = host.describeTarget();
+      // "replaces userinfo with `<redacted>`" — the userinfo position is exactly
+      // that constant.
+      expectNoParserSensitiveMaterial(described, 'runbook claim');
+      // "can name the target" — it does.
+      expect(described).toContain(LOOPBACK);
+      expect(described).toContain('straylight_source');
+      // "without leaking a credential" — under every reading.
+      for (const secret of ['hunter2secret', 'secondsecret', 'appuser']) {
+        expectUnrecoverable(described, secret, 'runbook claim');
       }
-    }
-  });
-
-  it('an UNALIGNABLE query WITHHOLDS the query rather than guessing which span is the credential', () => {
-    // The fail-closed branch, observed rather than asserted about. When the
-    // parser's entries cannot be paired with the raw segments, no rewrite can
-    // know WHICH span carries the credential — so the whole query goes.
-    const out = redactConnectionString(`${SOURCE_ORIGIN}/straylight_source?\r=1&\n&=hunter2secret`);
-    expect(out.includes('hunter2secret'), `unalignable query leaked: ${out}`).toBe(false);
-    expect(out).toContain('<redacted>');
-    // It still names its target — withholding the query is not erasing the URI.
-    expect(out).toContain('127.0.0.1');
-    expect(out).toContain('straylight_source');
-  });
-
-  it('a NON-STRING target fails closed with a type report, not an interpolated value', () => {
-    // Reachable from untyped JavaScript callers. It must not throw on the
-    // diagnostic path and must not stringify an object that might carry a
-    // credential.
-    for (const value of [undefined, null, 42, { connectionString: 'hunter2secret' }]) {
-      let out = '';
-      expect(() => {
-        out = redactConnectionString(value as never);
-      }).not.toThrow();
-      expect(out).toContain('<redacted>');
-      expect(out.includes('hunter2secret')).toBe(false);
-    }
-  });
-
-  it('a VALID loopback target with no credential is passed through unchanged', () => {
-    // The redactor must not mangle what it has nothing to hide. Without this,
-    // "redact everything" would satisfy every absence assertion above.
-    for (const safe of [
-      `${SOURCE_ORIGIN}/straylight_source`,
-      `${SCHEME}localhost/db`,
-      `${SCHEME}[::1]:55432/db`,
-      `${SOURCE_ORIGIN}/db?application_name=straylight&connect_timeout=5`,
-      `${SOURCE_ORIGIN}/db?sslmode=verify-full&connect_timeout=5`,
-    ]) {
-      expect(redactConnectionString(safe)).toBe(safe);
-    }
-  });
-
-  it('DIAGNOSTIC REACHABILITY: the store’s own target description carries no query-parameter credential', async () => {
-    // The finding is only closed if the redaction is what actually reaches an
-    // operator-visible surface. `describeTarget()` is that surface — it is what
-    // every PostgresUnavailableError message interpolates.
-    const host = new PostgresEstateHost({
-      connectionString:
-        'postgresql://appuser:firstsecret@127.0.0.1:55432/straylight_source?password=secondsecret&application_name=straylight',
-    });
-    try {
-      const described = host.describeTarget();
-      expectUnrecoverable(described, 'firstsecret', 'describeTarget');
-      expectUnrecoverable(described, 'secondsecret', 'describeTarget');
-      expectUnrecoverable(described, 'appuser', 'describeTarget');
-      expect(described).toContain('<redacted>');
-      // Still names its target, which is the point of a diagnostic.
-      expect(described).toContain('127.0.0.1');
-      expect(described).toContain('straylight_source');
     } finally {
       await host.close();
     }
   });
 
-  it('DIAGNOSTIC REACHABILITY: a NORMALIZED credential name is redacted at describeTarget() too', async () => {
-    // The sequence-95 counterexample, carried all the way to the operator-facing
-    // surface rather than stopping at the pure function.
-    const host = new PostgresEstateHost({
-      connectionString: `${SOURCE_ORIGIN}/straylight_source?pass\nword=secondsecret&application_name=straylight`,
-    });
-    try {
-      const described = host.describeTarget();
-      expectUnrecoverable(described, 'secondsecret', 'describeTarget normalized name');
-      expect(described).toContain('<redacted>');
-      expect(described).toContain('straylight_source');
-    } finally {
-      await host.close();
-    }
-  });
-
-  it('DIAGNOSTIC REACHABILITY: a FORM-DECODED credential is redacted at describeTarget() too', async () => {
-    // The sequence-104 counterexample at the operator-facing surface.
-    const host = new PostgresEstateHost({
-      connectionString: `${SOURCE_ORIGIN}/straylight_source?password=hunter+2+secret&application_name=straylight`,
-    });
-    try {
-      const described = host.describeTarget();
-      expectUnrecoverable(described, 'hunter 2 secret', 'describeTarget form-decoded');
-      expectUnrecoverable(described, 'hunter+2+secret', 'describeTarget form-encoded');
-      expect(described).toContain('<redacted>');
-      expect(described).toContain('straylight_source');
-    } finally {
-      await host.close();
-    }
-  });
 
   // ── PRESERVATION NEGATIVE CONTROL ────────────────────────────────────────
   //
@@ -1329,19 +1102,22 @@ describe('Phase 50A F-04 — redactConnectionString decides WITH the real connec
     }
   });
 
-  it('PRESERVATION: config.ts exports exactly the audited surface, unchanged', async () => {
-    // F-04 must be closed WITHOUT widening the module's contract. An added
-    // export would be a new surface no audit has seen; a removed one would break
-    // a call site outside this slice.
+  it('PRESERVATION: config.ts exports exactly the closed surface this slice leaves behind', async () => {
+    // The prior packet pinned this surface as `SHIPPED_SCHEMA_VERSIONS`,
+    // `redactConnectionString`, `resolveConfig`. The sequence-110 audit REQUIRED
+    // the middle one to go, so the pin is replaced — and replaced by another
+    // CLOSED, CHECKED surface rather than relaxed into a subset assertion: the
+    // whole export list is enumerated, so an ADDED export fails here too. That
+    // matters for F-04 specifically, because the finding is about a second parser
+    // existing at all, and a re-added renderer under any name would be caught by
+    // this list before anyone had to notice what it did.
     const module = await import('../../src/straylight/storage/postgres/config.js');
-    expect(Object.keys(module).sort()).toEqual([
-      'SHIPPED_SCHEMA_VERSIONS',
-      'redactConnectionString',
-      'resolveConfig',
-    ]);
-    expect(typeof module.redactConnectionString).toBe('function');
-    expect(module.redactConnectionString.length, 'signature arity is unchanged').toBe(1);
-    expect(module.redactConnectionString.name).toBe('redactConnectionString');
+    expect(Object.keys(module).sort()).toEqual(['SHIPPED_SCHEMA_VERSIONS', 'resolveConfig']);
+    expect(typeof module.resolveConfig).toBe('function');
+    expect(module.resolveConfig.length, 'signature arity is unchanged').toBe(1);
+    expect(module.resolveConfig.name).toBe('resolveConfig');
+    // The other export is the shipped version list, unchanged by this slice.
+    expect(module.SHIPPED_SCHEMA_VERSIONS).toEqual(['0001']);
   });
 });
 
@@ -1374,9 +1150,28 @@ describe('Phase 50A F-09 — every destructive proof target is refused unless it
    * would happily hand out a client, so if any surface ever delegated to it, the
    * record would say so.
    */
+  /**
+   * The most convincing self-description an imitation can now produce.
+   *
+   * The substrate's rejected gate compared `describeTarget()` TEXT, so the
+   * imitation has to be able to produce the right text — otherwise the
+   * counterexample would be refused for the wrong reason. It is assembled HERE,
+   * from the descriptor's non-secret fields, because the store no longer renders
+   * a connection string at all (F-04) and there is no redactor to borrow. That
+   * is also the point: this is the test's imitation of a diagnostic, and no
+   * production surface consults it.
+   */
+  const impersonation = (): string => {
+    const fixed = sourceHost();
+    return `${SCHEME}<redacted>@${LOOPBACK}:${String(fixed.port)}/${fixed.database}`;
+  };
+
+  /** A redactor-shaped argument, for any surface that ever took one. */
+  const impersonatingRedactor = (_connectionString: string): string => impersonation();
+
   const touched: string[] = [];
   const hostile = {
-    describeTarget: (): string => redactConnectionString(sourceHost().connectionString),
+    describeTarget: (): string => impersonation(),
     withClient: async (body: (client: unknown) => unknown): Promise<unknown> => {
       touched.push('withClient');
       return body({
@@ -1405,9 +1200,29 @@ describe('Phase 50A F-09 — every destructive proof target is refused unless it
    */
   class DisguisedStore extends PostgresEstateHost {
     override describeTarget(): string {
-      return redactConnectionString(sourceHost().connectionString);
+      return impersonation();
     }
   }
+
+  /**
+   * Close a genuine handle, in EITHER TREE.
+   *
+   * Teardown is a module operation now (the handle carries no store), but these
+   * proofs must also RUN against the substrate, where it is a field. A cleanup
+   * path that assumed the module operation would throw `TypeError` there and
+   * replace the assertion failure the proof exists to produce — so the module
+   * operation is used when the module publishes one, and the substrate's exposed
+   * field otherwise. Neither branch decides anything: the assertions do.
+   */
+  const closeBound = async (hosts: object, value: unknown): Promise<void> => {
+    const close = (hosts as Record<string, unknown>)['closeBoundProofStore'];
+    if (typeof close === 'function') {
+      await (close as (bound: unknown) => Promise<void>)(value);
+      return;
+    }
+    const exposed = (value as { store?: unknown } | undefined)?.store;
+    if (exposed instanceof PostgresEstateHost) await exposed.close();
+  };
 
   const REFUSED_TARGETS: ReadonlyArray<{ label: string; target: ProofHost }> = [
     { label: 'non-loopback host', target: foreign({}) },
@@ -1524,11 +1339,11 @@ describe('Phase 50A F-09 — every destructive proof target is refused unless it
       [subclass],
       [host, hostile],
       [host, subclass],
-      [host, hostile, redactConnectionString],
-      [host, subclass, redactConnectionString],
-      [host, hostile, redactConnectionString, hostile],
+      [host, hostile, impersonatingRedactor],
+      [host, subclass, impersonatingRedactor],
+      [host, hostile, impersonatingRedactor, hostile],
       ['source', hostile],
-      ['source', hostile, redactConnectionString],
+      ['source', hostile, impersonatingRedactor],
       [hostile, host],
       [{ host, store: hostile }],
       [{ host, store: subclass }],
@@ -1572,11 +1387,18 @@ describe('Phase 50A F-09 — every destructive proof target is refused unless it
       expect(destructiveOperations(), 'an imitation reached the destructive record').toEqual([]);
       expect(toolInvocations()).toEqual([]);
     } finally {
-      // Close whatever the enumeration legitimately opened. `openBoundProofStore`
-      // constructs a real store; the pool is lazy, but the handle is ours.
+      // Close whatever the enumeration legitimately opened, THROUGH THE MODULE.
+      // `openBoundProofStore` constructs a real store and the pool is lazy, but
+      // the store is module-private now (F-09): there is no field to reach it
+      // through, so teardown is a module operation like every other one.
+      //
+      // Written for BOTH TREES, because a substrate run must fail on the
+      // assertion above rather than on a `TypeError` while cleaning up: the
+      // module operation is used when the module publishes one, and the
+      // substrate's exposed field otherwise.
       for (const value of produced) {
-        const store = (value as { store?: unknown } | null)?.store;
-        if (store instanceof PostgresEstateHost) await store.close();
+        if (!hosts.isBoundProofStore(value)) continue;
+        await closeBound(hosts, value);
       }
       await subclass.close();
     }
@@ -1601,16 +1423,21 @@ describe('Phase 50A F-09 — every destructive proof target is refused unless it
     });
     try {
       // The genuine handle IS the authority, and the registry — not the handle —
-      // is what a destructive consumer reads.
+      // is what a destructive consumer reads. The minted capability carries the
+      // descriptor and the operations, and NO store: there is nothing on it to
+      // compare against a store the handle exposed, because it exposes none.
       expect(isBoundProofStore(genuine)).toBe(true);
-      expect(authorizedBoundStore(genuine).store).toBe(genuine.store);
       expect(authorizedBoundStore(genuine).host).toBe(sourceHost());
+      expect(
+        (authorizedBoundStore(genuine) as unknown as { store?: unknown }).store,
+        'the minted capability hands out a store',
+      ).toBeUndefined();
 
       // Nothing else is. Each of these is a shape a caller can actually build.
       const rejected: ReadonlyArray<{ label: string; value: unknown }> = [
         { label: 'a self-describing imitation', value: { host: sourceHost(), store: hostile } },
         { label: 'a subclass with an overridden description', value: { host: sourceHost(), store: subclass } },
-        { label: 'a bare store handle', value: genuine.store },
+        { label: 'a bare store handle', value: subclass },
         { label: 'a COPY of a genuine handle', value: { ...genuine } },
         {
           label: 'a copy of a genuine handle with the store SUBSTITUTED',
@@ -1646,8 +1473,167 @@ describe('Phase 50A F-09 — every destructive proof target is refused unless it
       expect(toolInvocations()).toEqual([]);
       expect(touched, 'an imitation was delegated to before being refused').toEqual([]);
     } finally {
-      await genuine.store.close();
+      await closeBound(hosts, genuine);
       await subclass.close();
+    }
+  });
+
+  // ── THE SEQUENCE-110 F-09 COUNTEREXAMPLE ─────────────────────────────────
+  //
+  // The sequence-110 audit did not need an imitation. Its counterexample used a
+  // GENUINE handle — the registry's own product, which passes every membership
+  // test — and simply patched the store the handle EXPOSED:
+  //
+  //     const genuine = openBoundProofStore(sourceHost());
+  //     genuine.store.withClient = hostile.withClient;   // destructive authority
+  //     await emptySchema(genuine);                       // aimed elsewhere
+  //
+  // Membership was never in question, so no amount of membership checking closes
+  // it. What closes it is that the handle carries NO STORE: the real host is
+  // module-private after minting, the registry holds it, and every destructive
+  // consumer resolves it internally.
+  //
+  // So this proof does what the audit did, and then everything else a caller can
+  // reach: mutate the genuine handle, mint from a Proxy over it, from a spread
+  // copy, from an Object.create derivative, from a prototype-tampered object, and
+  // patch the minted capability itself. Against the substrate the FIRST assertion
+  // fails, naming the exposed alias.
+  it('COUNTEREXAMPLE (F-09): a GENUINE handle exposes no store, so nothing can redirect it after minting', async () => {
+    resetDestructiveOperations();
+    resetToolInvocations();
+    touched.length = 0;
+
+    const hosts = await hostsModule();
+    // The INTERSECTION of the two trees' surfaces, deliberately: this proof must
+    // fail on the substrate for the ALIAS, so it must not fail first on a
+    // replacement export the substrate never had. Teardown goes through
+    // `closeBound`, which works either way.
+    expect(
+      missingExports(hosts, ['openBoundProofStore', 'isBoundProofStore', 'authorizedBoundStore']),
+      'the destructive-authority seam is absent from this module',
+    ).toEqual([]);
+    const { openBoundProofStore, isBoundProofStore, authorizedBoundStore } = hosts;
+
+    // GENUINE. Not a fake, not an unregistered imitation: the registry's own
+    // product for a fixed descriptor, which is what made the substrate defect a
+    // defect rather than a refusal.
+    const genuine = openBoundProofStore(sourceHost());
+    try {
+      expect(isBoundProofStore(genuine), 'the handle under attack must be genuine').toBe(true);
+
+      // ── 1. THE HANDLE HANDS OUT NO STORE ────────────────────────────────
+      //
+      // Enumerated rather than asserted about one field name: own properties,
+      // own symbols and everything reachable through the prototype chain, so a
+      // store returned by an accessor or an inherited getter would be caught too.
+      const reachable = new Map<string, unknown>();
+      for (const key of Object.getOwnPropertyNames(genuine)) {
+        reachable.set(key, (genuine as unknown as Record<string, unknown>)[key]);
+      }
+      for (const sym of Object.getOwnPropertySymbols(genuine)) {
+        reachable.set(String(sym), (genuine as unknown as Record<symbol, unknown>)[sym]);
+      }
+      for (
+        let proto: object | null = Object.getPrototypeOf(genuine) as object | null;
+        proto !== null && proto !== Object.prototype;
+        proto = Object.getPrototypeOf(proto) as object | null
+      ) {
+        for (const key of Object.getOwnPropertyNames(proto)) {
+          if (key === 'constructor') continue;
+          reachable.set(`proto.${key}`, (genuine as unknown as Record<string, unknown>)[key]);
+        }
+      }
+      for (const [where, value] of reachable) {
+        expect(
+          value instanceof PostgresEstateHost,
+          `the genuine handle hands out its store at ${where}: the sequence-110 alias is back`,
+        ).toBe(false);
+      }
+      // The shape is CLOSED, so "no store today" cannot become "a store next
+      // week" without failing here.
+      expect([...reachable.keys()].sort()).toEqual(['host']);
+      expect(Object.isFrozen(genuine), 'a genuine handle must be frozen').toBe(true);
+
+      // ── 2. THE ATTACK, RUN ───────────────────────────────────────────────
+      const minted = authorizedBoundStore(genuine);
+      const patchable = genuine as unknown as Record<string, unknown>;
+      // Writing an alias onto the frozen handle: refused by the runtime.
+      expect(() => {
+        patchable['store'] = hostile;
+      }).toThrow(TypeError);
+      expect(patchable['store'], 'a store alias was installed on the handle').toBeUndefined();
+      // Patching the minted capability: refused too, and a later mint is clean.
+      expect(Object.isFrozen(minted), 'a minted capability must be frozen').toBe(true);
+      expect(() => {
+        (minted as unknown as Record<string, unknown>)['withClient'] = hostile.withClient;
+      }).toThrow(TypeError);
+
+      // ── 3. EVERY DERIVATIVE OF A GENUINE HANDLE IS REFUSED ──────────────
+      const proxied = new Proxy(genuine, {
+        get: (target, key, receiver) =>
+          key === 'store' ? hostile : Reflect.get(target, key, receiver),
+      });
+      const derived: ReadonlyArray<{ label: string; value: unknown }> = [
+        { label: 'a spread copy of a genuine handle', value: { ...genuine } },
+        { label: 'a spread copy with a store alias added', value: { ...genuine, store: hostile } },
+        { label: 'an Object.create derivative of a genuine handle', value: Object.create(genuine) },
+        { label: 'a Proxy over a genuine handle', value: proxied },
+        {
+          label: 'a prototype-tampered object inheriting from a genuine handle',
+          value: Object.setPrototypeOf({ store: hostile }, genuine),
+        },
+        {
+          label: 'a frozen copy of a genuine handle',
+          value: Object.freeze({ ...genuine, store: hostile }),
+        },
+      ];
+      for (const { label, value } of derived) {
+        expect(isBoundProofStore(value), `${label} passed the membership test`).toBe(false);
+        expect(() => authorizedBoundStore(value as never), `${label} was authorized`).toThrow(
+          ProofHostRefusedError,
+        );
+        await expect(
+          emptySchema(value as never),
+          `${label} reached the destructive path`,
+        ).rejects.toThrow(ProofHostRefusedError);
+      }
+
+      // ── 4. WHERE THE AUTHORITY POINTS, OBSERVED ─────────────────────────
+      //
+      // A frozen capability whose functions are not the hostile ones is still
+      // only structure. This is the behavioural half: the minted operation is
+      // exercised, and it reaches the REGISTRY's target. With no harness running
+      // it fails NAMING that target; with one running it acquires a connection
+      // and the callback does nothing. Either outcome is the same fact — the
+      // operation was aimed at the descriptor's own database — and `touched`
+      // proves the hostile object was not consulted on the way.
+      const fresh = authorizedBoundStore(genuine);
+      expect(fresh, 'each mint is its own capability').not.toBe(minted);
+      for (const key of ['migrate', 'withClient', 'withEstateSession'] as const) {
+        expect(typeof fresh[key]).toBe('function');
+        expect(fresh[key] as unknown).not.toBe(
+          (hostile as unknown as Record<string, unknown>)[key],
+        );
+      }
+      let observed = '';
+      await fresh
+        .withClient(async () => {
+          observed = 'acquired a connection to the registry store';
+        })
+        .catch((err: unknown) => {
+          observed = err instanceof Error ? err.message : String(err);
+        });
+      expect(
+        observed.includes('registry store') || observed.includes(sourceHost().database),
+        `the minted operation did not reach the descriptor's own database: ${observed}`,
+      ).toBe(true);
+
+      // OBSERVED: nothing delegated, nothing destroyed, nothing invoked.
+      expect(touched, 'the hostile object was delegated to').toEqual([]);
+      expect(destructiveOperations()).toEqual([]);
+      expect(toolInvocations()).toEqual([]);
+    } finally {
+      await closeBound(hosts, genuine);
     }
   });
 
@@ -2149,6 +2135,57 @@ describe('Phase 50A F-14 — restore verification is NON-DESTRUCTIVE and detects
     };
   }
 
+  // ── THE ORACLE COMES FROM THE PUBLISHER ──────────────────────────────────
+  //
+  // Everything below that needs to know what a canonical read IS asks the module
+  // that ISSUES it, and normalizes text through that module's own published
+  // normalizer. Nothing here restates a statement, a relation name, a column
+  // list or a whitespace rule — so these proofs cannot pass by sharing a
+  // mistake with the implementation, and a change to the reads cannot be made
+  // to agree with a copy of them kept in this file.
+  //
+  // Reached by DYNAMIC import and probed as properties, because the substrate
+  // publishes none of these symbols and this file must load against both trees.
+
+  const storeApi = async (): Promise<object> =>
+    import('../../src/straylight/storage/postgres/index.js');
+
+  const publishedReads = async (): Promise<
+    readonly { readonly section: string; readonly sql: string }[]
+  > => {
+    const store = (await storeApi()) as unknown as Record<string, unknown>;
+    expect(
+      Array.isArray(store['CANONICAL_SNAPSHOT_READS']),
+      'the store publishes no closed canonical read set',
+    ).toBe(true);
+    return store['CANONICAL_SNAPSHOT_READS'] as readonly {
+      readonly section: string;
+      readonly sql: string;
+    }[];
+  };
+
+  /** The publisher's own whitespace normalization. NEVER a copy of it. */
+  const publishedNormalize = async (): Promise<(sql: string) => string> => {
+    const store = (await storeApi()) as unknown as Record<string, unknown>;
+    expect(
+      typeof store['canonicalReadText'],
+      'the store publishes no read-text normalizer',
+    ).toBe('function');
+    return store['canonicalReadText'] as (sql: string) => string;
+  };
+
+  type BoundaryPhase = 'begin' | 'commit' | 'rollback';
+
+  const publishedBoundary = async (): Promise<Readonly<Record<BoundaryPhase, string>>> => {
+    const verifier = (await verifierModule()) as unknown as Record<string, unknown>;
+    const boundary = verifier['READ_ONLY_BOUNDARY'];
+    expect(
+      typeof boundary === 'object' && boundary !== null,
+      'the verifier publishes no read-only transaction boundary',
+    ).toBe(true);
+    return boundary as Readonly<Record<BoundaryPhase, string>>;
+  };
+
   /**
    * Statement forms that MUST NOT be certified read-only.
    *
@@ -2156,10 +2193,19 @@ describe('Phase 50A F-14 — restore verification is NON-DESTRUCTIVE and detects
    * no keyword list would have called destructive (`SET`, `LOCK`, `SELECT
    * pg_terminate_backend`), a data-modifying CTE whose text begins with `WITH`, a
    * second statement smuggled after a `;`, an anonymous code block, and a
-   * `SELECT … INTO`. Under a denylist most of these pass by omission; under a
-   * positive grammar they are refused without being enumerated as dangerous,
-   * which is why they are listed HERE, in the test, and not in the module.
+   * `SELECT … INTO`. Under a denylist most of these pass by omission; under
+   * MEMBERSHIP IN A PUBLISHED SET they are refused without being enumerated as
+   * dangerous at all, which is why they are listed HERE, in the test, and not in
+   * the module.
+   *
+   * The last entry is the SEQUENCE-110 counterexample: a statement that is not
+   * destructive by any keyword and that SATISFIES the rejected grammar exactly —
+   * a bare column projected from a bare relation — while being a read of a
+   * relation this repository does not have, does not read, and could not vouch
+   * for. It is refused for the only reason that generalizes: nothing publishes it.
    */
+  const SIDE_EFFECT_READ = 'SELECT actor_id FROM side_effect_view';
+
   const HOSTILE_SQL: readonly string[] = [
     'DROP SCHEMA public CASCADE',
     'DROP DATABASE straylight_source',
@@ -2179,6 +2225,7 @@ describe('Phase 50A F-14 — restore verification is NON-DESTRUCTIVE and detects
     'SELECT actor_id FROM actors -- and then something else',
     'VACUUM FULL actors',
     'REFRESH MATERIALIZED VIEW actors_mv',
+    SIDE_EFFECT_READ,
   ];
 
   it('the verifier module issues no destructive statement on any code path', () => {
@@ -2198,6 +2245,22 @@ describe('Phase 50A F-14 — restore verification is NON-DESTRUCTIVE and detects
         /\b(?:DROP|TRUNCATE|DELETE|ALTER|CREATE|INSERT|UPDATE)\b/i.test(sql),
         `${VERIFIER} issues a destructive statement: ${sql}`,
       ).toBe(false);
+    }
+
+    // AND THE STRONGER FORM, so the check above cannot become vacuous by the
+    // literals simply moving: EVERY argument this module passes to a query call is
+    // an expression drawn from a PUBLISHED set — the boundary this module
+    // publishes, or a step of the plan `portability.ts` publishes and iterates.
+    // A statement written anywhere else, destructive or not, fails here.
+    const queryArguments = [...code.matchAll(/\.query\(([^)]*)\)/g)].map((m) =>
+      (m[1] ?? '').trim(),
+    );
+    expect(queryArguments.length, 'the verifier issues nothing at all').toBeGreaterThan(0);
+    for (const argument of queryArguments) {
+      expect(
+        /^READ_ONLY_BOUNDARY\.(?:begin|commit|rollback)$/.test(argument),
+        `${VERIFIER} issues a statement that no published set authorizes: ${argument}`,
+      ).toBe(true);
     }
 
     // It must not reach for the destructive machinery at all — no import of the
@@ -2250,12 +2313,20 @@ describe('Phase 50A F-14 — restore verification is NON-DESTRUCTIVE and detects
     const reading = agreeingReading();
 
     // POSITIVE CONTROL FIRST, so a blanket "everything fails" cannot masquerade
-    // as this proof: the SAME readings and the SAME seam, carrying only the real
-    // read path, must PASS and exit 0.
+    // as this proof: the SAME readings and the SAME seam, carrying THE REAL READ
+    // PATH, must PASS and exit 0.
+    //
+    // The control drives `readStoreSnapshot` rather than a statement written here.
+    // That is deliberate on two counts: this test then restates none of the
+    // implementation's SQL, and the control means the same thing in both trees —
+    // the read path proves itself under a grammar and under membership alike, so a
+    // substrate run of this test fails on the hostile statement below rather than
+    // on a control that assumed one tree's recognition rule.
     resetRecordedObservations();
     const control = inertClient();
-    await observeQueries(control).query('SELECT actor_id FROM actors ORDER BY actor_id');
+    await readStoreSnapshot(observeQueries(control) as never);
     const passing = decideVerification(reading, reading, observedQueryProof());
+    expect(passing.queryProof.observed, 'the control observed nothing').toBe(control.calls);
     expect(passing.differences).toEqual([]);
     expect(passing.brokenChains).toEqual([]);
     expect(passing.queryProof.proved, 'a recognized read must be provable').toBe(true);
@@ -2317,8 +2388,74 @@ describe('Phase 50A F-14 — restore verification is NON-DESTRUCTIVE and detects
     expect(verificationExitCode(unproven)).toBe(1);
   });
 
-  it('the recognition grammar REFUSES BY DEFAULT rather than denying by keyword', async () => {
+  // ── THE SEQUENCE-110 F-14 COUNTEREXAMPLE ─────────────────────────────────
+  //
+  // The substrate recognized a statement by SHAPE: `^SELECT <bare columns> FROM
+  // <bare relation> [ORDER BY <bare columns>]$`. The grammar was tight — no
+  // parentheses, no `;`, no comment, no `JOIN`, no literal, no qualified name —
+  // and the audit's counterexample walked straight through it, because the
+  // relation was a bare identifier and therefore ANY bare identifier:
+  //
+  //     SELECT actor_id FROM side_effect_view      →  recognized, proved, exit 0
+  //
+  // Nothing about that statement is destructive to look at, and that is the
+  // point: a shape cannot express "this module issues this statement", so it
+  // authorized every relation that exists, every relation a migration will add,
+  // and every relation with a rule, a trigger or a side effect behind it.
+  //
+  // This proof takes the same statement to the same seam. Against the substrate
+  // the FIRST assertion fails, naming the statement that was certified read-only
+  // and the shape that certified it. It needs only exports both trees have, so it
+  // fails for THAT reason rather than for a missing replacement export.
+  it('COUNTEREXAMPLE (F-14): a read of an UNPUBLISHED relation is refused, though it satisfies the rejected grammar exactly', async () => {
+    const {
+      classifyObservedSql,
+      observeQueries,
+      observedQueryProof,
+      resetRecordedObservations,
+      decideVerification,
+      verificationExitCode,
+    } = await verifierModule();
+
+    // The statement IS the rejected grammar's own shape — asserted here, so the
+    // counterexample cannot be dismissed as malformed input.
+    expect(
+      /^SELECT [A-Za-z_][A-Za-z0-9_]* FROM [A-Za-z_][A-Za-z0-9_]*$/.test(SIDE_EFFECT_READ),
+      'the counterexample must satisfy the rejected grammar, or it proves nothing',
+    ).toBe(true);
+
+    const verdict = classifyObservedSql(SIDE_EFFECT_READ);
+    expect(
+      verdict.recognized,
+      `certified read-only by SHAPE: "${SIDE_EFFECT_READ}" is a read of a relation no module ` +
+        'publishes, issues, or can vouch for — a bare projection from a bare identifier is not ' +
+        'authority',
+    ).toBe(false);
+    if (!verdict.recognized) {
+      expect(verdict.reason).toContain('UNRECOGNIZED');
+    }
+
+    // And it governs the verdict: agreeing readings, so only the observation can
+    // decide, and it must decide against.
+    resetRecordedObservations();
+    const client = inertClient();
+    await observeQueries(client).query(SIDE_EFFECT_READ);
+    const proof = observedQueryProof();
+    expect(proof.observed).toBe(client.calls);
+    expect(proof.proved, `"${SIDE_EFFECT_READ}" proved a read-only verification`).toBe(false);
+    const reading = agreeingReading();
+    const report = decideVerification(reading, reading, proof);
+    expect(report.differences, 'the readings must agree, so only the observation decides').toEqual(
+      [],
+    );
+    expect(report.ok, `an observed "${SIDE_EFFECT_READ}" was reported as a PASS`).toBe(false);
+    expect(verificationExitCode(report), `an observed "${SIDE_EFFECT_READ}" exited 0`).toBe(1);
+  });
+
+  it('recognition is MEMBERSHIP in a published set, and REFUSES BY DEFAULT', async () => {
     const { classifyObservedSql } = await verifierModule();
+    const reads = await publishedReads();
+    const boundary = await publishedBoundary();
 
     // Every hostile form is refused, and the refusal says it was UNRECOGNIZED —
     // not that it matched a list of dangerous words.
@@ -2329,29 +2466,221 @@ describe('Phase 50A F-14 — restore verification is NON-DESTRUCTIVE and detects
       expect(verdict.reason).toContain('UNRECOGNIZED');
     }
 
-    // And the module does not classify by denylist. The substrate's classifier was
-    // `/\b(?:DROP|TRUNCATE|DELETE|…)\b/i`, whose DEFAULT IS PASS; the alternation
-    // must not be back in the executable text. (Comments explain the rejected
-    // approach at length, which is why they are blanked first.)
+    // NON-VACUITY, from the publisher rather than from a restatement: every entry
+    // of the published set is recognized, and the verdict NAMES the module that
+    // issues it and the symbol that authorizes it. This test never writes a SQL
+    // statement of its own — it asks the issuing module what it issues.
+    expect(reads.length, 'the published read set is empty').toBe(8);
+    for (const read of reads) {
+      const verdict = classifyObservedSql(read.sql);
+      expect(verdict.recognized, `a published canonical read is refused: ${read.section}`).toBe(
+        true,
+      );
+      if (!verdict.recognized) continue;
+      expect(verdict.authority.publisher).toBe('src/straylight/storage/postgres/portability.ts');
+      expect(verdict.authority.published).toBe('CANONICAL_SNAPSHOT_READS');
+      expect(verdict.authority.entry).toBe(read.section);
+    }
+    for (const [phase, sql] of Object.entries(boundary)) {
+      const verdict = classifyObservedSql(sql);
+      expect(verdict.recognized, `a published boundary statement is refused: ${phase}`).toBe(true);
+      if (!verdict.recognized) continue;
+      expect(verdict.authority.publisher).toBe('scripts/phase-50a/verify-existing-restore.ts');
+      expect(verdict.authority.published).toBe('READ_ONLY_BOUNDARY');
+      expect(verdict.authority.entry).toBe(phase);
+    }
+
+    // THE STRENGTHENING, STATED. Each of these was RECOGNIZED by the substrate's
+    // grammar — the first three are pinned as accepted in the substrate's own copy
+    // of this suite — and every one of them is refused now. They are listed
+    // because the change is a narrowing a reader should be able to see, not
+    // because any of them is dangerous: a statement nothing publishes is
+    // unauthorized whether or not it could do harm.
+    const NARROWED: readonly string[] = [
+      'SELECT actor_id, record FROM actors',
+      'SELECT actor_id FROM actors ORDER BY actor_id ASC',
+      '  select   actor_id   from   actors  ',
+      SIDE_EFFECT_READ,
+    ];
+    for (const sql of NARROWED) {
+      expect(
+        classifyObservedSql(sql).recognized,
+        `a statement no module publishes is still recognized: ${sql}`,
+      ).toBe(false);
+    }
+    // And the forms the grammar already refused stay refused.
+    for (const sql of [
+      'SELECT * FROM actors',
+      'SELECT actor_id FROM public.actors',
+      'SELECT actor_id FROM actors WHERE actor_id = 1',
+      '',
+    ]) {
+      expect(classifyObservedSql(sql).recognized, `recognized: ${sql}`).toBe(false);
+    }
+
+    // WHITESPACE IS THE ONLY LATITUDE, and it is the publisher's own
+    // normalization: a published read re-spelled across lines is the same
+    // statement, a published read with a token changed is not.
+    const first = reads[0]!;
+    expect(classifyObservedSql(`\n  ${first.sql.trim().replace(/ /g, '\n   ')}\n`).recognized).toBe(
+      true,
+    );
+    expect(classifyObservedSql(first.sql.toLowerCase()).recognized, 'case is folded').toBe(false);
+    expect(classifyObservedSql(`${first.sql} `).recognized).toBe(true);
+    expect(classifyObservedSql(`${first.sql};`).recognized, 'a trailing ; is tolerated').toBe(false);
+
+    // ── NO SHAPE, NO DENYLIST, IN THE EXECUTABLE TEXT ────────────────────
+    //
+    // Both rejected abstractions are absent from the code, checked over
+    // executable text because the comments explain each of them at length.
     const code = executableText(readFileSync(resolve(ROOT, VERIFIER), 'utf8'));
     expect(
       /DROP\s*\|\s*TRUNCATE/.test(code),
       'the rejected destructive-keyword denylist is back',
     ).toBe(false);
+    expect(
+      /\[A-Za-z_\]\[A-Za-z0-9_\]\*/.test(code),
+      'the rejected identifier grammar is back: a bare relation pattern is not authority',
+    ).toBe(false);
+    expect(
+      /READ_ONLY_PROJECTION|new RegExp\(/.test(code),
+      'the rejected shape matcher is back',
+    ).toBe(false);
+    // Recognition must go through the publisher's own membership test.
+    expect(code).toContain('recognizeCanonicalRead(sql)');
+    expect(code).toContain('canonicalReadText(sql)');
+  });
 
-    // The permitted form is a GRAMMAR, and it admits the real read path's shape.
-    expect(classifyObservedSql('SELECT actor_id, record FROM actors').recognized).toBe(true);
-    expect(classifyObservedSql('SELECT actor_id FROM actors ORDER BY actor_id ASC').recognized).toBe(
-      true,
+  it('the AUTHORITY is published by the module that ISSUES the statements, and issuance walks it', async () => {
+    // The property that makes membership meaningful: the set is not a list beside
+    // the code, it is the data `readStoreSnapshot` executes. Proven by OBSERVATION
+    // at the real seam — the statements the read path issues are compared, as a
+    // multiset, against the statements the publisher publishes.
+    const { observeQueries, resetRecordedObservations, recordedObservations } =
+      await verifierModule();
+    const reads = await publishedReads();
+    const norm = await publishedNormalize();
+
+    resetRecordedObservations();
+    const client = inertClient();
+    const snapshot = await readStoreSnapshot(observeQueries(client) as never);
+
+    const issued = recordedObservations().map((o) => norm(o.sql ?? ''));
+    const published = reads.map((r) => norm(r.sql));
+    expect(
+      [...issued].sort(),
+      'the read path issues a statement the publisher does not publish, or omits one it does',
+    ).toEqual([...published].sort());
+    // In ISSUE ORDER, too: the published order is the execution order, so a
+    // consumer reading the set sees what a run will actually do.
+    expect(issued).toEqual(published);
+    // And the published sections are the snapshot's OWN sections — no read is
+    // published for a section the snapshot does not have, and none of the
+    // snapshot's sections is filled by something unpublished.
+    expect([...reads.map((r) => r.section)].sort()).toEqual([...Object.keys(snapshot)].sort());
+  });
+
+  it('the READ-ONLY BOUNDARY wraps the published reads, in order, and is authorized on the same terms', async () => {
+    // A DB-ENFORCED read-only boundary is the second half of F-14: the observation
+    // proof says what was issued, and `BEGIN TRANSACTION READ ONLY` makes a write
+    // impossible to carry out regardless. What can be proven WITHOUT a database is
+    // the ISSUANCE — that the boundary is really wrapped around the reads, on both
+    // the success and the failure path — and that is proven here, at the real seam.
+    // The live SQLSTATE-25006 refusal is proven against a real server in
+    // `postgres-two-host-portability.test.ts`.
+    const verifier = await verifierModule();
+    expect(
+      missingExports(verifier, ['readSnapshotUnderReadOnlyBoundary']),
+      'the read-only boundary is absent from this module',
+    ).toEqual([]);
+    const {
+      readSnapshotUnderReadOnlyBoundary,
+      observeQueries,
+      observedQueryProof,
+      resetRecordedObservations,
+      recordedObservations,
+    } = verifier;
+    const boundary = await publishedBoundary();
+    const reads = await publishedReads();
+    const norm = await publishedNormalize();
+
+    // ── SUCCESS PATH: begin, the published reads, commit ────────────────
+    resetRecordedObservations();
+    const client = inertClient();
+    await readSnapshotUnderReadOnlyBoundary(observeQueries(client) as never);
+    const issued = recordedObservations().map((o) => norm(o.sql ?? ''));
+    expect(issued).toEqual([
+      norm(boundary.begin),
+      ...reads.map((r) => norm(r.sql)),
+      norm(boundary.commit),
+    ]);
+    // EVERY statement — the boundary's own included — is authorized. The module
+    // holds itself to the rule it applies to `portability.ts`.
+    const proof = observedQueryProof();
+    expect(proof.observed).toBe(client.calls);
+    expect(proof.refusals, 'the boundary statements are unauthorized by their own rule').toEqual([]);
+    expect(proof.proved).toBe(true);
+
+    // ── FAILURE PATH: begin, the reads that ran, ROLLBACK ───────────────
+    //
+    // So the set of statements the module can issue is the same on every path: a
+    // read that throws must not leave the transaction open, and the statement that
+    // closes it must be authorized too.
+    resetRecordedObservations();
+    let calls = 0;
+    const failing = {
+      query: async (_arg: unknown): Promise<{ rows: never[] }> => {
+        calls += 1;
+        if (calls === 3) throw new Error('phase-50a test: the third statement fails');
+        return { rows: [] };
+      },
+    };
+    await expect(
+      readSnapshotUnderReadOnlyBoundary(observeQueries(failing) as never),
+    ).rejects.toThrow('the third statement fails');
+    const afterFailure = recordedObservations().map((o) => norm(o.sql ?? ''));
+    expect(afterFailure[0]).toBe(norm(boundary.begin));
+    expect(
+      afterFailure[afterFailure.length - 1],
+      'a failed read left the read-only transaction open',
+    ).toBe(norm(boundary.rollback));
+    expect(afterFailure).not.toContain(norm(boundary.commit));
+    expect(
+      observedQueryProof().refusals,
+      'the failure path issued something unauthorized',
+    ).toEqual([]);
+
+    // ── IT WIDENS NO AUTHORITY ──────────────────────────────────────────
+    //
+    // The boundary adds no role, no privilege, no connection parameter, no
+    // environment override, and no caller-supplied statement: it takes a client
+    // and nothing else, and its texts come from the frozen published set.
+    expect(readSnapshotUnderReadOnlyBoundary.length, 'it accepts more than a client').toBe(1);
+    expect(Object.isFrozen(boundary)).toBe(true);
+    const code = executableText(readFileSync(resolve(ROOT, VERIFIER), 'utf8'));
+    // The ONE environment read in this module is the script guard that keeps
+    // importing it inert; nothing about the boundary, the authority or the target
+    // is configurable from outside.
+    const envReads = [...code.matchAll(/process\.env\[?['"]?([A-Za-z_][A-Za-z0-9_]*)/g)].map(
+      (m) => m[1] ?? '',
     );
-    // Whitespace and case are the only latitude; anything structural is refused.
-    expect(classifyObservedSql('  select   actor_id   from   actors  ').recognized).toBe(true);
-    expect(classifyObservedSql('SELECT * FROM actors').recognized).toBe(false);
-    expect(classifyObservedSql('SELECT actor_id FROM public.actors').recognized).toBe(false);
-    expect(classifyObservedSql('SELECT actor_id FROM actors WHERE actor_id = 1').recognized).toBe(
-      false,
+    expect(envReads, 'the verifier takes configuration from the environment').toEqual(['VITEST']);
+    expect(
+      /\bSET\b|\bROLE\b|\bGRANT\b|default_transaction_read_only/.test(code),
+      'the boundary was widened into session or privilege configuration',
+    ).toBe(false);
+    // The three boundary statements are the ONLY literals it issues, and they are
+    // issued through the published symbol rather than as text at the call site.
+    for (const phase of ['begin', 'commit', 'rollback'] as const) {
+      expect(code).toContain(`READ_ONLY_BOUNDARY.${phase}`);
+    }
+    const literalQueries = [...code.matchAll(/\.query\(\s*(['"`])([\s\S]*?)\1/g)].map(
+      (m) => m[2] ?? '',
     );
-    expect(classifyObservedSql('').recognized).toBe(false);
+    expect(
+      literalQueries,
+      'the verifier issues a statement written as a literal at the call site',
+    ).toEqual([]);
   });
 
   it('OBSERVED: the REAL read path is seen in full and recognized in full, without a database', async () => {
@@ -2390,8 +2719,15 @@ describe('Phase 50A F-14 — restore verification is NON-DESTRUCTIVE and detects
     // The mapping, by value: not-ok is nonzero, ok is zero.
     const proved = { observed: 8, recognized: 8, refusals: [], proved: true };
     const unproved = { observed: 1, recognized: 0, refusals: ['#1 [text] UNRECOGNIZED'], proved: false };
-    expect(verificationExitCode(decideVerification(reading, reading, proved))).toBe(0);
-    expect(verificationExitCode(decideVerification(reading, reading, unproved))).toBe(1);
+    expect(
+      verificationExitCode(decideVerification(reading, reading, proved)),
+      'an agreeing reading with a proved observation record must exit 0',
+    ).toBe(0);
+    expect(
+      verificationExitCode(decideVerification(reading, reading, unproved)),
+      'the observation proof does not reach the exit status: an UNPROVED record ' +
+        'still exited 0, so the verdict is disconnected from what was issued',
+    ).toBe(1);
     // `proved` is a CONJUNCT, so a disagreement still fails even when the reads
     // are provable.
     const divergent = { ...reading, digest: 'sha256:something-else' };
@@ -2512,8 +2848,11 @@ describe('Phase 50A F-14 — restore verification is NON-DESTRUCTIVE and detects
       /observeQueries|client\.query\b/.test(executable),
       'the verifier does not wrap client.query — the record cannot be an observation',
     ).toBe(true);
-    // The live read path must go THROUGH the seam, not beside it.
-    expect(executable).toContain('readStoreSnapshot(observeQueries(client))');
+    // The live read path must go THROUGH the seam, not beside it. The seam wraps
+    // the client BEFORE the boundary is opened, so the boundary's own statements
+    // and the reads inside it are recorded by the same construction.
+    expect(executable).toContain('readSnapshotUnderReadOnlyBoundary(observeQueries(client))');
+    expect(executable).toContain('readStoreSnapshot(client)');
 
     // (c) BEHAVIOURAL: a statement nobody announced is recorded anyway, exactly
     // as issued. That is the property narration could not have.

@@ -14,14 +14,18 @@
 // deliberately avoids.
 
 export { PostgresEstateHost } from './host.js';
-export type { EstateSessionResult } from './host.js';
+export type { EstateSessionResult, TargetIdentity } from './host.js';
 
 export { PostgresAdapterSession } from './session.js';
 
 export { PostgresIntegrityError, PostgresUnavailableError } from './errors.js';
 export type { PostgresIntegrityReason, PostgresUnavailableReason } from './errors.js';
 
-export { SHIPPED_SCHEMA_VERSIONS, redactConnectionString, resolveConfig } from './config.js';
+// `redactConnectionString` is GONE, not renamed: the store no longer renders a
+// connection string at all (F-04). A diagnostic names its target through
+// `PostgresEstateHost.describeTarget()`, which prints the identity `pg`
+// resolved and no credential-bearing material in any form.
+export { SHIPPED_SCHEMA_VERSIONS, resolveConfig } from './config.js';
 export type { PostgresStoreConfig, ResolvedPostgresStoreConfig } from './config.js';
 
 export {
@@ -57,15 +61,19 @@ export type { AppendOutcome, PersistResult } from './persist.js';
 export { canonicalPayload, previousHashKey } from './rows.js';
 
 export {
+  CANONICAL_SNAPSHOT_READS,
   assertEstateServiceable,
   assertRestoreServiceable,
+  canonicalReadText,
   compareSnapshots,
   readStoreSnapshot,
+  recognizeCanonicalRead,
   snapshotDigest,
   verifyChains,
   verifyRestore,
 } from './portability.js';
 export type {
+  CanonicalRead,
   ChainVerification,
   RestoreVerification,
   SnapshotComparison,

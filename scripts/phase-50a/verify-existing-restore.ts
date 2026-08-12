@@ -15,8 +15,10 @@
 // the same `readStoreSnapshot` the proof uses, compares digests, verifies every
 // per-estate audit chain, and reports. It issues NO DDL, NO DROP, NO TRUNCATE,
 // NO DELETE, no reseed, and no `emptySchema` — and it holds no code path that
-// could: the only statements it can reach are the read queries inside
-// `readStoreSnapshot`.
+// could: the only statements it can reach are the eight canonical reads
+// `portability.ts` publishes and the three transaction statements this module
+// publishes to wrap them in, and it runs those reads inside `BEGIN TRANSACTION
+// READ ONLY`, so PostgreSQL would refuse a write even if one were reached.
 //
 // ── HOW AN OPERATOR RUNS IT (no package.json change) ─────────────────────
 //
@@ -54,11 +56,15 @@
 // destructive statement could not have changed the verdict. It governs now — see
 // `decideVerification`.
 
+import type { PoolClient } from 'pg';
+
 import {
+  CANONICAL_SNAPSHOT_READS,
   PostgresEstateHost,
+  canonicalReadText,
   compareSnapshots,
   readStoreSnapshot,
-  redactConnectionString,
+  recognizeCanonicalRead,
   snapshotDigest,
   verifyChains,
   type StoreSnapshot,
@@ -67,7 +73,11 @@ import { replacementHost, sourceHost } from './hosts.js';
 
 /** What one estate's canonical content looks like to this verifier. */
 export interface EstateReading {
-  /** Redacted target description — safe to print. */
+  /**
+   * Non-secret identity of the estate that was read — safe to print, because it
+   * is `PostgresEstateHost.describeTarget()`, which names the host, port and
+   * database `pg` resolved and carries no userinfo and no query text.
+   */
   readonly target: string;
   /** Whole-store content digest. */
   readonly digest: string;
@@ -102,8 +112,27 @@ export interface QueryObservation {
   readonly verdict: ObservationVerdict;
 }
 
+/**
+ * WHAT AUTHORIZES a recognized statement: the module that issues it, the symbol
+ * that module publishes, and which entry of that symbol the statement is.
+ *
+ * A recognition therefore carries its provenance. There is no verdict of the form
+ * "it looked safe": every accepted statement names the published definition it
+ * matched, and that definition lives in — and is issued by — the module named.
+ */
+export interface StatementAuthority {
+  /** The module that ISSUES this statement and publishes its definition. */
+  readonly publisher:
+    | 'src/straylight/storage/postgres/portability.ts'
+    | 'scripts/phase-50a/verify-existing-restore.ts';
+  /** The exported symbol that authorizes it. */
+  readonly published: 'CANONICAL_SNAPSHOT_READS' | 'READ_ONLY_BOUNDARY';
+  /** Which entry of that set: a snapshot section, or a boundary phase. */
+  readonly entry: string;
+}
+
 export type ObservationVerdict =
-  | { readonly recognized: true; readonly form: 'read-only-projection' }
+  | { readonly recognized: true; readonly authority: StatementAuthority }
   | { readonly recognized: false; readonly reason: string };
 
 /** What the observations, taken together, do or do not prove. */
@@ -151,59 +180,111 @@ export function resetRecordedObservations(): void {
 }
 
 /**
- * The ONE statement form this module's read path is allowed to issue, as a
- * grammar rather than a list of spellings: a `SELECT` of bare columns from one
- * bare relation, optionally ordered by bare columns.
+ * THE TRANSACTION BOUNDARY this module wraps its reads in, published because this
+ * module ISSUES it — the same rule the reads follow.
  *
- * ── WHY A POSITIVE GRAMMAR AND NOT A DESTRUCTIVE-KEYWORD DENYLIST ─────────
+ * `BEGIN TRANSACTION READ ONLY` asks POSTGRESQL to enforce what the observation
+ * proof otherwise only witnesses: inside the transaction the server itself
+ * refuses `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `COPY … FROM`, `CREATE`,
+ * `DROP` and `ALTER` with SQLSTATE 25006 `read_only_sql_transaction`, whatever
+ * this process asks for and whatever any classifier here believes. The
+ * observation proof says what was issued; the boundary makes a write impossible
+ * to carry out even if something were issued.
  *
- * The substrate classified statements with
- * `/\b(?:DROP|TRUNCATE|DELETE|…)\b/i` and treated everything it did not match
- * as read-only. The sequence-104 audit rejected that, and the direction of the
- * error is the whole point: a denylist's DEFAULT IS PASS, so every statement
- * form nobody thought of — `SELECT pg_terminate_backend(…)`, `SELECT … INTO`,
- * `WITH x AS (DELETE …) SELECT`, `LOCK`, `SET`, `CALL`, a second statement after
- * a `;`, a `DO $$ … $$` block, anything a future PostgreSQL release adds — was
- * certified safe by omission.
- *
- * This grammar's DEFAULT IS REFUSE. Nothing needs to be enumerated as dangerous,
- * because nothing is permitted that is not recognized. That is also why
- * "destructive" and "state-reducing" are not separate verdicts below: telling
- * them apart would require exactly the denylist that was rejected, and it is
- * unnecessary — they are refused as UNRECOGNIZED, which is strictly stronger
- * than refusing them by name.
- *
- * The grammar is deliberately tight. It admits no parentheses (so no function
- * call, no subquery, no CTE), no `;` (so no second statement), no `--` or slash-
- * star comment, no `INTO`, no `JOIN`, no `WHERE`, no qualified or quoted
- * identifier, and no literal. `readStoreSnapshot`'s eight queries are all it
- * needs to admit, and a NEW read that this grammar does not recognize FAILS
- * CLOSED — which is the correct outcome, because a new read on the
- * "non-destructive verification" path is exactly the change that ought to be
- * looked at rather than assumed benign.
+ * It widens no authority to get that. It adds no role, no privilege, no
+ * connection parameter, no environment override, and — crucially — no way for a
+ * CALLER to hand this module a statement: `readSnapshotUnderReadOnlyBoundary`
+ * issues exactly these three texts and the eight published reads, and accepts
+ * nothing to issue. The session-level alternative (`SET SESSION CHARACTERISTICS`
+ * / `default_transaction_read_only`) was rejected for exactly that reason: it
+ * would have to be configured somewhere outside this file, on a connection this
+ * file does not own, which is authority this file should not need.
  */
-const IDENTIFIER = '[A-Za-z_][A-Za-z0-9_]*';
-const ORDER_TERM = `${IDENTIFIER}(?: ASC| DESC)?`;
-const READ_ONLY_PROJECTION = new RegExp(
-  `^SELECT ${IDENTIFIER}(?:, ${IDENTIFIER})*` +
-    ` FROM ${IDENTIFIER}` +
-    `(?: ORDER BY ${ORDER_TERM}(?:, ${ORDER_TERM})*)?$`,
-  'i',
+export const READ_ONLY_BOUNDARY = Object.freeze({
+  begin: 'BEGIN TRANSACTION READ ONLY',
+  commit: 'COMMIT',
+  rollback: 'ROLLBACK',
+} as const);
+
+export type ReadOnlyBoundaryPhase = keyof typeof READ_ONLY_BOUNDARY;
+
+/** Membership for the boundary, normalized THROUGH the published normalizer. */
+const BOUNDARY_TEXT = new Map<string, ReadOnlyBoundaryPhase>(
+  (Object.keys(READ_ONLY_BOUNDARY) as ReadOnlyBoundaryPhase[]).map((phase) => [
+    canonicalReadText(READ_ONLY_BOUNDARY[phase]),
+    phase,
+  ]),
 );
 
 /**
- * Recognize one observed statement, affirmatively. Whitespace is collapsed first
- * because the queries are written as indented template literals; nothing else
- * about the text is rewritten, so what is recognized is what was issued.
+ * Recognize one observed statement, affirmatively, BY AUTHORITY.
+ *
+ * ── AUTHORITY, NOT SHAPE (sequence-110 audit, F-14) ───────────────────────
+ *
+ * The substrate recognized a statement by matching a GRAMMAR: `^SELECT <bare
+ * columns> FROM <bare relation> [ORDER BY <bare columns>]$`. That grammar was
+ * carefully tight — no parentheses, no `;`, no comment, no `JOIN`, no literal —
+ * and it was still wrong in the way that matters, because the relation was a bare
+ * identifier and therefore ANY bare identifier. `SELECT actor_id FROM
+ * side_effect_view` matched it. So did a read of a relation with a rule, a
+ * trigger, or a security-barrier view behind it; so does any relation a future
+ * migration adds. The audit's point was not that the grammar had a gap to patch:
+ * it was that a shape cannot express "this module issues this statement", and
+ * that is the only property the proof needs.
+ *
+ * So recognition is now MEMBERSHIP in a set published by the module that issues
+ * the statement, and there are exactly two such sets:
+ *
+ *   * `portability.ts` publishes `CANONICAL_SNAPSHOT_READS` — the eight canonical
+ *     snapshot reads, which `readStoreSnapshot` issues BY ITERATING that same
+ *     published data, so the authority and the execution cannot drift apart;
+ *   * this module publishes `READ_ONLY_BOUNDARY` — the three transaction
+ *     statements it wraps those reads in.
+ *
+ * Nothing else is recognized, and there is no shape allowance to fall back on:
+ * an unknown relation, an unknown operation, an unknown spelling of a known read,
+ * a read this module does not issue, a second statement after a `;`, and a
+ * statement whose text cannot be read are all refused. The default is REFUSE, as
+ * before — what changed is that the accept side can no longer be satisfied by
+ * resembling something.
+ *
+ * Because membership is by exact text (after the ONE published whitespace
+ * normalization, which folds no case and rewrites no token), this is strictly
+ * stricter than the grammar it replaces: statements the grammar accepted — a
+ * lowercase spelling, `SELECT actor_id, record FROM actors`, `SELECT actor_id
+ * FROM side_effect_view` — are refused now. A NEW read fails closed, which is
+ * still the correct outcome and is now unavoidable rather than merely likely: a
+ * new read must be added to the published plan, and adding it there is the same
+ * act as issuing it.
  */
 export function classifyObservedSql(sql: string): ObservationVerdict {
-  const collapsed = sql.replace(/\s+/g, ' ').trim();
-  if (READ_ONLY_PROJECTION.test(collapsed)) {
-    return { recognized: true, form: 'read-only-projection' };
+  const canonical = recognizeCanonicalRead(sql);
+  if (canonical !== null) {
+    return {
+      recognized: true,
+      authority: {
+        publisher: 'src/straylight/storage/postgres/portability.ts',
+        published: 'CANONICAL_SNAPSHOT_READS',
+        entry: canonical.section,
+      },
+    };
+  }
+  const boundary = BOUNDARY_TEXT.get(canonicalReadText(sql));
+  if (boundary !== undefined) {
+    return {
+      recognized: true,
+      authority: {
+        publisher: 'scripts/phase-50a/verify-existing-restore.ts',
+        published: 'READ_ONLY_BOUNDARY',
+        entry: boundary,
+      },
+    };
   }
   return {
     recognized: false,
-    reason: `UNRECOGNIZED statement form (not a read-only projection): ${collapsed}`,
+    reason:
+      'UNRECOGNIZED statement: no module publishes it as one it issues ' +
+      `(not in CANONICAL_SNAPSHOT_READS, not in READ_ONLY_BOUNDARY): ${canonicalReadText(sql)}`,
   };
 }
 
@@ -299,18 +380,58 @@ export function observeQueries<TClient extends { query: (...args: never[]) => un
 }
 
 /**
- * Read one estate's canonical content. READ-ONLY: `readStoreSnapshot` issues
- * only `SELECT`s — and that is now OBSERVED rather than asserted, because the
- * client it receives is wrapped by `observeQueries`.
+ * Take the canonical snapshot INSIDE the read-only transaction boundary.
+ *
+ * The order of statements is `BEGIN TRANSACTION READ ONLY`, the eight published
+ * canonical reads, then `COMMIT` — or `ROLLBACK` if a read fails. Every one of
+ * those statements passes through whatever client is handed in, so when that
+ * client is the observed one they are all recorded and all must be authorized;
+ * this module's own boundary is held to the same rule as `portability.ts`'s reads.
+ *
+ * Exported so the issuance ORDER can be proven at the real seam without a
+ * database. That exposes no statement surface: the caller supplies a client (as
+ * `observeQueries` already accepts one, by design) and cannot supply, name or
+ * influence a statement — the texts come from `READ_ONLY_BOUNDARY` and from
+ * `readStoreSnapshot`'s published plan, and from nowhere else.
+ */
+export async function readSnapshotUnderReadOnlyBoundary(
+  client: PoolClient,
+): Promise<StoreSnapshot> {
+  await client.query(READ_ONLY_BOUNDARY.begin);
+  let snapshot: StoreSnapshot;
+  try {
+    snapshot = await readStoreSnapshot(client);
+  } catch (err) {
+    try {
+      await client.query(READ_ONLY_BOUNDARY.rollback);
+    } catch {
+      // The read's own failure is the signal and is rethrown below; a ROLLBACK
+      // that cannot be issued means the connection is already gone, and
+      // `withClient` DESTROYS a connection whose body threw rather than
+      // returning it to the pool, so no aborted transaction is ever reused.
+    }
+    throw err;
+  }
+  await client.query(READ_ONLY_BOUNDARY.commit);
+  return snapshot;
+}
+
+/**
+ * Read one estate's canonical content. READ-ONLY twice over: the statements
+ * issued are OBSERVED rather than asserted, because the client is wrapped by
+ * `observeQueries`; and they run inside `BEGIN TRANSACTION READ ONLY`, so
+ * PostgreSQL itself would reject a write regardless of what was issued.
  */
 export async function readEstate(connectionString: string): Promise<EstateReading> {
   const host = new PostgresEstateHost({ connectionString });
   try {
     const snapshot: StoreSnapshot = await host.withClient(async (client) =>
-      readStoreSnapshot(observeQueries(client)),
+      readSnapshotUnderReadOnlyBoundary(observeQueries(client)),
     );
     return {
-      target: redactConnectionString(connectionString),
+      // The host's own non-secret identity, not a rendering of the connection
+      // string this function was handed: nothing here reads that string (F-04).
+      target: host.describeTarget(),
       digest: snapshotDigest(snapshot),
       chains: verifyChains(snapshot).map((c) => ({
         estate_id: c.estate_id,
@@ -318,16 +439,13 @@ export async function readEstate(connectionString: string): Promise<EstateReadin
         length: c.length,
         tail: c.tail ?? null,
       })),
-      counts: Object.freeze({
-        actors: snapshot.actors.length,
-        estates: snapshot.estates.length,
-        keyrings: snapshot.keyrings.length,
-        assertions: snapshot.assertions.length,
-        transitions: snapshot.transitions.length,
-        transitionReceipts: snapshot.transitionReceipts.length,
-        recallReceipts: snapshot.recallReceipts.length,
-        auditEvents: snapshot.auditEvents.length,
-      }),
+      // Counts come from the published read plan, so the report cannot describe a
+      // section that was never read or omit one that was.
+      counts: Object.freeze(
+        Object.fromEntries(
+          CANONICAL_SNAPSHOT_READS.map((read) => [read.section, snapshot[read.section].length]),
+        ),
+      ),
     };
   } finally {
     await host.close();

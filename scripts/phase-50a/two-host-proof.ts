@@ -34,10 +34,12 @@ import {
 } from '../../src/straylight/storage/postgres/index.js';
 import { clusterSystemIdentifier, pgDump, psqlRestore, type PgToolTarget } from './pg-tools.js';
 import {
+  type AuthorizedBoundStore,
   type BoundProofStore,
   ProofHostRefusedError,
   assertDistinctHosts,
   authorizedBoundStore,
+  closeBoundProofStore,
   isBoundProofStore,
   openBoundProofStore,
   type ProofHost,
@@ -91,10 +93,15 @@ async function main(): Promise<void> {
   // store it works through is the one that call built from that descriptor's own
   // connection string. There is no parameter through which some other store
   // could arrive, so the destructive step below cannot be aimed elsewhere.
+  //
+  // And the operations come from `authorizedBoundStore`, not from a field of the
+  // handle: the store object is module-private in `hosts.ts` and nothing here ever
+  // holds it, so no line of this script — and nothing that could be inserted into
+  // it — can repoint an operation after the authority was minted.
   const boundSource = openBoundProofStore(source);
   const boundReplacement = openBoundProofStore(replacement);
-  const sourceStore = boundSource.store;
-  const replacementStore = boundReplacement.store;
+  const sourceStore: AuthorizedBoundStore = authorizedBoundStore(boundSource);
+  const replacementStore: AuthorizedBoundStore = authorizedBoundStore(boundReplacement);
 
   try {
     heading('reset both hosts to a known starting state');
@@ -229,8 +236,10 @@ async function main(): Promise<void> {
         'any actual deployment.\n',
     );
   } finally {
-    await replacementStore.close();
-    await sourceStore.close();
+    // Teardown through the module, for the same reason the operations are: this
+    // script holds no store to close.
+    await closeBoundProofStore(boundReplacement);
+    await closeBoundProofStore(boundSource);
   }
 }
 
@@ -264,11 +273,15 @@ async function main(): Promise<void> {
  *
  * It now takes a `BoundProofStore` obtainable ONLY from
  * `hosts.openBoundProofStore`, which constructs the store itself from the
- * descriptor — and it destroys through the store `authorizedBoundStore` returns
- * out of the module-private registry, not through a field of the value it was
- * handed. A self-describing imitation, a subclass with an overridden
- * description, and a copy of a genuine handle with a substituted `store` are all
- * refused HERE, and none of them is ever dereferenced.
+ * descriptor — and it destroys through an authority it MINTS HERE from that
+ * handle, not through a field of the value it was handed. A self-describing
+ * imitation, a subclass with an overridden description, and a copy or proxy of a
+ * genuine handle are all refused HERE, and none of them is ever dereferenced.
+ *
+ * The sequence-110 closure removes the remaining route: the handle carries no
+ * store, so there is no alias for anyone to patch between minting and
+ * destruction, and the capability minted below is frozen with its operations
+ * already bound to a store this function cannot name.
  */
 export async function emptySchema(bound: BoundProofStore): Promise<void> {
   // The binding IS the gate, and it happened in `openBoundProofStore` — before
@@ -283,23 +296,23 @@ export async function emptySchema(bound: BoundProofStore): Promise<void> {
       database: fixed.host.database,
     }),
   );
-  await fixed.store.withClient(async (client) => {
+  await fixed.withClient(async (client) => {
     await client.query('DROP SCHEMA public CASCADE');
     await client.query('CREATE SCHEMA public');
   });
 }
 
 /**
- * Refuse anything that is not a genuine `openBoundProofStore` product, and
- * return the descriptor and store THE REGISTRY holds for it.
+ * Refuse anything that is not a genuine `openBoundProofStore` product, and mint
+ * the authority THE REGISTRY holds for it.
  *
- * The membership test and the lookup are the same act deliberately: a
+ * The membership test and the minting are the same act deliberately: a
  * destructive operation must not be able to check one object and then act on
  * another, which is the shape of every defect this seam has had. An untyped
  * JavaScript caller can still pass anything, and the path fails closed rather
  * than reading `undefined.withClient`.
  */
-function requireBoundStore(bound: BoundProofStore): ReturnType<typeof authorizedBoundStore> {
+function requireBoundStore(bound: BoundProofStore): AuthorizedBoundStore {
   if (!isBoundProofStore(bound)) {
     throw new ProofHostRefusedError(
       'phase-50a: refusing a destructive operation that was not handed a store this harness ' +

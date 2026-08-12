@@ -29,8 +29,8 @@
 // transaction, and no fallback to another adapter after PostgreSQL
 // uncertainty.
 
-import { Pool } from 'pg';
-import type { PoolClient } from 'pg';
+import { Client, Pool } from 'pg';
+import type { ClientConfig, PoolClient } from 'pg';
 
 import { AuditLog } from '../../audit.js';
 import type { ID } from '../../types.js';
@@ -40,7 +40,7 @@ import {
   PostgresUnavailableError,
 } from './errors.js';
 import type { PostgresStoreConfig, ResolvedPostgresStoreConfig } from './config.js';
-import { redactConnectionString, resolveConfig } from './config.js';
+import { resolveConfig } from './config.js';
 import type { CanonicalDelta, CanonicalState } from './canonical-state.js';
 import { isDeltaEmpty } from './canonical-state.js';
 import {
@@ -63,17 +63,105 @@ export interface EstateSessionResult<T> {
   persisted: PersistResult;
 }
 
+/**
+ * The NON-SECRET identity of a connection target, exactly as `pg` resolved it.
+ *
+ * These three fields are the driver's OWN answer to "which server, which
+ * database" — read off the client `pg` built for this pool, not derived here.
+ * There is no `user` and no `password` field, and no query material, because
+ * this type exists to be PRINTED: the only things in it are the things a
+ * diagnostic needs and a credential is not.
+ */
+export interface TargetIdentity {
+  /** Host or socket directory `pg` will dial. */
+  readonly host: string;
+  /** TCP port `pg` will dial. */
+  readonly port: number;
+  /** Database `pg` will open, or `null` when the driver resolved none. */
+  readonly database: string | null;
+}
+
+/**
+ * The userinfo stand-in in a rendered target. The rendered form keeps the shape
+ * of a connection URI so an operator reads it as one, but the credential
+ * position is a CONSTANT: nothing from the connection string is ever put here,
+ * so there is nothing to redact incorrectly.
+ */
+const REDACTED_USERINFO = '<redacted>';
+
+/**
+ * What a target is called before the driver has resolved one. Reached only by a
+ * host that has never successfully built a client — no connection attempted, or
+ * a connection string the driver itself refused. It SAYS LESS rather than
+ * parsing something to say more (F-04): an unnameable target is named as
+ * unnameable.
+ */
+const UNRESOLVED_TARGET = '<target unresolved>';
+
+/** Render a target for an operator. Total, allocation-only, cannot throw. */
+function renderTarget(identity: TargetIdentity | undefined): string {
+  if (identity === undefined) return `postgresql://${REDACTED_USERINFO}@${UNRESOLVED_TARGET}`;
+  return (
+    `postgresql://${REDACTED_USERINFO}@${identity.host}:${String(identity.port)}/` +
+    `${identity.database ?? '(none)'}`
+  );
+}
+
 export class PostgresEstateHost {
   private readonly pool: Pool;
   private readonly config: ResolvedPostgresStoreConfig;
   private closed = false;
+  /**
+   * The target identity, as `pg`'s OWN connection parser resolved it.
+   *
+   * ── WHY IT IS CAPTURED AND NOT COMPUTED (sequence-110 audit, F-04) ──────
+   *
+   * `pg` constructs a `Client` for this pool whenever it needs one, and that
+   * constructor parses the connection string through `pg-connection-string` and
+   * publishes the result as `host`, `port` and `database`. The `Client` option
+   * below hands `pg` a subclass that reports those three fields and changes
+   * nothing else, so the identity this store prints is the identity the driver
+   * itself is dialling — obtained from the authority rather than reconstructed
+   * beside it.
+   *
+   * That is what makes the two sequence-110 disagreement classes — UPPERCASE
+   * parameter keys and LEADING-SLASH SOCKET forms — irrelevant BY
+   * CONSTRUCTION rather than merely handled: there is no second interpretation
+   * of the connection string in this codebase to disagree with the first, and
+   * the parameter query is not read here at all.
+   *
+   * It also costs NO extra parse and NO side effect: the parse recorded here is
+   * one `pg` performs for its own connection whether anything observes it or
+   * not. Nothing in this file calls a parser, and nothing imports one.
+   *
+   * `undefined` until `pg` first builds a client — see `UNRESOLVED_TARGET`.
+   */
+  private targetIdentity: TargetIdentity | undefined;
 
   constructor(config: PostgresStoreConfig) {
     this.config = resolveConfig(config);
+    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    const owner = this;
+    /**
+     * `pg`'s client, reporting the identity `pg` resolved. It adds no
+     * behaviour: it calls `super`, reads three fields the base constructor has
+     * already set, and returns. No statement, no connection, no I/O.
+     */
+    class IdentityReportingClient extends Client {
+      constructor(clientConfig?: string | ClientConfig) {
+        super(clientConfig);
+        owner.targetIdentity = Object.freeze({
+          host: this.host,
+          port: this.port,
+          database: this.database ?? null,
+        });
+      }
+    }
     this.pool = new Pool({
       connectionString: this.config.connectionString,
       max: this.config.maxConnections,
       connectionTimeoutMillis: this.config.connectionTimeoutMs,
+      Client: IdentityReportingClient,
     });
     // An IDLE pooled connection that the server drops (restart, admin
     // termination, network loss) emits an asynchronous `error` on the pool.
@@ -88,9 +176,35 @@ export class PostgresEstateHost {
     });
   }
 
-  /** Human-readable target, credential removed. Safe for logs and errors. */
+  /**
+   * Human-readable target, credential removed. Safe for logs and errors.
+   *
+   * THE SOLE PRODUCTION EMITTER of target identity, and it emits only
+   * `postgresql://<redacted>@<host>:<port>/<database>` — the userinfo position
+   * is the constant `<redacted>` and there is NO query string, so no part of
+   * the connection string's credential-bearing material is rendered in any
+   * form, decoded or otherwise. Nothing here inspects the connection string:
+   * the three components come from `targetIdentity`, which `pg` reported.
+   *
+   * TOTAL. It runs inside error construction (`assertOpen`, `checkout`), where
+   * throwing would replace a diagnostic with a different failure, so there is
+   * no input it can reject: a host whose identity the driver never resolved —
+   * including one built on a connection string `pg` itself refused — renders
+   * `<target unresolved>` instead of naming something it does not know.
+   */
   describeTarget(): string {
-    return redactConnectionString(this.config.connectionString);
+    return renderTarget(this.targetIdentity);
+  }
+
+  /**
+   * The structured identity `pg` resolved for this host, or `undefined` before
+   * the driver has built a client.
+   *
+   * Exposed so a proof can compare what is PRINTED against what the driver
+   * itself holds, rather than against a second parse of the connection string.
+   */
+  resolvedTarget(): TargetIdentity | undefined {
+    return this.targetIdentity;
   }
 
   /** Apply every shipped canonical migration. Idempotent. */

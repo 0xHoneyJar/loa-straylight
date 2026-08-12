@@ -4765,3 +4765,566 @@ effort did this work, under lease
 `lease-phase-50a-implementer-track-a-structural-031` (lane #122 sequence 107).
 **No** Ultracode, **no** `/batch`, **no** teams, **no** subagents, and **no**
 delegation of any kind.
+
+---
+
+## 24. Sequence-113 authority-boundary closure (F-04, F-09, F-14)
+
+### 24.1 What this section reports
+
+The sequence-110 audit of PR #136 (substrate `98ba111b733bc58181bacdc5199d4054106d6ddf`)
+**rejected** that slice and left three findings open: **F-04**, **F-09** and
+**F-14**. F-10 was recorded closed on the audited surface. PR #136 and its
+substrate are **immutable rejected substrate**: nothing in this slice edits,
+amends, reopens or re-argues them.
+
+This section reports the **replacement** implementation and its proof, produced
+under the sequence-112 replacement INITIAL packet (lane issue #122, packet
+comment `5258428117`, digest
+`sha256:5928d34110eea614f913d70831b7c3d7dacca18c1b3800079811dded132aaf3a`,
+`patch_cycle` 3), on lease
+`lease-phase-50a-implementer-authority-boundary-032` (lane sequence 113), on a
+branch cut from the exact audited substrate `98ba111`.
+
+It is an **implementation and proof report only**. It is not an audit, and it
+claims no acceptance, readiness, gate closure or merge eligibility.
+
+### 24.2 F-04 — the store names its target from the driver and transcribes no parser
+
+**The finding.** The rejected head decided what a diagnostic could safely say by
+**reproducing** `pg-connection-string`'s behaviour: its own preprocessing rules,
+its own URL-normalization assumptions, a credential-name list, case folding and
+a decoder matrix, plus a mirrored oracle that agreed with the implementation
+because it restated it. The audit's point was structural, not a missing case: a
+second parser can disagree with the first, and two disagreement classes were
+demonstrated — an **UPPERCASE parameter key** and a **LEADING-SLASH SOCKET**
+form whose host arrives in the query.
+
+**The design.** The store no longer forms an opinion about a connection string
+at all.
+
+- `src/straylight/storage/postgres/config.ts` is **597 → 89 lines**. The entire
+  transcription surface is deleted: no `pg-connection-string` reimplementation,
+  no `decodeURIComponent`/`encodeURIComponent`, no `URLSearchParams`, no
+  `new URL(`, no case folding, no credential-name list, no renderer. Its runtime
+  exports are exactly `SHIPPED_SCHEMA_VERSIONS` and `resolveConfig`, and
+  `resolveConfig` refuses a non-string or empty target with a **constant**
+  message that quotes no part of its input.
+- Target identity is taken from **the driver's own client**. `pg-pool` accepts a
+  `Client` constructor in `PoolConfig` and instantiates it, with the pool's
+  options, at connect time. `host.ts:150` supplies an
+  `IdentityReportingClient extends Client` that — after `super(clientConfig)` —
+  records `{ host, port, database }` off itself (`host.ts:139`, `host.ts:164`).
+  Those are `pg`'s **resolved** values, so the store reports what the driver
+  decided rather than what a second reader guessed. No parse is added, no
+  `fs.readFileSync` and no `process.emitWarning` is triggered, and no dependency
+  or `package.json` change is involved.
+- `describeTarget()` (`host.ts:195`) renders **only**
+  `postgresql://<redacted>@<host>:<port>/<database>` through `renderTarget`
+  (`host.ts:102`). The userinfo position is the constant `<redacted>`
+  (`host.ts:90`); there is no query string and no fragment. It is the sole
+  production emitter, is total, allocates only, and **cannot throw** — including
+  for a malformed, non-string or never-resolved target, which renders
+  `<target unresolved>` (`host.ts:99`).
+- Exactly one line in `host.ts` mentions the connection string:
+  `connectionString: this.config.connectionString,` — the hand-off to the
+  driver. That is pinned by a line-level assertion, not a count of tokens.
+
+**Direct reuse of the authoritative parser was considered and rejected.**
+`pg-connection-string.parse()` reads `sslcert`/`sslkey`/`sslrootcert` from disk
+and emits a deprecation warning for `sslmode`; `pg` does not re-export it, and
+`package.json` is forbidden. Calling it would add filesystem side effects to an
+error path. Supplying `PoolConfig.Client` reuses the **same** authority with
+**zero** added parses and **zero** added side effects, because it observes the
+parse `pg` performs for its own connection.
+
+**Which resolution of the two disagreement classes was taken: IRRELEVANT BY
+CONSTRUCTION** — for both classes, and stated here as the packet requires.
+Nothing in the store reads userinfo or the query, so there is no property of
+either for a second reader to disagree about. This is proven two ways:
+
+1. **Driver agreement, on the structured value.** For eight identity cases —
+   including the UPPERCASE key `?PASSWORD=UPPERSECRET` and the leading-slash
+   socket `postgresql:///straylight_source?host=<dir>` — `resolvedTarget()` is
+   asserted `toEqual` the identity `pg`'s **own** `new Client({connectionString})`
+   resolved, and `describeTarget()` is asserted to contain that host, port and
+   database. The oracle is the driver, not a template.
+2. **Byte-identity under credential-bearing change.** `describeTarget()` is
+   asserted **byte-identical** across **22** variants that differ from a
+   credential-free base only in userinfo and non-identity query parameters —
+   the sequence-89 encoded names (`pass%77ord`, fully encoded), the sequence-95
+   bare LF/TAB/CR normalizations, the sequence-104 form-decoded values,
+   repeated-under-a-benign-name values, unalignable queries and undecodable
+   names, the sequence-110 UPPERCASE keys, and userinfo-plus-query-plus-fragment.
+   A disagreement about material that never reaches the output cannot leak.
+
+**Failing closed without throwing** is proven over malformed inputs (bare `@`,
+a space in a parameter name, a fragment after a `+`, an invalid percent escape,
+an `sslkey` path with an `sslpassword`, a non-URI string, and `' '`): each
+renders `<target unresolved>` and none throws. A non-string target is refused by
+`resolveConfig` with no part of it in the message.
+
+**Reachability** is proven on the real error path: a genuine connection failure
+against `127.0.0.1:1` produces
+`could not acquire a connection to postgresql://<redacted>@127.0.0.1:1/…`, and
+the closed-host message uses the same emitter.
+
+**The frozen runbook claim remains true.**
+`docs/runbooks/phase-50a-postgresql-backup-restore-and-rollback.md:288-289` says
+`describeTarget()` "replaces userinfo with `<redacted>`, so an error message can
+name the target without leaking a credential." The rendered target is
+`postgresql://<redacted>@host:port/database`: the userinfo position **is** the
+constant `<redacted>` and the target **is** named. The runbook was **not**
+edited (blob `d295948c1b97ccf9c6932e400a8861ca0466f396`, unchanged), and a test
+asserts the claim against the code rather than the reverse. Two changes to the
+claim's mechanism are disclosed rather than hidden:
+
+- the redaction is no longer a **text substitution** over a connection string —
+  it is a structured identity that never contained userinfo or a query, so
+  `?password=…` no longer appears in any form; and
+- when `pg` never built a client (a target it refused, or a host closed before
+  first use), the emitter says `<target unresolved>` instead of naming a target
+  it does not know. That degradation is the sanctioned "say less" outcome and is
+  strictly safer than the claim.
+
+### 24.3 F-09 — the real host is module-private and the handle carries no alias
+
+**The finding.** On the substrate, `openBoundProofStore` returned a **frozen**
+handle that still carried the live `PostgresEstateHost` as `bound.store`, and
+`authorizedBoundStore` handed that same store back. A caller holding a
+**genuine** handle could therefore reach the store execution would run
+through — and, because `Object.freeze` is shallow with respect to what a
+*consumer* does with the value it read, a redirected alias could be presented to
+the destructive path. The gate proved something about one object while the
+destruction ran through whatever the alias pointed at.
+
+**The design** (`scripts/phase-50a/hosts.ts`).
+
+- `BoundProofStore` (`hosts.ts:549`) is `{ host } & { [BOUND_PROOF_STORE]: true }`
+  where the brand is **type-only**. There is no `store` field, no accessor, no
+  method and no closure that hands the store out.
+- `openBoundProofStore` (`hosts.ts:588`) constructs the store **itself** from the
+  descriptor's own connection string and records `{ host, store }` in a
+  module-private `WeakMap` keyed by the frozen handle (`hosts.ts:573`).
+- `isBoundProofStore` (`hosts.ts:606`) is WeakMap **membership**, so no copy,
+  spread, proxy, prototype-graft or subclass of a genuine handle qualifies and
+  nothing outside the module can mint one.
+- `authorizedBoundStore` (`hosts.ts:637`) returns a **frozen** capability whose
+  operations are `store.migrate.bind(store)`, `store.withClient.bind(store)` and
+  `store.withEstateSession.bind(store)`. A bound function does not expose its
+  receiver, so the capability names no store either.
+- Teardown is a module operation too: `closeBoundProofStore` (`hosts.ts:654`)
+  resolves the registry record and closes the store the module holds.
+- `two-host-proof.ts:286` (`emptySchema`) makes the membership test and the
+  minting **the same act** (`requireBoundStore`), so a destructive path cannot
+  check one object and then act through another, and destroys through `fixed`,
+  which the script cannot name.
+
+**What is proven.** A genuine, minted handle is scanned across its own
+properties, its own symbols and its whole prototype chain: nothing reachable is
+`instanceof PostgresEstateHost`, the reachable key set is exactly `['host']`,
+and the handle is frozen. The substrate attack is then run on that genuine
+handle — assigning `store`, and patching the minted capability — and both throw
+`TypeError`. Six derivatives (spread copy, spread-plus-`store`, `Object.create`,
+`Proxy`, `Object.setPrototypeOf({store: hostile}, genuine)`, frozen copy) are
+each refused by `isBoundProofStore`, by `authorizedBoundStore` and by
+`emptySchema` with `ProofHostRefusedError`. Finally the behavioural half: the
+genuine handle's minted `withClient` is awaited and observed to reach the
+**registry-held** store's database, with `destructiveOperations()` and
+`toolInvocations()` both empty.
+
+### 24.4 F-14 — authority is membership in a published set, and PostgreSQL enforces read-only
+
+**The finding.** The substrate certified an observed statement as read-only by
+matching a **syntactic grammar** — a projection of identifiers from an
+identifier with an optional `ORDER BY`. `SELECT actor_id FROM side_effect_view`
+satisfies that grammar exactly and would have been certified, so a read whose
+relation is a side-effecting view could have produced `proved`, `PASS` and exit
+0. Shape is not authority.
+
+**The design.**
+
+- The module that **issues** the canonical reads now **publishes** them.
+  `portability.ts:111` exports
+  `CANONICAL_SNAPSHOT_READS: readonly CanonicalRead[]` — frozen, derived from
+  the module-private `SNAPSHOT_READ_PLAN` (`portability.ts:85`) that
+  `readStoreSnapshot` **iterates** (`portability.ts:153`). Publication and
+  issuance cannot drift because they are the same array. `canonicalReadText`
+  (`portability.ts:126`) is the publisher's own normalizer, and
+  `recognizeCanonicalRead` (`portability.ts:145`) is a Map lookup keyed by it.
+  `readStoreSnapshot` fails closed if the plan does not cover a section, and
+  `compareSnapshots` derives its section list from the published set.
+- The verifier recognizes a statement only by **membership**:
+  `classifyObservedSql` (`verify-existing-restore.ts:260`) consults
+  `recognizeCanonicalRead`, then the verifier's own frozen `READ_ONLY_BOUNDARY`
+  (`verify-existing-restore.ts:203`) — the only statements it issues itself —
+  and otherwise refuses with a reason beginning `UNRECOGNIZED statement: no
+  module publishes it as one it issues`. Every verdict carries a
+  `StatementAuthority` (`verify-existing-restore.ts:123`) naming the publishing
+  module and the published entry. The identifier grammar, the `DROP|TRUNCATE`
+  denylist and the constructed `RegExp` are **gone**; unknown relations,
+  unknown operations, unobservable arguments and an empty record all fail
+  closed.
+- **PostgreSQL itself enforces the boundary.** `readSnapshotUnderReadOnlyBoundary`
+  (`verify-existing-restore.ts:397`) issues `BEGIN TRANSACTION READ ONLY`, then
+  the published reads via `readStoreSnapshot`, then `COMMIT` — or `ROLLBACK` on
+  the read's failure path, so the issued set equals the published set on every
+  path. `readEstate` (`verify-existing-restore.ts:428`) runs it through the
+  existing `withClient` seam wrapped by the observation seam.
+- The observation→proof→report→exit binding is **unchanged**: the `observeQueries`
+  Proxy (`:367`), `observedQueryProof` (`:333`), `queryProof.proved` as a
+  conjunct of `ok` (`:505`), `verificationExitCode` (`:523`) and the single
+  `process.exitCode = verificationExitCode(result);` (`:612`).
+
+**No authority was widened.** The boundary adds no privilege, no role, no
+`SET`, no `GRANT`, no `default_transaction_read_only`, no environment override,
+no new connection surface and no caller-supplied statement.
+`readSnapshotUnderReadOnlyBoundary` takes one parameter — a client — and its
+texts come only from the frozen `READ_ONLY_BOUNDARY` and the published plan;
+asserted by `length === 1`, by `Object.isFrozen`, by an executable-text scan for
+`SET`/`ROLE`/`GRANT`/`default_transaction_read_only`, by an empty
+literal-statement set, and by the verifier's environment reads being exactly
+`['VITEST']` (its script guard). The boundary is deliberately **not** placed in
+the shared `withClient`, because the destructive harness path legitimately
+issues DDL through it; widening `withClient` would have changed a seam outside
+this finding.
+
+**What is proven.** Membership recognition accepts every published read and
+every boundary phase (with the publisher and entry asserted) and refuses all
+**18** hostile statements. The issued statements are asserted equal to the
+published ones as a multiset **and** in order, and the snapshot's own section
+keys are asserted equal to the published sections. The boundary's success path
+is `[BEGIN, …reads, COMMIT]` and its failure path ends in `ROLLBACK` with no
+`COMMIT` and zero refusals. `SELECT actor_id FROM side_effect_view` is first
+shown to match the rejected grammar exactly, then shown refused, then shown to
+force `proved === false`, `ok === false` and exit 1. And live against real
+PostgreSQL, a write attempted inside the boundary is refused by the server with
+SQLSTATE **25006** (`read-only transaction`), after which the probe relation is
+confirmed absent — the DB-enforced half, taken through the existing seam.
+
+### 24.5 F-10 regression
+
+The creation → issuance → tool-target chain is unchanged and still green:
+`pg-tools.ts` is byte-identical (blob
+`c97904695661fb3601a8ed44f520bd3a548efbe7`) and `tests/phase-50a/_support.ts` is
+byte-identical (blob `aae992690e7ccc1817a213892bd43478c6b7aebb`), both of which
+remain forbidden paths and F-10 evidence. The F-10 tests — a supplied database
+name is not a parameter of issuance, a divergent tool target cannot reach a
+tool, a hand-built target cannot reach `pg_dump`/`psql`/a cluster probe, and no
+export grants authority over an independently supplied name — pass unchanged,
+and the live two-host proof derives both tool targets from the gated
+descriptors.
+
+### 24.6 Substrate-fail / fix-pass
+
+The closure suite from this branch was copied, unmodified, into a worktree
+detached at the audited substrate `98ba111` and run there:
+
+```
+$ git worktree add --detach ../sl-50a-substrate 98ba111b733bc58181bacdc5199d4054106d6ddf
+$ cp <branch>/tests/phase-50a/safety-authority-closure.test.ts tests/phase-50a/
+$ npx vitest run tests/phase-50a/safety-authority-closure.test.ts
+  Tests  25 failed | 42 passed (67)
+```
+
+Against this branch the same file is `67 passed (67)`. Each finding has a named
+reproduction that fails **on the substrate for the reason the audit gave**:
+
+| Finding | Named proof | Substrate failure |
+|---|---|---|
+| F-04 | `COUNTEREXAMPLE (F-04): the rendered target is INVARIANT under every credential-bearing change…` | `password-only userinfo: the rendered target CHANGED with credential-bearing material, so something read it: expected 'postgresql://<redacted>@<host>:1/straylight_source' to be 'postgresql://<host>:1/straylight_source'` — the substrate rendered **no userinfo position at all** for the credential-free base, and a `<redacted>@` one for the variant |
+| F-09 | `COUNTEREXAMPLE (F-09): a GENUINE handle exposes no store, so nothing can redirect it after minting` | `the genuine handle hands out its store at store: the sequence-110 alias is back: expected true to be false` |
+| F-14 | `COUNTEREXAMPLE (F-14): a read of an UNPUBLISHED relation is refused, though it satisfies the rejected grammar exactly` | `certified read-only by SHAPE: "SELECT actor_id FROM side_effect_view" is a read of a relation no module publishes, issues, or can vouch for — a bare projection from a bare identifier is not authority: expected true to be false` |
+| F-14 (consequence) | `COUNTEREXAMPLE (F-14): a destructive or unrecognized observed statement forces failure` | `certified read-only: SELECT actor_id FROM side_effect_view: expected +0 to be 1` |
+
+Two properties of these reproductions are deliberate. The **F-09** one takes a
+**genuinely minted** handle from `openBoundProofStore` and attacks *that* — not
+an unregistered fake — and it depends only on the three exports both trees
+publish, with a dual-tree teardown helper, so the substrate run fails on the
+alias assertion rather than on a missing symbol or a `TypeError` in cleanup. The
+**F-04** one asserts the invariance over the whole variant set **before** any
+narrower guard, so a tree whose rendering depends on userinfo fails on the
+dependency — the finding — rather than on the shape of whichever rendering came
+first. (That ordering was corrected during this exercise, after an earlier
+arrangement made the substrate stop at a baseline guard.)
+
+### 24.7 Structural mutations
+
+Each mutation **restores the rejected abstraction** for its finding, is caught
+by a **named** proof for the intended reason, and was reverted and re-verified.
+
+#### M1 — F-04: the diagnostic is decided by a transcription again
+
+```diff
+--- a/src/straylight/storage/postgres/host.ts
++++ b/src/straylight/storage/postgres/host.ts
+@@ -193,7 +193,11 @@ export class PostgresEstateHost {
+    * `<target unresolved>` instead of naming something it does not know.
+    */
+   describeTarget(): string {
+-    return renderTarget(this.targetIdentity);
++    // MUTATION M1 (F-04): the rejected abstraction restored. The diagnostic is
++    // decided by a TRANSCRIPTION of connection-string syntax again, instead of
++    // by the identity the driver itself resolved.
++    const raw = this.config.connectionString;
++    return raw.replace(/^(postgresql:\/\/)([^@/]*)@/i, '$1<redacted>@');
+   }
+```
+
+```
+$ npx vitest run tests/phase-50a/safety-authority-closure.test.ts \
+    -t 'INVARIANT under every credential-bearing change'
+FAIL … COUNTEREXAMPLE (F-04): the rendered target is INVARIANT under every
+credential-bearing change, so both disagreement classes are irrelevant by construction
+AssertionError: password-only userinfo: the rendered target CHANGED with
+credential-bearing material, so something read it
+- postgresql://<host>:1/straylight_source
++ postgresql://<redacted>@<host>:1/straylight_source
+  Tests  1 failed | 66 skipped (67)
+```
+
+In the output above the loopback host is written `<host>`: a committed
+connection string must carry either an angle-bracket placeholder or an
+`@`-loopback form (`tests/phase-50a/no-leak-and-neutrality.test.ts`), and the
+mutated rendering for the credential-free base had no `@` at all. The actual
+output named `127.0.0.1`.
+
+Whole-file under the mutation: `13 failed | 54 passed (67)` — the invariance
+counterexample, the interpolation and sole-emitter scans, all seven driver-
+agreement cases, the malformed-input closure and both diagnostic-reachability
+tests. **Positive control:** after `git checkout -- src/straylight/storage/postgres/host.ts`
+the working tree is clean at `cf30702` and the same named command reports
+`1 passed | 66 skipped (67)`.
+
+#### M2 — F-09: the genuine handle carries the store alias again
+
+```diff
+--- a/scripts/phase-50a/hosts.ts
++++ b/scripts/phase-50a/hosts.ts
+@@ -590,7 +590,10 @@ export function openBoundProofStore(target: ProofHost | ProofHost['name']): Boun
+   const store = new PostgresEstateHost({ connectionString: host.connectionString });
+   // The handle carries the DESCRIPTOR ONLY. There is no store on it to replace,
+   // proxy, patch or copy, so there is nothing execution could be made to follow.
+-  const bound = Object.freeze({ host }) as BoundProofStore;
++  // MUTATION M2 (F-09): the rejected abstraction restored. The GENUINE handle
++  // carries the real store again, so a caller holding a legitimately minted
++  // handle can reach — and replace — the store execution runs through.
++  const bound = Object.freeze({ host, store }) as unknown as BoundProofStore;
+   BOUND_PROOF_STORES.set(bound, Object.freeze({ host, store }));
+   return bound;
+ }
+```
+
+This is the **genuine-handle** defect: the handle is still registered, still
+frozen, still minted by the module — it simply hands its store out again.
+
+```
+$ npx vitest run tests/phase-50a/safety-authority-closure.test.ts \
+    -t 'a GENUINE handle exposes no store'
+FAIL … COUNTEREXAMPLE (F-09): a GENUINE handle exposes no store, so nothing can
+redirect it after minting
+AssertionError: the genuine handle hands out its store at store: the
+sequence-110 alias is back: expected true to be false
+  Tests  1 failed | 66 skipped (67)
+```
+
+Whole-file under the mutation: `1 failed | 66 passed (67)` — exactly the named
+counterexample. **Positive control:** after
+`git checkout -- scripts/phase-50a/hosts.ts` the tree is clean and the named
+command reports `1 passed | 66 skipped (67)`.
+
+#### M3 — F-14: the observation proof stops governing the result and the exit
+
+```diff
+--- a/scripts/phase-50a/verify-existing-restore.ts
++++ b/scripts/phase-50a/verify-existing-restore.ts
+@@ -502,7 +502,11 @@ export function decideVerification(
+   ];
+ 
+   return {
+-    ok: differences.length === 0 && brokenChains.length === 0 && queryProof.proved,
++    // MUTATION M3 (F-14): the rejected abstraction restored. The observation
++    // proof is still computed, still correct, and still reported — and it
++    // decides nothing. The verdict, and therefore the exit status, no longer
++    // depends on what the process was observed to issue.
++    ok: differences.length === 0 && brokenChains.length === 0,
+     source,
+     target,
+     differences,
+```
+
+This is a **disconnection**, not a classifier change: recognition still refuses
+`SELECT actor_id FROM side_effect_view` under the mutation; what breaks is that
+the refusal no longer reaches the verdict or the exit status.
+
+```
+$ npx vitest run tests/phase-50a/safety-authority-closure.test.ts \
+    -t 'the EXIT STATUS is a function of the observation proof and of nothing else'
+FAIL … the EXIT STATUS is a function of the observation proof and of nothing else
+AssertionError: the observation proof does not reach the exit status: an UNPROVED
+record still exited 0, so the verdict is disconnected from what was issued:
+expected +0 to be 1
+  Tests  1 failed | 66 skipped (67)
+```
+
+Whole-file under the mutation: `3 failed | 64 passed (67)` — the binding proof
+and the two F-14 counterexamples, whose exit-1 consequence is asserted. The
+**semantic** read-authority refusal is proven **separately**, by the
+unpublished-relation counterexample that fails on the substrate for the
+membership reason and passes under this mutation's classifier. **Positive
+control:** after `git checkout -- scripts/phase-50a/verify-existing-restore.ts`
+the tree is clean and the full file reports `67 passed (67)`.
+
+One test change was made during this exercise and is disclosed: the binding
+assertion carried no message, so its failure read `expected +0 to be 1`. A
+message was added naming the defect. No assertion was weakened, removed or
+made conditional; every strengthening in this slice is additive.
+
+### 24.8 Oracle independence
+
+- **F-04.** The oracle is `pg`'s own `new Client({ connectionString })` —
+  constructing a client neither connects nor issues anything — and the
+  comparison is on the **structured** identity, not on a rendered string. The
+  implementation obtains its identity from a *subclass instance the pool builds*;
+  the test obtains its expectation from a *separate client the test builds*. The
+  invariance half restates no rule at all: it asserts byte-equality of the
+  emitter's output across inputs. Nothing in the suite reproduces a
+  preprocessing rule, a decoder, a case-folding rule or a credential-name list.
+- **F-09.** The oracle is a **genuine** `openBoundProofStore` handle plus
+  JavaScript's own reachability (own properties, own symbols, prototype chain)
+  and `instanceof PostgresEstateHost`. It does not restate the registry.
+- **F-14.** The oracle obtains the authorized statements from the **publisher**
+  (`CANONICAL_SNAPSHOT_READS`, `canonicalReadText`, `READ_ONLY_BOUNDARY`) and
+  compares them against what the real seam **observed**. The suite contains no
+  copy of a canonical read text and no second normalizer; the only SQL literals
+  it states are the hostile statements it expects to be refused.
+
+### 24.9 Scope and preservation
+
+**Ten** paths differ from the substrate, all inside the packet's eleven
+`allowed_paths`; every one of the 52 `forbidden_paths` is untouched:
+
+```
+src/straylight/storage/postgres/{config,host,portability,index}.ts
+scripts/phase-50a/{hosts,two-host-proof,verify-existing-restore}.ts
+tests/phase-50a/{safety-authority-closure,postgres-two-host-portability}.test.ts
+docs/PHASE-50A-…-IMPLEMENTATION-AND-PROOF.md   (this pure end-of-file append)
+```
+
+- `git diff --name-status 98ba111 HEAD` reports **ten `M` entries and nothing
+  else**: no additions, no deletions, no renames.
+- The substrate tree has **661** file-like entries (660 blobs plus the `.loa`
+  gitlink `207639f9f48e307b0a373281ccdd3a379ba0eaf4`); HEAD has **661**, the
+  same set of paths with no addition or removal; **ten** differ and the
+  remaining **651** are identical by mode, type and object id — including the
+  `.loa` gitlink, which is unchanged.
+
+  The complement is stated as a *computed* number here, not a remembered one:
+  `661 − 10 = 651`. An earlier cycle of this document recorded 652 against a
+  659-entry base (see the correction at §*Correction — the unchanged-entry
+  count is 651, not 652*), so the arithmetic is spelled out deliberately. The
+  check enumerates `git ls-tree -r -t --full-tree` for both refs and compares
+  the `(mode, type, object)` triple per path; it does not infer the complement
+  from the diff.
+- Pinned blobs unchanged: `scripts/phase-50a/pg-tools.ts`
+  `c97904695661fb3601a8ed44f520bd3a548efbe7`; `tests/phase-50a/_support.ts`
+  `aae992690e7ccc1817a213892bd43478c6b7aebb`;
+  `tests/phase-31f-operator-recall-wedge-demo.test.ts`
+  `820221ec773cdd24fdd9e386aaaf06a4a17c5206`;
+  `docs/runbooks/phase-50a-postgresql-backup-restore-and-rollback.md`
+  `d295948c1b97ccf9c6932e400a8861ca0466f396`.
+- The two in-file preserved blocks are asserted byte-identical by test, located
+  by first line: the **F-01** seam block (81 lines, 4308 B,
+  `sha256:43cfce3c…`) and the **F-14/F-15** runbook block (3442 B,
+  `sha256:8773f4fa…`).
+- This document's prefix is preserved exactly: **285033** bytes,
+  `sha256:a69e9210f28983b5bfa7c5b602b21b5954de15f31e46a0b73e0ed26b9de98d0c`.
+  Section 24 is appended after it and nothing before it was edited.
+- No `package.json`, `package-lock.json`, `tsconfig*`, workflow, migration,
+  `docker-compose.phase-50a.yml`, `.straylight/`, ADR, runbook, `.loa`,
+  `.claude/` or sibling-repository change. No credential, provider or
+  living-estate access; the only databases touched are the two disposable
+  loopback harness instances.
+- The prior `config.ts` export-surface pin was explicitly released by the
+  packet; its replacement still pins a **closed, checked** surface — exactly
+  `SHIPPED_SCHEMA_VERSIONS` and `resolveConfig`, asserted by deep equality.
+
+### 24.10 Verification
+
+Run on this branch at the final tree, with the disposable two-host harness up:
+
+| Check | Command | Result |
+|---|---|---|
+| Types | `npm run typecheck` | clean |
+| Build | `npm run build` | 30 `dist-types` declarations, no PostgreSQL declaration |
+| Closure suite | `npx vitest run tests/phase-50a/safety-authority-closure.test.ts` | **67 passed (67)** |
+| Phase 50A, live | `npm run phase-50a:test` | **16 files, 384 passed (384)** |
+| Whole repository | `npm test` | **90 files, 2343 passed, 151 skipped**, exit 0 |
+| Control plane | `npm run control-plane:validate` | all checks passed |
+| Control plane | `npm run control-plane:test` | **29 files, 1025 passed** |
+| Artifact / no-leak | `npm run phase-50a:verify-artifact` | **PASS — C1..C9 hold** |
+| Two-host proof | `npm run phase-50a:proof` | **PASS** (distinct clusters, digests equal, chains verify, cold load, governed recall, continued write) |
+| Verifier, live PASS | `vite-node scripts/phase-50a/verify-existing-restore.ts --source … --target …` | exit **0**, `observed 20 / recognized 20` |
+| Verifier, live MISMATCH | same, against the diverged replacement | exit **1**, differences reported, source untouched |
+| Whitespace | `git diff --check` | clean (see the note below on the two-ref form) |
+
+**On the whitespace check.** The fixed proof schedule's `no-whitespace-damage`
+entry is `git diff --check`, which compares the working tree to the index; the
+tree is clean, so it passes. Run in its *two-ref* form,
+`git diff --check 98ba111 HEAD` reports exactly one line —
+this document's line 5143, inside the fenced §24.7 quotation of mutation M3's
+diff. That line is a unified-diff **context marker for a blank source line**: a
+single space, which is what `git diff` itself emits and what the quoted diff
+needs in order to remain a faithful, appliable record of the mutation. It was
+left byte-exact deliberately, in preference to editing quoted evidence to
+flatter a checker. No source file in this slice carries trailing whitespace.
+
+The live verifier's `20` observed statements are `2 × (8 published reads +
+BEGIN + COMMIT)`, all recognized by membership — the F-14 authority and the
+read-only boundary exercised end-to-end against real PostgreSQL. Its target
+lines read `postgresql://<redacted>@127.0.0.1:55432/straylight_source`, the
+F-04 rendering, on a real diagnostic surface.
+
+### 24.11 Residual limits
+
+- **Driver error text is still the driver's.** `withClient`'s failure message
+  interpolates the driver's own error after naming the target. For a
+  connection-string-supplied `sslkey` path that does not exist, `pg`'s `ENOENT`
+  text echoes that path. This is pre-existing, untouched by this slice, and
+  outside F-04 — which is about what *this* code renders. It is recorded here
+  because it is the one place a connection-string-derived string can still reach
+  a diagnostic.
+- **`<target unresolved>` is a real degradation** in naming power for hosts that
+  never built a client, accepted deliberately in preference to guessing.
+- **The read-only boundary is proven on the verification path only.** The
+  destructive harness path legitimately issues DDL through `withClient`, so the
+  boundary was not placed there; widening that seam is outside this packet.
+- **DB-backed proofs require the harness.** Without `npm run phase-50a:up`, the
+  nine DB-backed Phase 50A files fail closed with an unreachable-host error
+  rather than passing vacuously.
+- **Nothing here speaks to production.** ADR-049Q §12's pre-production
+  obligations — durability, failover, version pinning, network isolation,
+  tenancy boundary, availability, incident recovery, and backup/restore against
+  any real deployment — remain unproven, as §23 already recorded.
+
+### 24.12 Standing scope statement
+
+This section reports **implementation and proof** for three findings (F-04,
+F-09, F-14) and a regression statement for a fourth (F-10). It is **not an
+audit**. It makes no claim that anything is accepted.
+
+No provider, production, living-estate, sibling-repository or external-API
+authority is claimed. No Tracks B/C/D work, no Phase 50B progression, no
+control-plane change, no workflow / package / dependency / lockfile change, no
+gate closure, no MVP-2 closure, and no acceptance, readiness or merge claim —
+closing these findings does not make any pull request merge-eligible. Merge
+remains **operator-only** (`operator:eileen`, ADR-049 §6). PR #136 and the
+substrate `98ba111` remain immutable rejected substrate. F-01 and F-15 remain
+preserved as closed absent new regression evidence. The audit of this slice is
+Codex's; the implementer does not audit its own work.
+
+**Implementation provenance.** Exactly **one** Claude agent at extra-high
+effort did this work, under lease
+`lease-phase-50a-implementer-authority-boundary-032` (lane #122 sequence 113).
+**No** Ultracode, **no** `/batch`, **no** teams, **no** subagents, and **no**
+delegation of any kind.

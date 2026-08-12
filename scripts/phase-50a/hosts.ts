@@ -514,13 +514,40 @@ export function authorizedToolTarget(
  * The handle is OPAQUE. It carries no brand property and no symbol: possession
  * is recorded in `BOUND_PROOF_STORES`, a module-private WeakMap, so a caller
  * holding a genuine handle cannot copy its keys onto an object of their own and
- * cannot construct one at all. And `authorizedBoundStore` returns the store FROM
- * THE REGISTRY rather than off the handle, so even a spread of a genuine handle
- * with a substituted `store` field is both unregistered and unused.
+ * cannot construct one at all.
+ *
+ * ── AND THE STORE NEVER LEAVES THIS MODULE (sequence-110 audit, F-09) ─────
+ *
+ * The previous handle was `Object.freeze({ host, store })` and the registry held
+ * THAT SAME `store` reference, so "the store from the registry" and `bound.store`
+ * were the identical object. The registry lookup was therefore not a boundary at
+ * all: a caller holding a genuine, registered, frozen handle could reach the real
+ * `PostgresEstateHost` and — `Object.freeze` protects the handle's fields, not the
+ * store's — assign `genuine.store.withClient = <hostile>` AFTER minting, at which
+ * point the destructive path resolved the registry, got that same store, and
+ * issued `DROP SCHEMA public CASCADE` through the replacement. Nothing about the
+ * gate had been bypassed; the gate simply handed back a mutable alias. A
+ * capability is only as bounded as its widest reachable alias, and the handle
+ * published a fully mutable one.
+ *
+ * So the handle no longer carries the store IN ANY FORM: no `store` field, no
+ * accessor, no method that returns it, no closure that hands it out. The real
+ * `PostgresEstateHost` exists in exactly two places, both module-private — the
+ * local inside `openBoundProofStore` and the WeakMap VALUE — and no exported
+ * symbol of this module returns it.
+ *
+ * What a consumer gets instead is `authorizedBoundStore(bound)`: a FRESH frozen
+ * capability, minted per call, whose operations are the store's own methods
+ * ALREADY BOUND to the store. Nothing reachable from it can be made to point
+ * elsewhere — a bound function does not expose its receiver, freezing refuses
+ * field replacement, and a mutation, proxy, copy, spread or subclass of a handle
+ * is not what a destructive consumer acts on, because that consumer mints its OWN
+ * capability from the handle and an altered handle is not in the registry.
+ *
+ * Teardown is a module operation for the same reason: `closeBoundProofStore`.
  */
 export interface BoundProofStore {
   readonly host: ProofHost;
-  readonly store: PostgresEstateHost;
   /**
    * TYPE-ONLY brand. `declare const` is erased at runtime, so this property
    * exists in the type system and NOWHERE on the object — there is nothing for
@@ -530,6 +557,18 @@ export interface BoundProofStore {
 }
 
 declare const BOUND_PROOF_STORE: unique symbol;
+
+/**
+ * The operations a bound store authorizes, as functions ALREADY BOUND to the
+ * store this module constructed. This is the whole of what a consumer may do; the
+ * store object itself is not part of it and is not obtainable from it.
+ */
+export interface AuthorizedBoundStore {
+  readonly host: ProofHost;
+  readonly migrate: PostgresEstateHost['migrate'];
+  readonly withClient: PostgresEstateHost['withClient'];
+  readonly withEstateSession: PostgresEstateHost['withEstateSession'];
+}
 
 const BOUND_PROOF_STORES = new WeakMap<
   object,
@@ -541,18 +580,17 @@ const BOUND_PROOF_STORES = new WeakMap<
  * authority over it.
  *
  * The descriptor is resolved first, so an unfixed one is refused before a store
- * is constructed and before any connection could be opened. The caller receives
- * a handle it cannot have made and cannot forge; what it may do with the store
- * is whatever `PostgresEstateHost` allows, and what a DESTRUCTIVE consumer may
- * do is bounded by `authorizedBoundStore`.
- *
- * The store is the caller's to `close()` — through `bound.store`, which is the
- * same object the registry holds.
+ * is constructed and before any connection could be opened. The caller receives a
+ * handle it cannot have made, cannot forge, and cannot read a store out of. What
+ * it may DO is `authorizedBoundStore(handle)`; what ends the store's life is
+ * `closeBoundProofStore(handle)`.
  */
 export function openBoundProofStore(target: ProofHost | ProofHost['name']): BoundProofStore {
   const host = resolveProofHost(target);
   const store = new PostgresEstateHost({ connectionString: host.connectionString });
-  const bound = Object.freeze({ host, store }) as BoundProofStore;
+  // The handle carries the DESCRIPTOR ONLY. There is no store on it to replace,
+  // proxy, patch or copy, so there is nothing execution could be made to follow.
+  const bound = Object.freeze({ host }) as BoundProofStore;
   BOUND_PROOF_STORES.set(bound, Object.freeze({ host, store }));
   return bound;
 }
@@ -569,28 +607,52 @@ export function isBoundProofStore(value: unknown): value is BoundProofStore {
   return typeof value === 'object' && value !== null && BOUND_PROOF_STORES.has(value);
 }
 
-/**
- * THE DESTRUCTIVE AUTHORITY ACCESSOR. Returns the descriptor and the store THIS
- * MODULE CONSTRUCTED for it, or throws.
- *
- * A destructive consumer must act on what comes back from here rather than on
- * the fields of the handle it was given. The distinction is the sequence-89
- * divergence case in its final form: the registry is the record of what was
- * authorized, and a handle whose fields have been replaced is not it.
- */
-export function authorizedBoundStore(
+/** The registry record for a handle, or a refusal. The ONE lookup. */
+function boundRecord(
   bound: BoundProofStore,
 ): Readonly<{ host: ProofHost; store: PostgresEstateHost }> {
-  const record = BOUND_PROOF_STORES.get(bound);
+  const record = BOUND_PROOF_STORES.get(bound as object);
   if (record === undefined) {
     throw new ProofHostRefusedError(
       'phase-50a: refusing a destructive operation that was not handed a store this module ' +
         'OPENED for a fixed harness descriptor. Obtain one from hosts.openBoundProofStore(); ' +
-        'a store handle, a self-describing imitation, a subclass and a copied handle are ' +
-        'none of them destructive authority.',
+        'a store handle, a self-describing imitation, a subclass, a proxy and a copied handle ' +
+        'are none of them destructive authority.',
     );
   }
   return record;
+}
+
+/**
+ * THE DESTRUCTIVE AUTHORITY ACCESSOR. Mints the operations THIS MODULE's store
+ * will perform, or throws.
+ *
+ * A destructive consumer acts on what comes back from here rather than on
+ * anything reachable from the handle it was given — which is no longer a
+ * discipline it must observe but the only thing available, since the handle holds
+ * no store. The returned object is FRESH and FROZEN on every call and its
+ * operations are pre-bound, so a capability that has been minted cannot be
+ * redirected afterwards by anyone, including the consumer itself.
+ */
+export function authorizedBoundStore(bound: BoundProofStore): AuthorizedBoundStore {
+  const { host, store } = boundRecord(bound);
+  return Object.freeze({
+    host,
+    migrate: store.migrate.bind(store),
+    withClient: store.withClient.bind(store),
+    withEstateSession: store.withEstateSession.bind(store),
+  });
+}
+
+/**
+ * Close the store this module opened for a handle. TEARDOWN IS A MODULE
+ * OPERATION, not something reached through an alias: the same registry lookup
+ * gates it, and the store it ends is the one the registry holds.
+ *
+ * Idempotent, because `PostgresEstateHost.close` is.
+ */
+export async function closeBoundProofStore(bound: BoundProofStore): Promise<void> {
+  await boundRecord(bound).store.close();
 }
 
 /**

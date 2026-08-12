@@ -32,6 +32,7 @@ import {
   loadKeyring,
 } from '../../fixtures/index.js';
 import {
+  CANONICAL_SNAPSHOT_READS,
   assertEstateServiceable,
   assertRestoreServiceable,
   compareSnapshots,
@@ -61,6 +62,7 @@ import {
 // grant that created it, as `ScratchDatabase#toolTarget`.
 import { toolTargetOf } from '../../scripts/phase-50a/hosts.js';
 import {
+  READ_ONLY_BOUNDARY,
   observeQueries,
   observedQueryProof,
   recordedObservations,
@@ -317,14 +319,35 @@ maybe('Phase 50A portability — export from source, restore into a different ho
         // — not a description it wrote about itself (sequence-89 F-14).
         const agreeingObservations = recordedObservations();
         const agreeingSql = agreeingObservations.map((o) => o.sql ?? '(unobservable)').join(' | ');
-        // NON-VACUITY, by count: two estate readings of eight queries each. A
-        // record that had observed nothing — the case the substrate's PASS could
-        // not distinguish — fails here.
-        expect(agreeingObservations.length, `recorded: ${agreeingSql}`).toBeGreaterThanOrEqual(16);
+        // NON-VACUITY, by count DERIVED FROM THE PUBLISHED SETS rather than
+        // written here: two estate readings, each `BEGIN TRANSACTION READ ONLY`,
+        // the published canonical reads, `COMMIT`. A record that had observed
+        // nothing — the case the substrate's PASS could not distinguish — fails
+        // here, and so does a read path that quietly stopped issuing one of them.
+        const PER_READING = CANONICAL_SNAPSHOT_READS.length + 2;
+        expect(agreeingObservations.length, `recorded: ${agreeingSql}`).toBe(2 * PER_READING);
         for (const observation of agreeingObservations) {
           expect(observation.shape, `unobservable query in: ${agreeingSql}`).toBe('text');
           expect(observation.verdict.recognized, `unrecognized in: ${agreeingSql}`).toBe(true);
-          expect(observation.sql).toMatch(/\bSELECT\b/i);
+          if (!observation.verdict.recognized) continue;
+          // AUTHORITY, NOT SHAPE (sequence-110 F-14): every statement issued
+          // against a LIVE server names the module that publishes it and the
+          // symbol that authorizes it. Nothing was accepted for resembling a read.
+          expect(observation.verdict.authority.published, `in: ${agreeingSql}`).toMatch(
+            /^(?:CANONICAL_SNAPSHOT_READS|READ_ONLY_BOUNDARY)$/,
+          );
+        }
+        // The reads really did run INSIDE the boundary, on the live path: the
+        // first and last statement of each reading are the published boundary
+        // phases, and every statement between them is a published read.
+        const liveSql = agreeingObservations.map((o) => (o.sql ?? '').replace(/\s+/g, ' ').trim());
+        const publishedReadText = CANONICAL_SNAPSHOT_READS.map((r) =>
+          r.sql.replace(/\s+/g, ' ').trim(),
+        );
+        for (const offset of [0, PER_READING]) {
+          expect(liveSql[offset]).toBe(READ_ONLY_BOUNDARY.begin);
+          expect(liveSql[offset + PER_READING - 1]).toBe(READ_ONLY_BOUNDARY.commit);
+          expect(liveSql.slice(offset + 1, offset + PER_READING - 1)).toEqual(publishedReadText);
         }
         // THE PROOF THE VERDICT USED, not a separate re-derivation: the report
         // carries it, so what governed `ok` is what is asserted here.
@@ -403,9 +426,7 @@ maybe('Phase 50A portability — export from source, restore into a different ho
         const mismatchSql = recordedObservations()
           .map((o) => o.sql ?? '(unobservable)')
           .join(' | ');
-        expect(mismatching.queryProof.observed, `recorded: ${mismatchSql}`).toBeGreaterThanOrEqual(
-          16,
-        );
+        expect(mismatching.queryProof.observed, `recorded: ${mismatchSql}`).toBe(2 * PER_READING);
         expect(mismatching.queryProof.refusals, `recorded: ${mismatchSql}`).toEqual([]);
         expect(mismatching.queryProof.proved).toBe(true);
 
@@ -416,6 +437,82 @@ maybe('Phase 50A portability — export from source, restore into a different ho
         expect(sourceUntouched.value.assertions).toBe(2);
       } finally {
         await target.dispose();
+        await source.dispose();
+      }
+    },
+    120_000,
+  );
+
+  it(
+    'F-14: POSTGRESQL ITSELF refuses a write inside the published read-only boundary',
+    async () => {
+      // ── THE BOUNDARY, PROVEN BY THE SERVER (sequence-110 F-14) ──────────
+      //
+      // The observation proof says what the verifier ISSUED. This says what the
+      // DATABASE WOULD DO about a write regardless of what was issued: inside
+      // `BEGIN TRANSACTION READ ONLY`, PostgreSQL rejects a write with SQLSTATE
+      // 25006 `read_only_sql_transaction`. Together with the issuance-order proof
+      // in `safety-authority-closure.test.ts` — which shows the canonical reads
+      // run between exactly these two published statements — the verifier's reads
+      // are non-destructive by SERVER ENFORCEMENT and not only by classification.
+      //
+      // NO AUTHORITY IS WIDENED to prove it. The boundary statement is the
+      // PUBLISHED one (`READ_ONLY_BOUNDARY.begin`), not a spelling written here;
+      // the connection is the same loopback harness connection every other proof
+      // in this file uses, on a scratch database this harness created; no role,
+      // privilege, connection parameter or environment override is introduced;
+      // and the write attempted is a `CREATE TABLE`, so even a total failure of
+      // the boundary leaves nothing behind — the transaction is rolled back on
+      // both paths, and the row counts are re-checked afterwards.
+      const source = await openScratchDatabase(sourceHost(), 'read-only-boundary');
+      try {
+        await source.host.withEstateSession(ESTATE_ID, (storage) => {
+          expect(newStore(storage).admit(observation('boundary probe'), NOW).ok).toBe(true);
+        });
+
+        const refusal = await source.host.withClient(async (client) => {
+          await client.query(READ_ONLY_BOUNDARY.begin);
+          try {
+            // A read INSIDE the boundary still works — otherwise a refusal below
+            // would prove only that the connection was broken.
+            const inside = await client.query('SELECT 1 AS one');
+            expect(inside.rows.length).toBe(1);
+            let code: string | undefined;
+            let message = '';
+            try {
+              await client.query('CREATE TABLE straylight_read_only_probe (x integer)');
+            } catch (err) {
+              code = (err as { code?: string }).code;
+              message = err instanceof Error ? err.message : String(err);
+            }
+            return { code, message };
+          } finally {
+            // UNCONDITIONAL: whichever way the write went, the transaction ends
+            // without committing, so this proof can leave nothing behind.
+            await client.query(READ_ONLY_BOUNDARY.rollback);
+          }
+        });
+
+        expect(
+          refusal.code,
+          `PostgreSQL accepted a write inside ${READ_ONLY_BOUNDARY.begin}: ${refusal.message}`,
+        ).toBe('25006');
+        expect(refusal.message).toMatch(/read-only transaction/i);
+
+        // And the estate is untouched: the probe table does not exist, and the
+        // rows that were there are still there.
+        const after = await source.host.withClient(async (client) => {
+          const probe = await client.query(
+            "SELECT to_regclass('straylight_read_only_probe') AS present",
+          );
+          return (probe.rows[0] as { present: string | null }).present;
+        });
+        expect(after, 'the rolled-back probe table survived').toBeNull();
+        const counts = await source.host.withEstateSession(ESTATE_ID, (storage) => ({
+          assertions: storage.listAssertions(ESTATE_ID).length,
+        }));
+        expect(counts.value.assertions).toBe(1);
+      } finally {
         await source.dispose();
       }
     },
