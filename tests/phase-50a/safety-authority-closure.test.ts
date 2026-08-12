@@ -319,7 +319,30 @@ describe('Phase 50A F-01 — the Phase 31F seam preserves the exact original pro
 // is the proof that both disagreement classes are IRRELEVANT BY CONSTRUCTION —
 // not handled, not closed case by case, but unable to reach the output at all.
 
-describe('Phase 50A F-04 — the store names its target from the driver and transcribes no parser', () => {
+describe("Phase 50A F-04 — the store names its target from the caller's DECLARED descriptor, never the driver, and transcribes no parser", () => {
+  // ── SUPERSEDED AGAIN BY THE SEQUENCE-116 AUDIT ───────────────────────────
+  //
+  // The frozen preamble above records the sequence-110 closure: the redaction
+  // matrix was removed and the store named its target "from the identity the
+  // DRIVER ITSELF resolved". The sequence-116 audit REJECTED that too. `pg`'s
+  // resolution is attacker-reachable — a URI with no path database makes the
+  // USERNAME the database, a query `?host=` supplies the host, an unreadable
+  // option makes the driver quote the offending text back verbatim, and the LAST
+  // client built overwrote one mutable host-level record — so a diagnostic built
+  // from any of it prints connection-string-derived material the store cannot
+  // bound.
+  //
+  // The head resolves NOTHING from the connection. `describeTarget()` renders
+  // only the non-secret descriptor the caller declared from its own trusted
+  // configuration, or a constant unresolved identity when none was declared. The
+  // proofs below therefore turn on a NEW oracle — the caller's DECLARED
+  // descriptor — and drive connection strings that would have made `pg` resolve
+  // something different: the substrate prints pg's answer and FAILS, the head
+  // prints the declaration and PASSES. This block is rewritten for that design;
+  // the sections it keeps (the no-second-parser scans, the credential-invariance
+  // counterexample, and the fail-closed and reachability guards) are unchanged in
+  // intent and re-proved against a declared descriptor.
+
   /** The adapter boundary: every module allowed to know a connection string exists. */
   const POSTGRES_DIR = resolve(ROOT, 'src/straylight/storage/postgres');
   const storeModules = (): ReadonlyArray<{ name: string; executable: string }> =>
@@ -342,21 +365,38 @@ describe('Phase 50A F-04 — the store names its target from the driver and tran
   const ABSENT_SOCKET_DIR = '/nonexistent/straylight-absent-socket';
 
   /**
+   * A NON-SECRET target descriptor a caller declares from its own trusted
+   * configuration — structurally the store's `TrustedTargetDescriptor`. It is a
+   * LOCAL alias, not the exported type, so this file stays loadable against the
+   * substrate (which exports no such type) while it type-checks against the head
+   * (which does): the head's constructor accepts `{ target }`, and the substrate
+   * ignores the second constructor argument entirely.
+   */
+  type DeclaredTarget = { readonly host: string; readonly port: number; readonly database: string };
+
+  /**
    * Open a host and make `pg` BUILD A CLIENT for it, then hand the host back.
    *
-   * Nothing here inspects the connection string; the point is the opposite. The
-   * store learns its target only when the driver resolves one, so a proof about
-   * what the store PRINTS has to let the driver do that first. Every target used
-   * with this helper is a dead loopback port or an absent unix socket, so the
-   * acquisition MUST fail — and its failure is exactly what forces `pg` to
-   * construct the client whose resolved identity the store reports.
+   * When a `target` is declared the head names THAT and only that (F-04); when it
+   * is not, the head names a constant unresolved identity. The substrate ignores
+   * the descriptor and reports whatever `pg` resolved from the connection string
+   * — which is exactly the difference the safe-projection proofs below turn on.
+   * Every target used with this helper is a dead loopback port or an absent unix
+   * socket, so the acquisition MUST fail — and its failure is what forces `pg` to
+   * construct the client whose resolved identity the substrate reports.
    */
-  const forceResolve = async (connectionString: string): Promise<PostgresEstateHost> => {
-    const host = new PostgresEstateHost({
-      connectionString,
-      maxConnections: 1,
-      connectionTimeoutMs: 5_000,
-    });
+  const forceResolve = async (
+    connectionString: string,
+    target?: DeclaredTarget,
+  ): Promise<PostgresEstateHost> => {
+    const host = new PostgresEstateHost(
+      {
+        connectionString,
+        maxConnections: 1,
+        connectionTimeoutMs: 5_000,
+      },
+      target ? { target } : {},
+    );
     await host.withClient(async () => undefined).then(
       () => {
         throw new Error(
@@ -559,7 +599,7 @@ describe('Phase 50A F-04 — the store names its target from the driver and tran
     // The renderer is defined once and called once, and the one call is the body
     // of `describeTarget`. A second call site would be a second emitter.
     expect((hostExecutable.match(/renderTarget\(/g) ?? []).length).toBe(2);
-    expect(hostExecutable).toContain('describeTarget(): string {\n    return renderTarget(this.targetIdentity);');
+    expect(hostExecutable).toContain('describeTarget(): string {\n    return renderTarget(this.target);');
     // Every other module in the store names a target by CALLING that emitter.
     for (const { name, executable } of storeModules()) {
       if (name === 'host.ts') continue;
@@ -570,78 +610,140 @@ describe('Phase 50A F-04 — the store names its target from the driver and tran
     }
   });
 
-  // ── THE IDENTITY IS THE DRIVER'S OWN ANSWER ──────────────────────────────
+  // ── THE IDENTITY IS THE CALLER'S DECLARATION, NOT THE DRIVER'S ANSWER ─────
   //
-  // ── WHY THIS ORACLE IS INDEPENDENT (packet condition C6) ─────────────────
-  //
-  // The oracle is `pg`'s OWN `Client`, constructed by THIS TEST from the same
-  // connection string. It is not a copy of anything in `host.ts`: `host.ts`
-  // computes nothing to copy — it reads three fields off the client `pg` built
-  // for its pool. So the two sides reach the same authority by different routes
-  // (a pooled client the driver constructs for itself versus a client the test
-  // constructs directly), and the assertion is that the store reports what the
-  // driver resolved rather than something it worked out beside it.
-  //
-  // Independent source, stated: the `pg` package's published `Client` surface
-  // (`host`, `port`, `database`), which is where the connection parameters a
-  // connection actually uses are observable.
-  const IDENTITY_CASES: ReadonlyArray<{ label: string; input: string }> = [
-    { label: 'ordinary URI, no userinfo', input: `${DEAD_TARGET}/straylight_source` },
-    {
-      label: 'userinfo carrying a credential',
-      input: `${SCHEME}appuser:hunter2secret@${LOOPBACK}:1/straylight_source`,
-    },
-    {
-      label: 'credential ONLY in a query parameter',
-      input: `${DEAD_TARGET}/straylight_source?password=hunter2secret`,
-    },
-    // THE FIRST SEQUENCE-110 DISAGREEMENT CLASS, asked of the authority itself.
-    {
-      label: 'UPPERCASE parameter key',
-      input: `${DEAD_TARGET}/straylight_source?PASSWORD=UPPERSECRET`,
-    },
-    // THE SECOND. A leading-slash socket form has no authority component at all,
-    // and the driver resolves its host from a query parameter — the exact shape
-    // the substrate's transcription had no rule for.
-    {
-      label: 'LEADING-SLASH SOCKET form (host from the query)',
-      input: `${SCHEME}/straylight_source?host=${ABSENT_SOCKET_DIR}`,
-    },
-    {
-      label: 'PERCENT-ENCODED socket directory in the host position',
-      input: `${SCHEME}${encodeURIComponent(ABSENT_SOCKET_DIR)}/straylight_source`,
-    },
-    { label: 'IPv6 loopback literal', input: `${SCHEME}[::1]:1/straylight_source` },
-  ];
+  // These four tests replace the rejected DRIVER-AGREEMENT oracle. That oracle
+  // constructed `pg`'s own `Client` and asserted the store AGREED with what pg
+  // resolved — precisely the property the sequence-116 audit rejected, because
+  // pg's resolution is attacker-reachable (see the superseding note above). The
+  // head reads nothing back from pg, so there is no pg answer to agree with and
+  // no second `Client` oracle to mirror. The oracle is now the caller's DECLARED
+  // descriptor, and each test drives a connection string that would have made pg
+  // resolve something DIFFERENT: the substrate prints pg's answer and fails here,
+  // the head prints the declaration and passes. Together they close the four
+  // sequence-116 channels — username→database fallback, query-controlled host,
+  // raw sslkey/driver-error text, and mutable last-client identity.
 
-  for (const { label, input } of IDENTITY_CASES) {
-    it(`DRIVER AGREEMENT: the store reports the identity pg resolved — ${label}`, async () => {
-      // The oracle. Constructing a client does not connect and issues nothing.
-      const { Client } = await import('pg');
-      const oracle = new Client({ connectionString: input });
-      const expected = {
-        host: oracle.host,
-        port: oracle.port,
-        database: oracle.database ?? null,
-      };
+  /** The caller's own trusted, non-secret account of where a proof host connects. */
+  const DECLARED: DeclaredTarget = { host: LOOPBACK, port: 55432, database: 'straylight_source' };
 
-      const host = await forceResolve(input);
+  it('SAFE PROJECTION (F-04): describeTarget names the DECLARED descriptor, never what pg resolved (username→database fallback and query-supplied host)', async () => {
+    // The string dials elsewhere and carries a credential: userinfo, NO path
+    // database (so pg would fall the database back to the username `leakydbname`),
+    // and a query `?host=` pg would resolve as the host. None of pg's answer may
+    // reach the diagnostic — only the caller's declared descriptor may.
+    const host = await forceResolve(
+      `${SCHEME}leakydbname:realsecret@${LOOPBACK}:1/?host=${ABSENT_SOCKET_DIR}`,
+      DECLARED,
+    );
+    try {
+      const described = host.describeTarget();
+      // The declared descriptor, in full.
+      expect(described, 'the declared port must be named').toContain(String(DECLARED.port));
+      expect(described, 'the declared database must be named').toContain(DECLARED.database);
+      // NOT the database pg would have resolved from the username (channel 1).
+      expect(
+        described,
+        'the username→database fallback leaked into the diagnostic',
+      ).not.toContain('leakydbname');
+      // NOT the host pg would have resolved from the query (channel 2).
+      expect(described, 'the query-supplied host leaked into the diagnostic').not.toContain(
+        ABSENT_SOCKET_DIR,
+      );
+      expectNoParserSensitiveMaterial(described, 'safe projection');
+      expectUnrecoverable(described, 'realsecret', 'safe projection');
+    } finally {
+      await host.close();
+    }
+  });
+
+  it('SAFE PROJECTION (F-04): the diagnostic is OPERATION-SCOPED — it does not change as clients come and go (no mutable last-client state)', async () => {
+    // The rejected mechanism stored the LAST client's resolved identity in one
+    // mutable host-level record, so the identity printed was whichever client
+    // connected most recently (channel 4). Here the descriptor is fixed at
+    // construction, so the SAME identity is named before any client is built and
+    // after one is — and it names the declaration, not what that client resolved.
+    const host = new PostgresEstateHost(
+      {
+        connectionString: `${SCHEME}otheruser:realsecret@${LOOPBACK}:1/other_db`,
+        maxConnections: 1,
+        connectionTimeoutMs: 5_000,
+      },
+      { target: DECLARED },
+    );
+    try {
+      const before = host.describeTarget();
+      await host.withClient(async () => undefined).catch(() => undefined);
+      const after = host.describeTarget();
+      expect(
+        after,
+        'the diagnostic changed after a client was built — it is last-client state, not operation-scoped',
+      ).toBe(before);
+      expect(before).toContain(String(DECLARED.port));
+      expect(before).toContain(DECLARED.database);
+      expect(before, 'a resolved database leaked into the diagnostic').not.toContain('other_db');
+      expect(before, 'a resolved user leaked into the diagnostic').not.toContain('otheruser');
+    } finally {
+      await host.close();
+    }
+  });
+
+  it('SAFE PROJECTION (F-04): a driver failure is reported as a typed category, never the raw driver error text (surface)', () => {
+    // The rejected mechanism built connection_failed and transaction_aborted
+    // messages out of the raw `err.message`, which for a driver error carries an
+    // sslkey/sslcert FILE PATH, an invalid option quoted back, or a resolved host
+    // name (channel 3). The head borrows only a closed-shape SQLSTATE code and
+    // otherwise collapses to a constant — asserted here on the executable text.
+    const hostExecutable = executableText(readFileSync(resolve(POSTGRES_DIR, 'host.ts'), 'utf8'));
+    // The failure category is the typed helper, not a message interpolation.
+    expect(hostExecutable).toContain('driverFailureCategory(err)');
+    // The SQLSTATE gate is the closed five-character shape and nothing else.
+    expect(hostExecutable).toContain('/^[0-9A-Z]{5}$/');
+    // No raw driver message is described into any diagnostic.
+    expect(
+      hostExecutable.includes('${describe(err)}'),
+      'host.ts interpolates the raw driver error text into a diagnostic',
+    ).toBe(false);
+    expect(
+      /\bdescribe\(\s*err\s*\)/.test(hostExecutable),
+      'host.ts describes the raw driver error',
+    ).toBe(false);
+  });
+
+  it('SAFE PROJECTION (F-04): an sslkey/driver failure surfaces a typed category and never the offending file path (behavioral)', async () => {
+    // `pg` READS the sslkey file while constructing its client, so an absent path
+    // throws a Node ENOENT whose message NAMES the path. The rejected mechanism
+    // interpolated that message; the head reports a typed category only, so
+    // neither the path nor the passphrase reaches the operator (channel 3).
+    const host = new PostgresEstateHost(
+      {
+        connectionString: `${SCHEME}${LOOPBACK}:1/straylight_source?sslkey=/keys/privatesecret.pem&sslpassword=leakedsecret`,
+        maxConnections: 1,
+        connectionTimeoutMs: 5_000,
+      },
+      { target: DECLARED },
+    );
+    try {
+      let message = '';
       try {
-        // AGREEMENT, on the structured value — not on a rendered string, which
-        // would only prove this test can reproduce a template.
-        expect(host.resolvedTarget()).toEqual(expected);
-
-        // REACHABILITY: that identity is what an operator is shown.
-        const described = host.describeTarget();
-        expect(described).toContain(String(expected.host));
-        expect(described).toContain(String(expected.port));
-        expect(described).toContain(String(expected.database));
-        expectNoParserSensitiveMaterial(described, `describeTarget ${label}`);
-      } finally {
-        await host.close();
+        await host.withClient(async () => undefined);
+        throw new Error('phase-50a: the sslkey target was expected to refuse the connection');
+      } catch (err) {
+        message = err instanceof Error ? err.message : String(err);
       }
-    });
-  }
+      expect(message).toContain('could not acquire a connection');
+      // The raw driver error — here an ENOENT naming the private key file — is
+      // absent in every reading, as is the passphrase.
+      expect(message, 'the offending sslkey path leaked into the diagnostic').not.toContain(
+        '/keys/privatesecret.pem',
+      );
+      expect(message, 'the raw Node error code leaked into the diagnostic').not.toContain('ENOENT');
+      expectUnrecoverable(message, '/keys/privatesecret.pem', 'sslkey driver failure');
+      expectUnrecoverable(message, 'leakedsecret', 'sslkey driver failure');
+    } finally {
+      await host.close();
+    }
+  });
 
   // ── THE COUNTEREXAMPLE: IRRELEVANT BY CONSTRUCTION ───────────────────────
   //
@@ -802,7 +904,7 @@ describe('Phase 50A F-04 — the store names its target from the driver and tran
   ];
 
   it('COUNTEREXAMPLE (F-04): the rendered target is INVARIANT under every credential-bearing change, so both disagreement classes are irrelevant by construction', async () => {
-    const base = await forceResolve(`${DEAD_TARGET}/straylight_source`);
+    const base = await forceResolve(`${DEAD_TARGET}/straylight_source`, DECLARED);
     let baseline: string;
     try {
       baseline = base.describeTarget();
@@ -823,7 +925,7 @@ describe('Phase 50A F-04 — the store names its target from the driver and tran
     const rendered: { label: string; described: string; secrets: readonly string[] }[] = [];
     for (const variant of CREDENTIAL_VARIANTS) {
       const input = `${SCHEME}${variant.userinfo}${LOOPBACK}:1/straylight_source${variant.query}`;
-      const host = await forceResolve(input);
+      const host = await forceResolve(input, DECLARED);
       try {
         rendered.push({
           label: variant.label,
@@ -949,11 +1051,14 @@ describe('Phase 50A F-04 — the store names its target from the driver and tran
     // The finding is only closed if this is what actually reaches an operator.
     // `PostgresUnavailableError` from a failed acquisition is that surface — the
     // message is built from `describeTarget()` and nothing else.
-    const host = new PostgresEstateHost({
-      connectionString: `${SCHEME}appuser:hunter2secret@${LOOPBACK}:1/straylight_source?password=secondsecret&application_name=straylight`,
-      maxConnections: 1,
-      connectionTimeoutMs: 5_000,
-    });
+    const host = new PostgresEstateHost(
+      {
+        connectionString: `${SCHEME}appuser:hunter2secret@${LOOPBACK}:1/straylight_source?password=secondsecret&application_name=straylight`,
+        maxConnections: 1,
+        connectionTimeoutMs: 5_000,
+      },
+      { target: DECLARED },
+    );
     try {
       let message = '';
       try {
@@ -1017,6 +1122,7 @@ describe('Phase 50A F-04 — the store names its target from the driver and tran
 
     const host = await forceResolve(
       `${SCHEME}appuser:hunter2secret@${LOOPBACK}:1/straylight_source?password=secondsecret`,
+      DECLARED,
     );
     try {
       const described = host.describeTarget();
@@ -1056,13 +1162,15 @@ describe('Phase 50A F-04 — the store names its target from the driver and tran
     const lines = selfText.split('\n');
     const sha = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
 
-    // THE F-01 BLOCK — 81 lines, wherever it now begins.
+    // THE F-01 BLOCK — 106 lines: the F-01 describe, the blank line after it, and
+    // the frozen F-04 preamble the packet pins together with it, wherever they now
+    // begin. The rewritten F-04 body opens AFTER this region, so the pin holds.
     const f01Start = lines.findIndex((line) => line.startsWith("describe('Phase 50A F-01"));
     expect(f01Start, 'the F-01 block must still be present').toBeGreaterThan(0);
-    const f01 = lines.slice(f01Start, f01Start + 81).join('\n') + '\n';
-    expect(Buffer.byteLength(f01, 'utf8'), 'F-01 block byte count').toBe(4308);
+    const f01 = lines.slice(f01Start, f01Start + 106).join('\n') + '\n';
+    expect(Buffer.byteLength(f01, 'utf8'), 'F-01 block byte count').toBe(5854);
     expect(sha(f01), 'F-01 block digest').toBe(
-      '43cfce3c3920d94bb4305780ef5f550d2d337865fdc7f303b3b5e3dba7f0bf70',
+      '7cb6648fa6a292321234ff9e4f32feeccb28224e0290ee0422cd4b83adc0f6c4',
     );
 
     // THE F-14/F-15 RUNBOOK BLOCK — first line to EOF.
@@ -1623,9 +1731,17 @@ describe('Phase 50A F-09 — every destructive proof target is refused unless it
         .catch((err: unknown) => {
           observed = err instanceof Error ? err.message : String(err);
         });
+      // The minted operation ran the REGISTRY's own store, not the hostile
+      // object. With a harness up it acquires a connection and the callback runs;
+      // with none up it fails in the store's OWN acquisition path. The head's
+      // store is descriptor-less (F-04), so a failure names `<target unresolved>`
+      // rather than the database — the fact that matters is that the store's own
+      // `withClient`/`checkout` produced the outcome, which `touched` (asserted
+      // empty below) confirms was never the hostile object.
       expect(
-        observed.includes('registry store') || observed.includes(sourceHost().database),
-        `the minted operation did not reach the descriptor's own database: ${observed}`,
+        observed === 'acquired a connection to the registry store' ||
+          /could not acquire a connection|is closed/.test(observed),
+        `the minted operation did not reach the registry store's own acquisition path: ${observed}`,
       ).toBe(true);
 
       // OBSERVED: nothing delegated, nothing destroyed, nothing invoked.
@@ -1635,6 +1751,127 @@ describe('Phase 50A F-09 — every destructive proof target is refused unless it
     } finally {
       await closeBound(hosts, genuine);
     }
+  });
+
+  // ── THE SEQUENCE-116 F-09 COUNTEREXAMPLE ─────────────────────────────────
+  //
+  // The sequence-110 closure made the store MODULE-PRIVATE, so a genuine handle
+  // hands out no store to redirect. The sequence-116 audit found that this was
+  // not enough: the store the minted capability runs against is a live
+  // PostgresEstateHost, and its destructive path dispatches through the class
+  // PROTOTYPE — `withClient` resolves `this.checkout()` off the prototype at call
+  // time. The prototype is a mutable, EXPORTED object, so a caller who never
+  // touches the private store can still redirect the minted operation by
+  // replacing a method on `PostgresEstateHost.prototype` AFTER minting:
+  //
+  //     const minted = authorizedBoundStore(openBoundProofStore(sourceHost()));
+  //     PostgresEstateHost.prototype.checkout = hostileCheckout;   // post-mint
+  //     await minted.withClient(cb);   // dispatches through the hostile method
+  //
+  // The head seals this with a finite mechanism: the authority-private operations
+  // are captured at module load and `PostgresEstateHost.prototype` is frozen, so
+  // a post-mint method replacement neither TAKES (the prototype refuses it) nor
+  // REDIRECTS (a captured operation's internal dispatch resolves the original).
+  //
+  // The seal is two facts and the substrate satisfies NEITHER: on the substrate
+  // the prototype is mutable, so the replacement takes (`mutated` is true); and
+  // the minted operation dispatches through it, so the hostile method is reached
+  // (`reached` is non-empty). Either fact alone fails on the substrate; both are
+  // asserted so the seal is proven structurally AND behaviourally.
+  it('COUNTEREXAMPLE (F-09): the invoked destructive behaviour is SEALED against post-mint prototype mutation', async () => {
+    resetDestructiveOperations();
+    resetToolInvocations();
+
+    const hosts = await hostsModule();
+    // INTERSECTION only: this proof must fail on the substrate for the SEAL, so
+    // it must not fail first on an export the substrate never had. Teardown goes
+    // through `closeBound`, which works on either tree.
+    expect(
+      missingExports(hosts, ['openBoundProofStore', 'authorizedBoundStore']),
+      'the destructive-authority seam is absent from this module',
+    ).toEqual([]);
+    const { openBoundProofStore, authorizedBoundStore } = hosts;
+
+    const genuine = openBoundProofStore(sourceHost());
+    const proto = PostgresEstateHost.prototype as unknown as Record<string, unknown>;
+    const originalCheckout = proto['checkout'];
+    const reached: string[] = [];
+    // A hostile `checkout`: if the minted operation ever dispatches through the
+    // prototype, it hands out a client the test controls — recording that the
+    // redirect took, and to where. On the head the prototype refuses the
+    // replacement, so this is never installed and never consulted.
+    const hostileCheckout = function (this: unknown): Promise<unknown> {
+      reached.push('checkout');
+      return Promise.resolve({
+        client: {
+          query: async (): Promise<{ rows: never[] }> => {
+            reached.push('query');
+            return { rows: [] };
+          },
+          on: (): void => {},
+          removeListener: (): void => {},
+          release: (): void => {},
+        },
+        release: (): void => {},
+      });
+    };
+
+    const minted = authorizedBoundStore(genuine);
+    let mutated = false;
+    try {
+      // The post-mint redirection, attempted. On the head this throws (the
+      // prototype is frozen) and is caught; on the substrate it succeeds.
+      try {
+        Object.defineProperty(proto, 'checkout', {
+          value: hostileCheckout,
+          configurable: true,
+          writable: true,
+        });
+        mutated = true;
+      } catch {
+        mutated = false;
+      }
+
+      // Invoke the minted destructive-authority operation. On the head the
+      // captured operation runs against the private, descriptor-less store and
+      // its internal `checkout` dispatch resolves the ORIGINAL (the replacement
+      // never took), so the hostile method is never reached and the acquisition
+      // simply fails against the real store. On the substrate it dispatches
+      // through the installed hostile method.
+      await (minted as { withClient: (b: () => Promise<void>) => Promise<void> })
+        .withClient(async () => undefined)
+        .catch(() => undefined);
+
+      expect(
+        mutated,
+        'PostgresEstateHost.prototype accepted a post-mint method replacement — the invoked behaviour is not sealed',
+      ).toBe(false);
+      expect(
+        reached,
+        'a post-mint prototype mutation redirected the minted operation to a hostile method',
+      ).toEqual([]);
+    } finally {
+      // Restore ONLY if the replacement took (substrate); on the head the
+      // prototype is frozen and was never changed.
+      if (mutated) {
+        Object.defineProperty(proto, 'checkout', {
+          value: originalCheckout,
+          configurable: true,
+          writable: true,
+        });
+      }
+      await closeBound(hosts, genuine);
+    }
+
+    // The structural seal, stated directly: the prototype is frozen at module
+    // load, which is the property the substrate lacks.
+    expect(
+      Object.isFrozen(PostgresEstateHost.prototype),
+      'PostgresEstateHost.prototype is mutable, so a minted capability can be redirected through it',
+    ).toBe(true);
+    // Nothing destructive ran on either tree's path through this proof.
+    expect(destructiveOperations()).toEqual([]);
+    expect(toolInvocations()).toEqual([]);
   });
 
   it('the destructive authority cannot be OPENED for anything but a fixed descriptor', async () => {
@@ -2186,6 +2423,72 @@ describe('Phase 50A F-14 — restore verification is NON-DESTRUCTIVE and detects
     return boundary as Readonly<Record<BoundaryPhase, string>>;
   };
 
+  // ── OBJECT BINDING (F-14): CATALOG FACTS, NEVER SQL TEXT ──────────────────
+  //
+  // The object-binding decision is over catalog facts PostgreSQL's own resolver
+  // reports, so the proofs below construct those facts directly. `requested` names
+  // come from the publisher's own `CANONICAL_BINDING_RELATIONS`; the proofs never
+  // restate a relation name of their own.
+
+  /** One row of the object-binding read, as the catalog would report it. */
+  type CatalogRow = {
+    requested: string;
+    resolved: boolean;
+    relkind: string | null;
+    relowner: string | number | null;
+    relnamespace: string | number | null;
+    namespace: string | null;
+  };
+
+  /**
+   * Catalog facts under which every canonical relation binds: each resolves to a
+   * base table (`relkind 'r'`) in ONE namespace owned by ONE role — the trusted
+   * shape the binding gate demands. A mutated copy of these is how each PURE
+   * counterexample expresses a single substitution.
+   */
+  const trustedBindingRows = (relations: readonly string[]): CatalogRow[] =>
+    relations.map((relation) => ({
+      requested: relation,
+      resolved: true,
+      relkind: 'r',
+      relowner: '10',
+      relnamespace: '2200',
+      namespace: 'public',
+    }));
+
+  /**
+   * A client that answers the object-binding read with the given catalog rows and
+   * every other statement with no rows. On a tree that issues no binding read it
+   * is exactly an inert client. `onRead`, if given, runs for each statement that
+   * is neither a boundary statement nor the binding read — so a proof can make a
+   * SNAPSHOT read fail without disturbing the binding or the boundary.
+   */
+  const bindingClient = (
+    recognizeBinding: (sql: string) => boolean,
+    rows: readonly CatalogRow[],
+    boundaryText: Readonly<Record<BoundaryPhase, string>>,
+    onRead?: () => void,
+  ): { calls: number; query: (arg: unknown) => Promise<{ rows: unknown[] }> } => {
+    const client = {
+      calls: 0,
+      query: async (arg: unknown): Promise<{ rows: unknown[] }> => {
+        client.calls += 1;
+        const sql = typeof arg === 'string' ? arg : ((arg as { text?: string })?.text ?? '');
+        if (recognizeBinding(sql)) return { rows: [...rows] };
+        if (
+          onRead !== undefined &&
+          sql !== boundaryText.begin &&
+          sql !== boundaryText.commit &&
+          sql !== boundaryText.rollback
+        ) {
+          onRead();
+        }
+        return { rows: [] };
+      },
+    };
+    return client;
+  };
+
   /**
    * Statement forms that MUST NOT be certified read-only.
    *
@@ -2604,40 +2907,58 @@ describe('Phase 50A F-14 — restore verification is NON-DESTRUCTIVE and detects
     const reads = await publishedReads();
     const norm = await publishedNormalize();
 
-    // ── SUCCESS PATH: begin, the published reads, commit ────────────────
+    // ── SUCCESS PATH: begin, [the object-binding read,] the reads, commit ─
+    //
+    // The fixed tree wraps a canonical OBJECT-BINDING read FIRST (F-14): the
+    // snapshot reads run only after every canonical name is proven to resolve to a
+    // trusted base table. Ask the store whether it publishes that read, and build
+    // both the expected issuance and a client that satisfies the binding from what
+    // it publishes — restating no SQL of this proof's own. On a tree without object
+    // binding the client is inert and the sequence is just the boundary and reads.
+    const store = (await storeApi()) as unknown as Record<string, unknown>;
+    const bindsObjects =
+      typeof store['recognizeCanonicalBindingRead'] === 'function' &&
+      typeof store['CANONICAL_OBJECT_BINDING_READ'] === 'string' &&
+      Array.isArray(store['CANONICAL_BINDING_RELATIONS']);
+    const recognizeBinding = bindsObjects
+      ? (store['recognizeCanonicalBindingRead'] as (sql: string) => boolean)
+      : (): boolean => false;
+    const boundRows = bindsObjects
+      ? trustedBindingRows(store['CANONICAL_BINDING_RELATIONS'] as readonly string[])
+      : [];
+
     resetRecordedObservations();
-    const client = inertClient();
+    const client = bindingClient(recognizeBinding, boundRows, boundary);
     await readSnapshotUnderReadOnlyBoundary(observeQueries(client) as never);
     const issued = recordedObservations().map((o) => norm(o.sql ?? ''));
     expect(issued).toEqual([
       norm(boundary.begin),
+      ...(bindsObjects ? [norm(store['CANONICAL_OBJECT_BINDING_READ'] as string)] : []),
       ...reads.map((r) => norm(r.sql)),
       norm(boundary.commit),
     ]);
-    // EVERY statement — the boundary's own included — is authorized. The module
-    // holds itself to the rule it applies to `portability.ts`.
+    // EVERY statement — the boundary's own and the binding read included — is
+    // authorized. The module holds itself to the rule it applies to `portability.ts`.
     const proof = observedQueryProof();
     expect(proof.observed).toBe(client.calls);
     expect(proof.refusals, 'the boundary statements are unauthorized by their own rule').toEqual([]);
     expect(proof.proved).toBe(true);
 
-    // ── FAILURE PATH: begin, the reads that ran, ROLLBACK ───────────────
+    // ── FAILURE PATH: begin, [binding,] the reads that ran, ROLLBACK ────
     //
     // So the set of statements the module can issue is the same on every path: a
     // read that throws must not leave the transaction open, and the statement that
-    // closes it must be authorized too.
+    // closes it must be authorized too. The binding is satisfied, so it is a
+    // SNAPSHOT read that fails here, on either tree.
     resetRecordedObservations();
-    let calls = 0;
-    const failing = {
-      query: async (_arg: unknown): Promise<{ rows: never[] }> => {
-        calls += 1;
-        if (calls === 3) throw new Error('phase-50a test: the third statement fails');
-        return { rows: [] };
-      },
-    };
+    let readsRun = 0;
+    const failing = bindingClient(recognizeBinding, boundRows, boundary, () => {
+      readsRun += 1;
+      if (readsRun === 1) throw new Error('phase-50a test: a snapshot read fails');
+    });
     await expect(
       readSnapshotUnderReadOnlyBoundary(observeQueries(failing) as never),
-    ).rejects.toThrow('the third statement fails');
+    ).rejects.toThrow('a snapshot read fails');
     const afterFailure = recordedObservations().map((o) => norm(o.sql ?? ''));
     expect(afterFailure[0]).toBe(norm(boundary.begin));
     expect(
@@ -2681,6 +3002,174 @@ describe('Phase 50A F-14 — restore verification is NON-DESTRUCTIVE and detects
       literalQueries,
       'the verifier issues a statement written as a literal at the call site',
     ).toEqual([]);
+  });
+
+  // ── THE SEQUENCE-116 F-14 COUNTEREXAMPLE ─────────────────────────────────
+  //
+  // The sequence-110 closure made recognition MEMBERSHIP in a published set, so a
+  // read is refused unless the ISSUING module publishes its exact text. The
+  // sequence-116 audit found that this proves the STATEMENT is canonical, not that
+  // the OBJECTS it names are: `SELECT actor_id, record FROM actors` is byte-for-byte
+  // the published read, so text membership passes — but a caller who controls
+  // `search_path`, or who has planted a same-named view / foreign table / a table
+  // in another schema, can make that exact text resolve to a SUBSTITUTED object
+  // with a read-time side effect. The substrate reads it: the SQL is canonical, the
+  // object is not, and nothing checks the object.
+  //
+  // The head binds first. An object-binding read resolves every canonical name
+  // under the SAME session (so it sees the same `search_path`) and refuses anything
+  // that is not a trusted base table in the migration ledger's schema owned by the
+  // ledger's owner — BEFORE a single snapshot read is issued. The decision is PURE
+  // over catalog facts PostgreSQL's own resolver reports, never over SQL text.
+  //
+  // Against the substrate the SURFACE assertion fails (no binding is published);
+  // the behavioural assertion would fail too — a substituted object is read rather
+  // than refused. It uses only exports both trees COULD have for its gate, so it
+  // fails for the ABSENCE of the binding, not for a later "not a function".
+  it('COUNTEREXAMPLE (F-14): the canonical reads are BOUND to trusted DB objects, and a substitution is refused before any read', async () => {
+    const store = (await storeApi()) as unknown as Record<string, unknown>;
+    // SURFACE: the object-binding seam must exist. Stated as an assertion so a tree
+    // without it fails HERE, naming the missing functions, rather than later.
+    expect(
+      missingExports(store, [
+        'evaluateObjectBinding',
+        'bindCanonicalObjects',
+        'recognizeCanonicalBindingRead',
+      ]),
+      'the object-binding seam is absent from this module',
+    ).toEqual([]);
+    // The read text and the relation list are VALUE exports (not functions), so
+    // they are checked by type rather than through `missingExports`.
+    expect(typeof store['CANONICAL_OBJECT_BINDING_READ'], 'no binding read is published').toBe(
+      'string',
+    );
+    expect(
+      Array.isArray(store['CANONICAL_BINDING_RELATIONS']),
+      'no binding relation list is published',
+    ).toBe(true);
+    expect(typeof store['CANONICAL_LEDGER_RELATION'], 'no migration ledger is named').toBe('string');
+
+    const evaluateObjectBinding = store['evaluateObjectBinding'] as (
+      rows: readonly CatalogRow[],
+      expected?: readonly string[],
+    ) => { bound: boolean; reasons: readonly string[]; ledgerNamespace: string | null };
+    const recognizeBinding = store['recognizeCanonicalBindingRead'] as (sql: string) => boolean;
+    const relations = store['CANONICAL_BINDING_RELATIONS'] as readonly string[];
+    const ledgerRelation = store['CANONICAL_LEDGER_RELATION'] as string;
+    const nonLedger = (): CatalogRow => {
+      const rows = trustedBindingRows(relations);
+      const victim = rows.find((r) => r.requested !== ledgerRelation);
+      expect(victim, 'the binding relation list is only the ledger').not.toBeUndefined();
+      return victim!;
+    };
+
+    // ── PURE: the decision is over CATALOG FACTS, provable without a database ─
+    //
+    // Trusted facts bind; each single substitution — a VIEW, another SCHEMA,
+    // another OWNER, an UNRESOLVED name, a substituted LEDGER, a DUPLICATE row —
+    // is refused, and the refusal names the relation.
+    expect(
+      evaluateObjectBinding(trustedBindingRows(relations)).bound,
+      'trusted objects did not bind',
+    ).toBe(true);
+
+    const asView = trustedBindingRows(relations);
+    const viewed = asView.find((r) => r.requested !== ledgerRelation)!;
+    viewed.relkind = 'v';
+    const viewVerdict = evaluateObjectBinding(asView);
+    expect(viewVerdict.bound, 'a canonical name resolving to a VIEW was bound').toBe(false);
+    expect(viewVerdict.reasons.join(' ')).toContain(viewed.requested);
+
+    const otherSchema = trustedBindingRows(relations);
+    const misplaced = otherSchema.find((r) => r.requested !== ledgerRelation)!;
+    misplaced.relnamespace = '9999';
+    misplaced.namespace = 'attacker';
+    expect(
+      evaluateObjectBinding(otherSchema).bound,
+      'a canonical name in another SCHEMA was bound',
+    ).toBe(false);
+
+    const otherOwner = trustedBindingRows(relations);
+    otherOwner.find((r) => r.requested !== ledgerRelation)!.relowner = '99';
+    expect(
+      evaluateObjectBinding(otherOwner).bound,
+      'a canonical name under another OWNER was bound',
+    ).toBe(false);
+
+    const unresolved = trustedBindingRows(relations);
+    Object.assign(unresolved.find((r) => r.requested !== ledgerRelation)!, {
+      resolved: false,
+      relkind: null,
+      relowner: null,
+      relnamespace: null,
+      namespace: null,
+    });
+    expect(
+      evaluateObjectBinding(unresolved).bound,
+      'an UNRESOLVED canonical name was bound',
+    ).toBe(false);
+
+    // The ledger is the anchor: substitute IT and nothing binds.
+    const substitutedLedger = trustedBindingRows(relations).map((r) =>
+      r.requested === ledgerRelation ? { ...r, relkind: 'v' } : r,
+    );
+    expect(
+      evaluateObjectBinding(substitutedLedger).bound,
+      'a substituted migration LEDGER still bound',
+    ).toBe(false);
+
+    // A duplicated row for one name is not what the read returns, so it is refused.
+    const duplicated = [...trustedBindingRows(relations), nonLedger()];
+    expect(
+      evaluateObjectBinding(duplicated).bound,
+      'a duplicated binding row was accepted',
+    ).toBe(false);
+
+    // ── SEAM: a substitution is refused BEFORE any snapshot read ─────────────
+    //
+    // The binding read runs first and inside the transaction; when it reports a
+    // substituted object the boundary rolls back and throws WITHOUT issuing a
+    // single snapshot read — so a canonical name backed by a view with a read-time
+    // side effect is never read even once.
+    const norm = await publishedNormalize();
+    const boundary = await publishedBoundary();
+    const publishedReadTexts = new Set((await publishedReads()).map((r) => norm(r.sql)));
+    const {
+      readSnapshotUnderReadOnlyBoundary,
+      observeQueries,
+      recordedObservations,
+      resetRecordedObservations,
+      classifyObservedSql,
+    } = await verifierModule();
+
+    resetRecordedObservations();
+    const client = bindingClient(recognizeBinding, asView, boundary);
+    await expect(
+      readSnapshotUnderReadOnlyBoundary(observeQueries(client) as never),
+    ).rejects.toThrow(/canonical object binding failed/);
+
+    const observed = recordedObservations().map((o) => o.sql ?? '');
+    expect(observed.some((sql) => recognizeBinding(sql)), 'the binding read was not issued').toBe(
+      true,
+    );
+    const snapshotReadsObserved = observed.filter((sql) => publishedReadTexts.has(norm(sql)));
+    expect(
+      snapshotReadsObserved,
+      'a snapshot read was issued against an object that failed to bind',
+    ).toEqual([]);
+    const normObserved = observed.map((sql) => norm(sql));
+    expect(
+      normObserved[normObserved.length - 1],
+      'a failed binding left the read-only transaction open',
+    ).toBe(norm(boundary.rollback));
+
+    // The binding read is recognized on the SAME membership terms as the reads.
+    const verdict = classifyObservedSql(store['CANONICAL_OBJECT_BINDING_READ'] as string);
+    expect(verdict.recognized, 'the binding read is not recognized authority').toBe(true);
+    if (verdict.recognized) {
+      expect(verdict.authority.publisher).toBe('src/straylight/storage/postgres/portability.ts');
+      expect(verdict.authority.published).toBe('CANONICAL_OBJECT_BINDING_READ');
+    }
   });
 
   it('OBSERVED: the REAL read path is seen in full and recognized in full, without a database', async () => {

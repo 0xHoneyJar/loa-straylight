@@ -5328,3 +5328,334 @@ effort did this work, under lease
 `lease-phase-50a-implementer-authority-boundary-032` (lane #122 sequence 113).
 **No** Ultracode, **no** `/batch`, **no** teams, **no** subagents, and **no**
 delegation of any kind.
+
+---
+
+## 25. Sealed-authority closure — F-04 safe projection, F-09 behavioural sealing, F-14 DB-object authority (patch cycle 3, substrate `e3afc360`)
+
+This section documents the third structural closure of the same three
+findings, cut from a **new** substrate after the previous slice (§24, PR #137,
+head `e3afc360`) was itself audited and rejected. It is a pure end-of-file
+append: every byte before this line is byte-identical to the substrate. As with
+every prior slice, **this is an implementation-and-proof record written by the
+implementer; it is not an audit.** The audit of this slice is Codex's.
+
+### 25.1 Report and provenance
+
+Sequence-116 recorded a **REJECT** on PR #137 at head
+`e3afc3605ca3375b5bf5e1096e05af7c31a4061a` (audit comment 5268110817,
+digest `sha256:0858e79e…`), leaving **F-04, F-09 and F-14 open** while F-10
+stayed closed on the audited surface and F-01/F-15 remained closed. The
+operator accepted that REJECT and authorised exactly one fresh structural
+INITIAL at patch cycle 3 (operator decision comment 5268469156, lane #122
+sequence 117). The replacement task packet was posted at sequence 118 (comment
+5269226836, digest
+`sha256:b40b1729e911cd85ba42fdec6d975c78cce57bb190990962a24d6a9389346d11`),
+still `patch_cycle: 3`, substrate pinned to `e3afc3605ca3375b5bf5e1096e05af7c31a4061a`,
+lane base `70d40058096455c6406d644183ac757a317ce159`.
+
+The work was performed under lease
+`lease-phase-50a-implementer-sealed-authority-033` (lane #122 sequence 119) on
+branch `phase-50a-r3-sealed-authority-closure`, cut from the exact substrate
+commit. PR #137 and its head `e3afc360` are **immutable rejected substrate**:
+no amend, force-push, retarget, close, merge or review-thread resolution
+touched it.
+
+The packet **dropped `config.ts` from the allowed set** (ten allowed paths this
+cycle, `config.ts` now forbidden), which forces an **emit-less** closure — the
+target-identity surface must be built without editing configuration, and the
+stale `config.ts` comment noted below cannot be corrected in this slice.
+
+### 25.2 F-04 — safe projection of the target identity
+
+**Finding (as rejected at sequence 116).** The previous slice resolved the
+diagnostic target from *pg's own* view of the connection (an
+`IdentityReportingClient` reporting `resolvedTarget`), so the driver's
+interpretation of the connection string reached the diagnostic: a
+username-derived database name, a query-parameter-supplied host, a
+last-client-wins overwrite across multiple clients, and — on the connection
+failure path — the driver's raw `Error.message` (which echoed an `sslkey` file
+path and invalid-option text).
+
+**Design (this slice).** Target identity is now a **caller-declared**
+`TrustedTargetDescriptor` (`host.ts:90`) captured and frozen at construction
+(`host.ts:185`). `describeTarget()` (`host.ts:229`) renders **only**
+`renderTarget(this.target)` (`host.ts:127`):
+
+- with a declared descriptor →
+  `postgresql://<redacted>@${target.host}:${target.port}/${target.database}`,
+  using the caller's declared, non-secret values;
+- with no declared descriptor → the constant
+  `postgresql://<redacted>@<target unresolved>`
+  (`REDACTED_USERINFO` `host.ts:116`, `UNRESOLVED_TARGET` `host.ts:124`).
+
+Nothing in the diagnostic path consults a pg client, the connection string, its
+userinfo, or its query parameters. Because it renders the **fixed frozen
+descriptor**, the projection is **operation-scoped** — it does not mutate as
+clients are built and discarded (the defect the OPERATION-SCOPED counterexample
+names).
+
+**Connection-vs-statement split.** Connection/credential material can only
+appear on the `connection_failed` path — `checkout()`'s catch (`host.ts:494`):
+`could not acquire a connection to ${this.describeTarget()}: ${driverFailureCategory(err)}`.
+`driverFailureCategory` (`host.ts:770`) returns a **typed category only**
+(`driver error (SQLSTATE …)` for a genuine five-character SQLSTATE, otherwise a
+constant no-SQLSTATE category); it never returns the driver's raw message and
+never echoes an `sslkey` path. The four F-04 channels named in the packet —
+username→database fallback, query-controlled host, raw `sslkey`/invalid-option
+error, and multi-client overwrite — are all connection/identity channels and
+are all closed by the declared-descriptor + typed-category design, **without any
+SQL or connection-string parser heuristic.**
+
+**Callback boundary.** `CallbackThrew` (`host.ts:152`) tags a value thrown by a
+caller's own callback so `classify` (`host.ts:525`) returns `err.thrown`
+**unchanged**, never re-projecting a caller's `Error.message` as store
+diagnostic. The database-refusal branch (`host.ts:528`) uses
+`databaseRefusalReason` (`host.ts:809`), which is **SQLSTATE-gated**: it surfaces
+a raw `.message` only when `.code` matches `/^[0-9A-Z]{5}$/` — i.e. only a real
+database's own refusal reason for an executed statement, post-connection, with
+no connection-string or credential material — and otherwise falls to the typed
+category. This is the accepted split: connection-level driver failures expose a
+typed category only; a genuine SQLSTATE-coded database refusal exposes the
+database's own reason.
+
+**`config.ts:39` disclosure.** `config.ts` (forbidden this cycle) still carries
+a **doubly-stale** comment: it references the removed `TargetIdentity` type
+*and* describes the superseded "host.ts names its target from the structured
+identity `pg` itself resolved" approach. Because `config.ts` is forbidden this
+cycle it **cannot be corrected here**; it is disclosed as a residual (§25.11).
+The file's export surface is unchanged — `Object.keys(module).sort()` remains
+`['SHIPPED_SCHEMA_VERSIONS','resolveConfig']`.
+
+**Runbook claim remains true.** The frozen runbook sentence — "Connection
+strings in diagnostics are redacted — `describeTarget()` replaces userinfo with
+`<redacted>`, so an error message can name the target without leaking a
+credential" — remains accurate under the declared-descriptor design:
+`describeTarget()` still redacts userinfo to `<redacted>` and names only the
+declared target. The runbook was not edited.
+
+### 25.3 F-09 — behavioural sealing of destructive authority
+
+**Finding (as rejected at sequence 116).** The invoked destructive behaviour of
+a minted bound store could be redirected by mutating the **exported**
+`PostgresEstateHost` prototype after the store was minted: the bound store read
+`store.migrate`/`withClient`/`withEstateSession`/`close` through the mutable
+prototype, and even a pinned outer method re-dispatched internally
+(`this.checkout()`, `this.assertOpen()`) through that same prototype.
+
+**Design (this slice).** `hosts.ts` **captures the genuine method identities at
+module load** — `HOST_MIGRATE`, `HOST_WITH_CLIENT`, `HOST_WITH_ESTATE_SESSION`,
+`HOST_CLOSE` (`hosts.ts:115`) — and then
+`Object.freeze(PostgresEstateHost.prototype)` (`hosts.ts:120`). This seals
+**both** channels: the outer method channel (`authorizedBoundStore`,
+`hosts.ts:684`, returns `HOST_*.bind(store)`; `closeBoundProofStore`,
+`hosts.ts:631`, calls the captured `HOST_CLOSE`) and the internal re-dispatch
+channel (the captured methods' internal `this.checkout()`/`assertOpen()` calls
+now resolve through the frozen prototype). A prototype or instance method
+replacement before *or* after mint can no longer redirect destructive execution
+or teardown. Copy/proxy/graft refusal and the WeakMap membership check that
+carry F-10 are preserved unchanged; the F-10 region keeps its semantics.
+
+### 25.4 F-14 — binding reads to the intended canonical DB objects
+
+**Finding (as rejected at sequence 116).** Canonical reads were recognised by
+membership in a published statement set but were not bound to the actual
+database objects, so a caller's `search_path`/options could redirect a bare
+canonical relation name to a different object (a view, or a relation in another
+schema) while the authorised SQL text was unchanged.
+
+**Design (this slice).** `CanonicalRead` now carries a `relation`
+(`portability.ts:64`). A pg_catalog-qualified object-binding read
+`CANONICAL_OBJECT_BINDING_READ` (`portability.ts:252`, `to_regclass` over a
+`$1::text[]` array) resolves each bare canonical relation name **in the same
+session**. `evaluateObjectBinding` (`portability.ts:311`) refuses unless **every**
+relation resolves to a **base table** (`relkind = 'r'`) in the migration
+ledger's namespace and owner (`CANONICAL_LEDGER_RELATION` =
+`straylight_schema_migrations`, `portability.ts:225`; binding set
+`CANONICAL_BINDING_RELATIONS`, `portability.ts:233`). `bindCanonicalObjects`
+(`portability.ts:395`) issues it; `recognizeCanonicalBindingRead`
+(`portability.ts:406`) recognises it and it is published as a statement
+authority.
+
+In `verify-existing-restore.ts`, `readSnapshotUnderReadOnlyBoundary`
+(`verify-existing-restore.ts:430`) runs the binding **first**, inside
+`BEGIN TRANSACTION READ ONLY` (`READ_ONLY_BOUNDARY.begin`,
+`verify-existing-restore.ts:215`), **before any snapshot read**
+(`bindCanonicalObjects(client)` at `:440`; `if (!binding.bound)` throws
+`PostgresIntegrityError('restore_verification_failed', 'canonical object
+binding failed — …')` at `:441`). The shared canonical read plan, the
+observation→proof→report/exit shape, and the READ-ONLY posture are unchanged;
+the decision is made over the **object identity PostgreSQL's own resolver
+reported**, not over SQL text, so there is **no SQL or parser heuristic**.
+Unknown, empty, or side-effect-capable reads fail closed.
+
+### 25.5 F-10 regression
+
+`pg-tools.ts` and `tests/phase-50a/_support.ts` (both forbidden this cycle) are
+byte-identical to the substrate; the F-10 copy/proxy/graft refusal region in
+`hosts.ts` keeps its semantics. The two-host proof derives both tool targets
+from gated descriptors. The full Phase-50A live suite (which contains the F-10
+matrix) is green (§25.10): F-10 was **not reopened**.
+
+### 25.6 Substrate-fail / target-pass
+
+The closure suite `tests/phase-50a/safety-authority-closure.test.ts` is
+constructed so that each counterexample **loads** against both the substrate
+tree (`e3afc360`) and head. Head-only symbols are reached by dynamic import +
+`missingExports(module, names)` so the file compiles against both trees;
+counterexamples **fail on the substrate by an assertion that names the defect**
+and **pass on head** — never by an import, type or compile error.
+
+Copied unmodified into a clean substrate worktree at `e3afc360`, the suite ran
+**7 failed | 59 passed (66)**; against head it ran **66 passed (66)**. The seven
+substrate failures, verbatim:
+
+| # | Counterexample (line) | Finding | Substrate assertion (captured) |
+|---|---|---|---|
+| 1 | SOLE EMITTER (`597`) | F-04 | `expected '…' to contain 'describeTarget(): string {\n    retur…'` |
+| 2 | describeTarget DECLARED descriptor (`630`) | F-04 | `the declared port must be named: expected 'postgresql://<redacted>@/nonexistent/…' to contain '55432'` |
+| 3 | OPERATION-SCOPED (`660`) | F-04 | `the diagnostic changed after a client was built — it is last-client state, not operation-scoped` |
+| 4 | typed-category surface (`691`) | F-04 | `expected '…' to contain 'driverFailureCategory(err)'` |
+| 5 | sslkey behavioural (`713`) | F-04 | `the offending sslkey path leaked into the diagnostic: expected 'straylight postgres unavailable [conn…' not to contain '/keys/privatesecret.pem'` |
+| 6 | SEALED against post-mint (`1781`) | F-09 | `PostgresEstateHost.prototype accepted a post-mint method replacement — the invoked behaviour is not sealed: expected true to be false` |
+| 7 | BOUND object seam (`3029`) | F-14 | `the object-binding seam is absent from this module: expected [ 'evaluateObjectBinding', …(2) ] to deeply equal []` |
+
+The DECLARED counterexample (#2) declares
+`{host:'127.0.0.1', port:55432, database:'straylight_source'}` while the pg
+connection string carries `?host=/nonexistent/straylight-absent-socket`; the
+substrate names pg's socket path, head names the **declared** port `55432`.
+
+### 25.7 Structural mutations (M1/M2/M3)
+
+Each mutation was applied to the **head** implementation, caught **behaviourally**
+(the build still succeeds — a compile-failure catch is disallowed), then
+reverted to the pristine checksum. Because HEAD is the substrate and the work is
+uncommitted, reverts used a cp backup/restore (`/tmp/sl-mut-backup/`), **never**
+`git checkout --` (which would destroy the uncommitted implementation).
+
+- **M1 (F-04, `host.ts`).** Reconstruct `describeTarget()` from
+  `new URL(this.config.connectionString)` instead of the frozen declared
+  descriptor. Caught by the DECLARED counterexample:
+  `expected 'postgresql://<redacted>@127.0.0.1:1/' to contain '55432'` — the URL
+  parse yields the connection-string authority, not the declared port.
+- **M2 (F-09, `hosts.ts`).** Remove `Object.freeze(PostgresEstateHost.prototype)`
+  (leaving only the mutation comment; the captured `HOST_*` identities remain).
+  Caught by the SEALED counterexample:
+  `PostgresEstateHost.prototype accepted a post-mint method replacement — the
+  invoked behaviour is not sealed: expected true to be false`.
+- **M3 (F-14, `portability.ts`).** Force `evaluateObjectBinding` to always report
+  `bound`. Caught by the BOUND counterexample:
+  `a canonical name resolving to a VIEW was bound: expected true to be false`.
+
+**Disclosure — M3 design correction.** An earlier M3 candidate returned
+`{ bound: true, … }` *before* the `const byName = new Map(...)` and the
+line-330 ledger guard. That created unreachable code that TypeScript flagged
+(`TS18048: 'ledger'/'row' is possibly 'undefined'`), which failed
+`npm run build` in global-setup **before the test ran** — i.e. a
+compile-failure catch, which is disallowed. It was corrected to a
+clean-compiling *behavioural* mutation that changes only the final verdict
+(`bound: reasons.length === 0` → `bound: true`, with `ledger` already narrowed
+by the line-330 guard), and it is then caught by the assertion above.
+
+After each revert, the three implementation files matched their pristine
+checksums — `host.ts` `7ef80041af10baa04fc337131f1b374038c61cf485cce6fdecae1bbccfeb893c`,
+`hosts.ts` `a0106b2ed315303008cba4da64e75780e96f70f8a5783c9e459501c10b2ec04c`,
+`portability.ts` `e83681f27ca677fec3fa77657a2c6d8c4d8ba5ea34afe5cf3d9bbf9dbd2d048b` —
+and `git diff --stat` returned to exactly **7 files, 1214 insertions, 242
+deletions** (this was the mutation-revert checkpoint, before this proof-doc
+append; the append below is the eighth changed file — §25.9).
+
+### 25.8 Oracle independence
+
+No counterexample mirrors the implementation's own logic. The F-04 oracles are
+byte-equality of the sole emitter across construction variants, the
+declared-descriptor invariant, and source-text scans for the sole
+`describeTarget()` body and `driverFailureCategory(err)` — not a reproduced
+connection-string parser. The F-09 oracle mints a real bound store, mutates the
+prototype/instance, and checks with `Object.isFrozen` plus a reachability probe
+that the *invoked* behaviour is unchanged. The F-14 oracle drives
+`evaluateObjectBinding` over genuine catalog facts (a name resolving to a view)
+and the publisher's own binding read — not a re-implemented SQL classifier.
+
+### 25.9 Scope and preservation
+
+`git diff --name-status` against the substrate `e3afc360` is exactly **eight
+`M` entries, zero add/delete/rename** — the seven implementation/test files plus
+this proof document: `src/straylight/storage/postgres/host.ts`,
+`.../index.ts`, `.../portability.ts`, `scripts/phase-50a/hosts.ts`,
+`scripts/phase-50a/verify-existing-restore.ts`,
+`tests/phase-50a/safety-authority-closure.test.ts`,
+`tests/phase-50a/postgres-two-host-portability.test.ts`, and
+`docs/PHASE-50A-PROVIDER-NEUTRAL-POSTGRESQL-CANONICAL-STORE-IMPLEMENTATION-AND-PROOF.md`
+(this §25 append). `git diff --stat` is **8 files, 1540 insertions, 242
+deletions** (the 1214/242 of §25.7 plus the 326-line §25 append). All eight are
+inside the ten allowed paths; **no forbidden path was touched.** In particular
+`config.ts`, `pg-tools.ts` and `tests/phase-50a/_support.ts` — all forbidden
+this cycle — are unchanged, and `two-host-proof.ts` and
+`tests/phase-50a/postgres-negative.test.ts` were within scope but needed no
+edit. The substrate tree has **722 entries**; because every change is `M` (no
+`A`/`D`/`R`), head preserves the same 722 entries, and the `.loa` gitlink is
+unchanged at `207639f9f48e307b0a373281ccdd3a379ba0eaf4`. The F-01 seam block and
+the F-14/F-15 runbook block remain byte-identical (asserted by test); the
+pinned forbidden blobs (`pg-tools.ts`, `_support.ts`, `phase-31f`, the runbook)
+are unchanged; the `config.ts` export surface is
+`['SHIPPED_SCHEMA_VERSIONS','resolveConfig']`; and this document's first 5330
+lines are byte-identical to the substrate.
+
+### 25.10 Verification
+
+| Check | Command | Result |
+|---|---|---|
+| Typecheck | `npm run typecheck` | clean |
+| Build | `npm run build` | succeeded; internal PostgreSQL declarations pruned by `prune-internal-postgres-types.mjs` (no PostgreSQL `.d.ts` packed) |
+| Closure suite (head) | `vitest safety-authority-closure` | **66 passed (66)** |
+| Closure suite (substrate `e3afc360`) | same file, substrate worktree | **7 failed \| 59 passed (66)** — the seven named counterexamples (§25.6) |
+| Phase-50A live | `phase-50a:test` (`STRAYLIGHT_PHASE_50A_POSTGRES=1`) | **16 files, 383 passed (383)** |
+| Two-host proof | `phase-50a:proof` | **PASS** — source digest = replacement digest = `sha256:b8f3134102ba3d361440adfd3c97e51af421191e0b5519e1972794081eb63ffe`, canonically equal, chains verify |
+| Artifact / no-leak | `phase-50a:verify-artifact` | **PASS — C1..C9 hold; no PostgreSQL declaration generated or packed** |
+| Control-plane validate | `control-plane:validate` | all checks passed (policy, schemas, state machine, markers) |
+| Control-plane suite | `control-plane:test` | **29 files, 1025 passed (1025)** |
+| Full repo | `npm test` (DB up) | **2492 passed \| 1 failed (2493)** — the sole failure is the exonerated worktree-symlink artifact `tests/phase-29a-hounfour-vector-access.test.ts` (a forbidden file; the failure is a `node_modules` symlink artifact of the local worktree and passes in CI's fresh checkout — see §25.11) |
+
+### 25.11 Residual limits
+
+- **`config.ts:39` stale comment.** The forbidden `config.ts` still references the
+  removed `TargetIdentity` type and the superseded pg-resolved-identity
+  approach. It is inert (the export surface is unchanged) but misleading, and it
+  cannot be corrected in this slice because `config.ts` was dropped from the
+  allowed set.
+- **SQLSTATE-coded database refusal reason.** A genuine five-character SQLSTATE
+  error on the statement path surfaces the database's own `.message` via
+  `databaseRefusalReason`. This is intentional — it is the database's own
+  refusal reason for an executed statement, post-connection, carrying no
+  connection-string or credential material — and it is distinct from the
+  connection/identity material F-04 governs (which exposes a typed category
+  only).
+- **`<target unresolved>` degradation.** When no `TrustedTargetDescriptor` is
+  declared, diagnostics name only the `<target unresolved>` constant; this is a
+  deliberate fail-safe (emit less rather than resolve an unprovable identity),
+  not a regression.
+- **DB-backed proofs require the harness.** The two-host proof, artifact check,
+  and live suite need the Phase-50A Docker harness up
+  (`STRAYLIGHT_PHASE_50A_POSTGRES=1`); the closure suite runs without it.
+- **Worktree symlink artifact.** The single full-repo failure is a local
+  worktree artifact (`node_modules` is a symlink to the main repo), not a
+  regression of this slice; the affected test is a forbidden file and passes in
+  a fresh checkout.
+- **Scope of the claim.** Everything here concerns the Phase-50A store and its
+  proofs; nothing in this slice speaks to production deployment.
+
+### 25.12 Standing scope statement
+
+This is an **implementation-and-proof** record only. It is **not** an audit, and
+it makes **no** acceptance, readiness, gate, MVP-2 or Phase-50B claim; closing
+these findings does not make any pull request merge-eligible. Merge remains
+**operator-only** (`operator:eileen`, ADR-049 §6). PR #137 and the substrate
+`e3afc360` remain immutable rejected substrate. F-01, F-10 and F-15 remain
+preserved as closed absent new regression evidence. The audit of this slice is
+Codex's; the implementer does not audit its own work.
+
+**Implementation provenance.** Exactly **one** Claude agent did this work, under
+lease `lease-phase-50a-implementer-sealed-authority-033` (lane #122 sequence
+119). **No** Ultracode, **no** `/batch`, **no** teams, **no** subagents, and
+**no** delegation of any kind.

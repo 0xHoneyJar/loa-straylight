@@ -14,7 +14,11 @@
 // deliberately avoids.
 
 export { PostgresEstateHost } from './host.js';
-export type { EstateSessionResult, TargetIdentity } from './host.js';
+export type {
+  EstateSessionResult,
+  PostgresEstateHostOptions,
+  TrustedTargetDescriptor,
+} from './host.js';
 
 export { PostgresAdapterSession } from './session.js';
 
@@ -23,8 +27,9 @@ export type { PostgresIntegrityReason, PostgresUnavailableReason } from './error
 
 // `redactConnectionString` is GONE, not renamed: the store no longer renders a
 // connection string at all (F-04). A diagnostic names its target through
-// `PostgresEstateHost.describeTarget()`, which prints the identity `pg`
-// resolved and no credential-bearing material in any form.
+// `PostgresEstateHost.describeTarget()`, which prints ONLY the caller's own
+// trusted non-secret descriptor (or a constant when none was declared) and no
+// credential-bearing material in any form. Nothing is read back from `pg`.
 export { SHIPPED_SCHEMA_VERSIONS, resolveConfig } from './config.js';
 export type { PostgresStoreConfig, ResolvedPostgresStoreConfig } from './config.js';
 
@@ -61,20 +66,28 @@ export type { AppendOutcome, PersistResult } from './persist.js';
 export { canonicalPayload, previousHashKey } from './rows.js';
 
 export {
+  CANONICAL_BINDING_RELATIONS,
+  CANONICAL_LEDGER_RELATION,
+  CANONICAL_OBJECT_BINDING_READ,
   CANONICAL_SNAPSHOT_READS,
   assertEstateServiceable,
   assertRestoreServiceable,
+  bindCanonicalObjects,
   canonicalReadText,
   compareSnapshots,
+  evaluateObjectBinding,
   readStoreSnapshot,
+  recognizeCanonicalBindingRead,
   recognizeCanonicalRead,
   snapshotDigest,
   verifyChains,
   verifyRestore,
 } from './portability.js';
 export type {
+  CanonicalObjectRow,
   CanonicalRead,
   ChainVerification,
+  ObjectBindingVerdict,
   RestoreVerification,
   SnapshotComparison,
   StoreSnapshot,

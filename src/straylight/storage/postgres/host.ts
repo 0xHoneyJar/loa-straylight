@@ -29,8 +29,8 @@
 // transaction, and no fallback to another adapter after PostgreSQL
 // uncertainty.
 
-import { Client, Pool } from 'pg';
-import type { ClientConfig, PoolClient } from 'pg';
+import { Pool } from 'pg';
+import type { PoolClient } from 'pg';
 
 import { AuditLog } from '../../audit.js';
 import type { ID } from '../../types.js';
@@ -64,21 +64,47 @@ export interface EstateSessionResult<T> {
 }
 
 /**
- * The NON-SECRET identity of a connection target, exactly as `pg` resolved it.
+ * A NON-SECRET target descriptor, DECLARED BY THE CALLER from its own trusted
+ * knowledge of where this host connects — never parsed from the connection
+ * string and never read back from `pg`.
  *
- * These three fields are the driver's OWN answer to "which server, which
- * database" — read off the client `pg` built for this pool, not derived here.
- * There is no `user` and no `password` field, and no query material, because
- * this type exists to be PRINTED: the only things in it are the things a
- * diagnostic needs and a credential is not.
+ * ── WHY IT IS DECLARED, NOT RESOLVED (sequence-116 audit, F-04) ───────────
+ *
+ * The rejected mechanism read the target's host, port and database off the
+ * `pg` client `pg` built for this pool. Those values are `pg`'s interpretation
+ * of the connection string, and that interpretation is attacker-reachable: a
+ * `user` with no explicit database becomes the database fallback; a `host`
+ * supplied in the query part reaches the resolved fields; and the LAST client
+ * `pg` happened to build overwrote a single host-level record, so the identity
+ * printed was whichever client connected most recently. A diagnostic built from
+ * any of those prints connection-string-derived material it cannot bound.
+ *
+ * So identity is not resolved from the connection at all. A caller that KNOWS,
+ * from its own fixed configuration, which non-secret target this host addresses
+ * may declare it here, and `describeTarget()` renders THAT and only that. A
+ * caller that declares none gets a constant unresolved identity — the store
+ * SAYS LESS rather than reconstructing something from the connection string.
+ * There is no `user`, no `password` and no query material, because this type
+ * exists to be PRINTED and a credential is not a thing a diagnostic needs.
  */
-export interface TargetIdentity {
-  /** Host or socket directory `pg` will dial. */
+export interface TrustedTargetDescriptor {
+  /** Non-secret host label the caller declares for this target. */
   readonly host: string;
-  /** TCP port `pg` will dial. */
+  /** Non-secret port the caller declares for this target. */
   readonly port: number;
-  /** Database `pg` will open, or `null` when the driver resolved none. */
-  readonly database: string | null;
+  /** Non-secret database name the caller declares for this target. */
+  readonly database: string;
+}
+
+/** Options a caller may supply alongside the opaque store config. */
+export interface PostgresEstateHostOptions {
+  /**
+   * The non-secret identity of this host's target, declared by the caller. When
+   * present, `describeTarget()` names it with the userinfo position redacted;
+   * when absent, `describeTarget()` names the target as unresolved rather than
+   * deriving anything from the connection string (F-04).
+   */
+  readonly target?: TrustedTargetDescriptor;
 }
 
 /**
@@ -90,21 +116,41 @@ export interface TargetIdentity {
 const REDACTED_USERINFO = '<redacted>';
 
 /**
- * What a target is called before the driver has resolved one. Reached only by a
- * host that has never successfully built a client — no connection attempted, or
- * a connection string the driver itself refused. It SAYS LESS rather than
- * parsing something to say more (F-04): an unnameable target is named as
- * unnameable.
+ * What a target is called when the caller declared no trusted descriptor. It
+ * SAYS LESS rather than parsing something to say more (F-04): an identity the
+ * store cannot establish from trusted data is named as unestablished, never
+ * reconstructed from credential-bearing material.
  */
 const UNRESOLVED_TARGET = '<target unresolved>';
 
 /** Render a target for an operator. Total, allocation-only, cannot throw. */
-function renderTarget(identity: TargetIdentity | undefined): string {
-  if (identity === undefined) return `postgresql://${REDACTED_USERINFO}@${UNRESOLVED_TARGET}`;
-  return (
-    `postgresql://${REDACTED_USERINFO}@${identity.host}:${String(identity.port)}/` +
-    `${identity.database ?? '(none)'}`
-  );
+function renderTarget(target: TrustedTargetDescriptor | undefined): string {
+  if (target === undefined) return `postgresql://${REDACTED_USERINFO}@${UNRESOLVED_TARGET}`;
+  return `postgresql://${REDACTED_USERINFO}@${target.host}:${String(target.port)}/${target.database}`;
+}
+
+/**
+ * A private marker that carries a value THROWN by a caller's bounded callback
+ * out to the shared catch — so the transaction is rolled back on the ONE path
+ * that rolls back — and is then unwrapped by `classify`, which returns the
+ * caller's OWN error UNCHANGED.
+ *
+ * A callback throw is the caller's authored exception, not a driver or database
+ * failure this store composes a diagnostic for. Routing it through the
+ * `transaction_aborted` path would do two wrong things: replace the caller's
+ * error with a store error the caller never threw, and PUBLISH caller-supplied
+ * `Error.message` text as the store's own diagnostic. Tagging it here keeps
+ * both from happening — the value returns to the caller exactly as thrown,
+ * while the driver/database refusal path (`databaseRefusalReason`) continues to
+ * report only the database's own SQLSTATE-gated reason.
+ *
+ * Never exported and never escapes the module: created at the callback boundary
+ * in `withEstateSession` (whose body is the caller's own storage callback), read
+ * only in `classify`. `withClient` is deliberately NOT wrapped — its body runs
+ * raw queries whose driver/database failure IS a `transaction_aborted` result.
+ */
+class CallbackThrew {
+  constructor(readonly thrown: unknown) {}
 }
 
 export class PostgresEstateHost {
@@ -112,56 +158,42 @@ export class PostgresEstateHost {
   private readonly config: ResolvedPostgresStoreConfig;
   private closed = false;
   /**
-   * The target identity, as `pg`'s OWN connection parser resolved it.
+   * The caller-declared non-secret target, or `undefined` when none was
+   * declared. FIXED at construction and frozen — it is the caller's own account
+   * of where this host connects, not a value `pg` resolved and not one that
+   * changes as clients come and go.
    *
-   * ── WHY IT IS CAPTURED AND NOT COMPUTED (sequence-110 audit, F-04) ──────
+   * ── WHY IT IS DECLARED AND NOT RESOLVED (sequence-116 audit, F-04) ──────
    *
-   * `pg` constructs a `Client` for this pool whenever it needs one, and that
-   * constructor parses the connection string through `pg-connection-string` and
-   * publishes the result as `host`, `port` and `database`. The `Client` option
-   * below hands `pg` a subclass that reports those three fields and changes
-   * nothing else, so the identity this store prints is the identity the driver
-   * itself is dialling — obtained from the authority rather than reconstructed
-   * beside it.
-   *
-   * That is what makes the two sequence-110 disagreement classes — UPPERCASE
-   * parameter keys and LEADING-SLASH SOCKET forms — irrelevant BY
-   * CONSTRUCTION rather than merely handled: there is no second interpretation
-   * of the connection string in this codebase to disagree with the first, and
-   * the parameter query is not read here at all.
-   *
-   * It also costs NO extra parse and NO side effect: the parse recorded here is
-   * one `pg` performs for its own connection whether anything observes it or
-   * not. Nothing in this file calls a parser, and nothing imports one.
-   *
-   * `undefined` until `pg` first builds a client — see `UNRESOLVED_TARGET`.
+   * The rejected mechanism captured this off `pg`'s client, so the identity the
+   * store printed was `pg`'s interpretation of the connection string: the
+   * username could stand in for the database, a query-supplied host reached the
+   * field, and the LAST client `pg` built overwrote the record. Diagnostics
+   * built from that print connection-string-derived material the store cannot
+   * bound. So nothing is captured off `pg` any more. Identity is either the
+   * caller's own trusted descriptor (declared here) or the `UNRESOLVED_TARGET`
+   * constant — never a value read back from the driver. See
+   * `TrustedTargetDescriptor` for the full rationale.
    */
-  private targetIdentity: TargetIdentity | undefined;
+  private readonly target: TrustedTargetDescriptor | undefined;
 
-  constructor(config: PostgresStoreConfig) {
+  constructor(config: PostgresStoreConfig, options: PostgresEstateHostOptions = {}) {
     this.config = resolveConfig(config);
-    // eslint-disable-next-line @typescript-eslint/no-this-alias
-    const owner = this;
-    /**
-     * `pg`'s client, reporting the identity `pg` resolved. It adds no
-     * behaviour: it calls `super`, reads three fields the base constructor has
-     * already set, and returns. No statement, no connection, no I/O.
-     */
-    class IdentityReportingClient extends Client {
-      constructor(clientConfig?: string | ClientConfig) {
-        super(clientConfig);
-        owner.targetIdentity = Object.freeze({
-          host: this.host,
-          port: this.port,
-          database: this.database ?? null,
-        });
-      }
-    }
+    // Frozen COPY of the caller's declared descriptor (or `undefined`). A copy,
+    // not the caller's object: the identity this host prints is fixed at
+    // construction and cannot be mutated afterward through a retained reference.
+    this.target =
+      options.target === undefined
+        ? undefined
+        : Object.freeze({
+            host: options.target.host,
+            port: options.target.port,
+            database: options.target.database,
+          });
     this.pool = new Pool({
       connectionString: this.config.connectionString,
       max: this.config.maxConnections,
       connectionTimeoutMillis: this.config.connectionTimeoutMs,
-      Client: IdentityReportingClient,
     });
     // An IDLE pooled connection that the server drops (restart, admin
     // termination, network loss) emits an asynchronous `error` on the pool.
@@ -184,27 +216,18 @@ export class PostgresEstateHost {
    * is the constant `<redacted>` and there is NO query string, so no part of
    * the connection string's credential-bearing material is rendered in any
    * form, decoded or otherwise. Nothing here inspects the connection string:
-   * the three components come from `targetIdentity`, which `pg` reported.
+   * the components come from the caller's own trusted descriptor (`this.target`)
+   * when one was declared, and NOTHING is read back from `pg` (F-04). A host
+   * whose caller declared no descriptor renders `<target unresolved>` — it SAYS
+   * LESS rather than reconstructing an identity from connection material it
+   * cannot bound.
    *
    * TOTAL. It runs inside error construction (`assertOpen`, `checkout`), where
    * throwing would replace a diagnostic with a different failure, so there is
-   * no input it can reject: a host whose identity the driver never resolved —
-   * including one built on a connection string `pg` itself refused — renders
-   * `<target unresolved>` instead of naming something it does not know.
+   * no input it can reject.
    */
   describeTarget(): string {
-    return renderTarget(this.targetIdentity);
-  }
-
-  /**
-   * The structured identity `pg` resolved for this host, or `undefined` before
-   * the driver has built a client.
-   *
-   * Exposed so a proof can compare what is PRINTED against what the driver
-   * itself holds, rather than against a second parse of the connection string.
-   */
-  resolvedTarget(): TargetIdentity | undefined {
-    return this.targetIdentity;
+    return renderTarget(this.target);
   }
 
   /** Apply every shipped canonical migration. Idempotent. */
@@ -268,7 +291,16 @@ export class PostgresEstateHost {
       // refused as an integrity violation that rolls the transaction back. A
       // record cannot vouch for its own estate; the locked estate can.
       session = new PostgresAdapterSession(state, estate_id);
-      const value = body(session);
+      let value: T;
+      try {
+        value = body(session);
+      } catch (callbackErr) {
+        // The caller's OWN callback threw. Re-raise through the shared catch so
+        // the transaction rolls back on the single path that does so, tagged as
+        // a callback throw — `classify` returns it to the caller unchanged
+        // rather than composing a store diagnostic from it.
+        throw new CallbackThrew(callbackErr);
+      }
 
       // FIRST thing after the callback returns, before `session.close()`,
       // before `persistDelta`, and before COMMIT: refuse a return value that
@@ -460,7 +492,7 @@ export class PostgresEstateHost {
     } catch (err) {
       throw new PostgresUnavailableError(
         'connection_failed',
-        `could not acquire a connection to ${this.describeTarget()}: ${describe(err)}`,
+        `could not acquire a connection to ${this.describeTarget()}: ${driverFailureCategory(err)}`,
       );
     }
     const swallow = (): void => {
@@ -488,9 +520,12 @@ export class PostgresEstateHost {
    * branch here falls back to another adapter.
    */
   private classify(err: unknown): unknown {
+    // The caller's own bounded callback threw: return its authored error
+    // UNCHANGED (see `CallbackThrew`), never a store diagnostic built from it.
+    if (err instanceof CallbackThrew) return err.thrown;
     if (err instanceof PostgresIntegrityError) return err;
     if (err instanceof PostgresUnavailableError) return err;
-    return new PostgresUnavailableError('transaction_aborted', describe(err));
+    return new PostgresUnavailableError('transaction_aborted', databaseRefusalReason(err));
   }
 }
 
@@ -715,8 +750,74 @@ function describeKind(value: unknown): string {
   return '<unknown>';
 }
 
-function describe(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+/**
+ * A TYPED, non-secret category for a driver/connection failure — NEVER the
+ * driver's `Error.message` (sequence-116 audit, F-04).
+ *
+ * A `pg`/driver error message can carry connection-string-derived material: an
+ * `sslkey`/`sslcert`/`sslrootcert` FILE PATH, an INVALID OPTION VALUE quoted
+ * back verbatim, the resolved host name, and more. Interpolating it into a
+ * diagnostic republishes that material through the store's public error. So the
+ * message is never read. The ONLY thing borrowed from the error is its SQLSTATE
+ * `code` — and only when the driver set one AND it has the closed five-character
+ * SQLSTATE shape (`^[0-9A-Z]{5}$`), which is a documented, non-secret failure
+ * classification and cannot carry a path, a value or free text. Everything else
+ * — a Node system-error code like `ECONNREFUSED`, an absent code, a code of the
+ * wrong shape — collapses to a single constant. The `code` read is itself
+ * guarded, because building a diagnostic must never be the reason a diagnostic
+ * throws.
+ */
+function driverFailureCategory(err: unknown): string {
+  try {
+    const code = (err as { code?: unknown } | null)?.code;
+    if (typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code)) {
+      return `driver error (SQLSTATE ${code})`;
+    }
+  } catch {
+    // Reading `.code` must never be the reason a diagnostic throws; fall
+    // through to the constant category.
+  }
+  return 'driver error (no SQLSTATE)';
+}
+
+/**
+ * The DATABASE's OWN reason for refusing an EXECUTED statement — the diagnostic
+ * for `transaction_aborted`, and DISTINCT from a connection failure.
+ *
+ * `classify` is reached only from `withClient`/`withEstateSession` AFTER a
+ * connection was already checked out (see `checkout`, whose own failure is the
+ * `connection_failed` path). So a driver/database error arriving here is the
+ * server's response to a statement it ran: an append-only trigger, a unique or
+ * check constraint, a genesis-shape rule, a statement-timeout cancellation.
+ * That message NAMES the trigger, constraint or relation that refused —
+ * canonical schema material an operator needs to act, and a credential is not —
+ * so when the DATABASE spoke (the error carries a closed-shape SQLSTATE `code`,
+ * the same non-secret classification `driverFailureCategory` gates on) its
+ * reason is reported as given.
+ *
+ * A failure with NO such `code` is not the database refusing a statement but
+ * the driver or socket failing mid-transaction, whose text CAN carry
+ * connection-derived material (F-04) — it collapses to the same typed category
+ * a connection failure does, never the raw message. The reads are guarded
+ * because building a diagnostic must never be the reason a diagnostic throws.
+ *
+ * (A value THROWN by the caller's own bounded callback never reaches here: it
+ * is tagged `CallbackThrew` at the callback boundary and returned to the caller
+ * unchanged by `classify`, because it is the caller's authored exception, not a
+ * driver diagnostic this store composes.)
+ */
+function databaseRefusalReason(err: unknown): string {
+  try {
+    const code = (err as { code?: unknown } | null)?.code;
+    if (typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code)) {
+      const message = (err as { message?: unknown }).message;
+      if (typeof message === 'string' && message.length > 0) return message;
+    }
+  } catch {
+    // Reading `.code`/`.message` must never be the reason a diagnostic throws;
+    // fall through to the typed category below.
+  }
+  return driverFailureCategory(err);
 }
 
 export type { CanonicalDelta };

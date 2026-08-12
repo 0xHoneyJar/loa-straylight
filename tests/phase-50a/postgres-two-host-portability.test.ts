@@ -32,6 +32,7 @@ import {
   loadKeyring,
 } from '../../fixtures/index.js';
 import {
+  CANONICAL_OBJECT_BINDING_READ,
   CANONICAL_SNAPSHOT_READS,
   assertEstateServiceable,
   assertRestoreServiceable,
@@ -321,10 +322,11 @@ maybe('Phase 50A portability — export from source, restore into a different ho
         const agreeingSql = agreeingObservations.map((o) => o.sql ?? '(unobservable)').join(' | ');
         // NON-VACUITY, by count DERIVED FROM THE PUBLISHED SETS rather than
         // written here: two estate readings, each `BEGIN TRANSACTION READ ONLY`,
-        // the published canonical reads, `COMMIT`. A record that had observed
-        // nothing — the case the substrate's PASS could not distinguish — fails
-        // here, and so does a read path that quietly stopped issuing one of them.
-        const PER_READING = CANONICAL_SNAPSHOT_READS.length + 2;
+        // the object-binding read, the published canonical reads, `COMMIT`. A
+        // record that had observed nothing — the case the substrate's PASS could
+        // not distinguish — fails here, and so does a read path that quietly
+        // stopped issuing one of them.
+        const PER_READING = CANONICAL_SNAPSHOT_READS.length + 3;
         expect(agreeingObservations.length, `recorded: ${agreeingSql}`).toBe(2 * PER_READING);
         for (const observation of agreeingObservations) {
           expect(observation.shape, `unobservable query in: ${agreeingSql}`).toBe('text');
@@ -334,20 +336,25 @@ maybe('Phase 50A portability — export from source, restore into a different ho
           // against a LIVE server names the module that publishes it and the
           // symbol that authorizes it. Nothing was accepted for resembling a read.
           expect(observation.verdict.authority.published, `in: ${agreeingSql}`).toMatch(
-            /^(?:CANONICAL_SNAPSHOT_READS|READ_ONLY_BOUNDARY)$/,
+            /^(?:CANONICAL_SNAPSHOT_READS|CANONICAL_OBJECT_BINDING_READ|READ_ONLY_BOUNDARY)$/,
           );
         }
         // The reads really did run INSIDE the boundary, on the live path: the
         // first and last statement of each reading are the published boundary
-        // phases, and every statement between them is a published read.
+        // phases, the object-binding read runs FIRST between them, and every
+        // statement after it is a published canonical read.
         const liveSql = agreeingObservations.map((o) => (o.sql ?? '').replace(/\s+/g, ' ').trim());
+        const bindingReadText = CANONICAL_OBJECT_BINDING_READ.replace(/\s+/g, ' ').trim();
         const publishedReadText = CANONICAL_SNAPSHOT_READS.map((r) =>
           r.sql.replace(/\s+/g, ' ').trim(),
         );
         for (const offset of [0, PER_READING]) {
           expect(liveSql[offset]).toBe(READ_ONLY_BOUNDARY.begin);
           expect(liveSql[offset + PER_READING - 1]).toBe(READ_ONLY_BOUNDARY.commit);
-          expect(liveSql.slice(offset + 1, offset + PER_READING - 1)).toEqual(publishedReadText);
+          expect(liveSql.slice(offset + 1, offset + PER_READING - 1)).toEqual([
+            bindingReadText,
+            ...publishedReadText,
+          ]);
         }
         // THE PROOF THE VERDICT USED, not a separate re-derivation: the report
         // carries it, so what governed `ok` is what is asserted here.

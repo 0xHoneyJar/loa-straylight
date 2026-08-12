@@ -55,6 +55,13 @@ export interface StoreSnapshot {
 export interface CanonicalRead {
   /** Which `StoreSnapshot` section this read populates. */
   readonly section: keyof StoreSnapshot;
+  /**
+   * The intended canonical relation this read's SQL names, unqualified — the
+   * object the read is BOUND to before it is issued (F-14). It is declared here,
+   * beside the statement, so the object-binding check and the statement cannot
+   * name different relations: both come from this one entry.
+   */
+  readonly relation: string;
   /** The exact statement text, as issued. */
   readonly sql: string;
 }
@@ -83,20 +90,42 @@ export interface CanonicalRead {
  * cannot be read and then silently left out of the comparison either.
  */
 const SNAPSHOT_READ_PLAN = [
-  { section: 'actors', sql: Q.SELECT_ALL_ACTORS, decode: decodeActor },
-  { section: 'estates', sql: Q.SELECT_ALL_ESTATES, decode: decodeEstate },
-  { section: 'keyrings', sql: Q.SELECT_ALL_KEYRINGS, decode: decodeKeyring },
-  { section: 'assertions', sql: Q.SELECT_ALL_ASSERTIONS, decode: decodeAssertion },
-  { section: 'transitions', sql: Q.SELECT_ALL_TRANSITIONS, decode: decodeTransition },
+  { section: 'actors', relation: 'actors', sql: Q.SELECT_ALL_ACTORS, decode: decodeActor },
+  { section: 'estates', relation: 'actor_estates', sql: Q.SELECT_ALL_ESTATES, decode: decodeEstate },
+  { section: 'keyrings', relation: 'keyrings', sql: Q.SELECT_ALL_KEYRINGS, decode: decodeKeyring },
+  {
+    section: 'assertions',
+    relation: 'estate_assertions',
+    sql: Q.SELECT_ALL_ASSERTIONS,
+    decode: decodeAssertion,
+  },
+  {
+    section: 'transitions',
+    relation: 'estate_transitions',
+    sql: Q.SELECT_ALL_TRANSITIONS,
+    decode: decodeTransition,
+  },
   {
     section: 'transitionReceipts',
+    relation: 'transition_receipts',
     sql: Q.SELECT_ALL_TRANSITION_RECEIPTS,
     decode: decodeTransitionReceipt,
   },
-  { section: 'recallReceipts', sql: Q.SELECT_ALL_RECALL_RECEIPTS, decode: decodeRecallReceipt },
-  { section: 'auditEvents', sql: Q.SELECT_ALL_AUDIT_EVENTS, decode: decodeAuditEvent },
+  {
+    section: 'recallReceipts',
+    relation: 'recall_receipts',
+    sql: Q.SELECT_ALL_RECALL_RECEIPTS,
+    decode: decodeRecallReceipt,
+  },
+  {
+    section: 'auditEvents',
+    relation: 'audit_events',
+    sql: Q.SELECT_ALL_AUDIT_EVENTS,
+    decode: decodeAuditEvent,
+  },
 ] as const satisfies readonly {
   section: keyof StoreSnapshot;
+  relation: string;
   sql: string;
   decode: (row: never) => unknown;
 }[];
@@ -109,7 +138,9 @@ const SNAPSHOT_READ_PLAN = [
  * restate them, and it does not describe them.
  */
 export const CANONICAL_SNAPSHOT_READS: readonly CanonicalRead[] = Object.freeze(
-  SNAPSHOT_READ_PLAN.map((step) => Object.freeze({ section: step.section, sql: step.sql })),
+  SNAPSHOT_READ_PLAN.map((step) =>
+    Object.freeze({ section: step.section, relation: step.relation, sql: step.sql }),
+  ),
 );
 
 /**
@@ -144,6 +175,236 @@ const AUTHORIZED_READ_TEXT = new Map<string, CanonicalRead>(
  */
 export function recognizeCanonicalRead(sql: string): CanonicalRead | null {
   return AUTHORIZED_READ_TEXT.get(canonicalReadText(sql)) ?? null;
+}
+
+// ── DB-OBJECT BINDING (sequence-116 audit, F-14) ──────────────────────────
+//
+// Recognizing a statement as one this module ISSUES proved it was one of ours;
+// it did NOT prove that the bare relation name in it resolves to the object we
+// mean. The canonical reads name relations UNQUALIFIED (`FROM actors`), and an
+// unqualified name resolves through the SESSION's `search_path` — so a caller
+// whose search_path puts a schema of their own first could make `FROM actors`
+// resolve to THEIR `actors`: a view with an `ON SELECT` rule, a foreign table, a
+// matview, or a base table in another schema holding other data. `BEGIN
+// TRANSACTION READ ONLY` refuses ordinary DML/DDL, but it does not make an
+// arbitrary relation's READ side-effect-free, and it does not prove the object
+// read is the migrated one. That is the F-14 gap: the SQL was authorized, the
+// OBJECT it resolves to was not.
+//
+// The binding below closes it WITHOUT a search_path change (no `SET`, which the
+// verifier must not need) and WITHOUT parsing SQL. It resolves each canonical
+// name through PostgreSQL's own name resolution, in the SAME session the reads
+// run in, and refuses unless every canonical relation is:
+//
+//   * RESOLVED — a bare name that resolves to nothing is a dropped, renamed or
+//     never-migrated object, and fails closed;
+//   * a BASE TABLE (relkind 'r') — a base table can carry no `ON SELECT` rule and
+//     its triggers do not fire on `SELECT`, so reading it is provably
+//     side-effect-free; a view / matview / foreign table / partitioned parent
+//     planted under a canonical name is not, and is refused;
+//   * in the migration ledger's own NAMESPACE and OWNER — the ledger
+//     (`straylight_schema_migrations`) is created by `migrate.ts` on the
+//     initialization path together with every canonical table, so "lives where
+//     the ledger lives, owned by whoever owns the ledger" is a migration-identity
+//     invariant. A same-named base table planted in another schema, or owned by
+//     another role, does not satisfy it.
+//
+// The binding read itself is fully schema-qualified to `pg_catalog`, so the
+// caller's search_path cannot redirect the binding — only the objects it
+// REPORTS ON. It is a catalog read, side-effect-free by the same relkind
+// argument applied to `pg_catalog.pg_class`/`pg_catalog.pg_namespace`.
+
+/**
+ * The migration ledger relation — the TRUSTED ANCHOR for object binding.
+ *
+ * `migrate.ts` creates exactly this table on the initialization path, in the
+ * same schema as every canonical table, so its object identity (namespace,
+ * owner, kind) is the identity the canonical relations must share. Binding to it
+ * is binding to "the schema the migrations actually built".
+ */
+export const CANONICAL_LEDGER_RELATION = 'straylight_schema_migrations';
+
+/**
+ * Every relation the binding must resolve, in order: the eight canonical
+ * snapshot relations (from the plan, so a read cannot exist unbound), then the
+ * migration-ledger anchor. Published so a consumer proves the binding over the
+ * SAME list this module resolves.
+ */
+export const CANONICAL_BINDING_RELATIONS: readonly string[] = Object.freeze([
+  ...SNAPSHOT_READ_PLAN.map((step) => step.relation),
+  CANONICAL_LEDGER_RELATION,
+]);
+
+/**
+ * THE OBJECT-BINDING READ. For each requested bare relation name it reports what
+ * the CURRENT session's name resolution makes of it: whether it resolves, its
+ * `relkind`, its owning role, and its namespace. Every identifier here is
+ * schema-qualified to `pg_catalog` — `unnest`, `to_regclass`, `pg_class`,
+ * `pg_namespace` — so the caller's search_path cannot redirect the binding read;
+ * `to_regclass(req.relname)` resolves each bare name EXACTLY as the snapshot read
+ * `FROM <relname>` will, so what this reports is what those reads will hit.
+ *
+ * Parameterized (`$1::text[]`): no relation name is interpolated into the text,
+ * and the text is CONSTANT, so it is recognized by exact membership like the
+ * snapshot reads. It contains no `SET`, no `ROLE`, no `GRANT` and no session
+ * characteristic — it changes nothing, it only reports.
+ */
+export const CANONICAL_OBJECT_BINDING_READ = `
+  SELECT
+    req.ord            AS ord,
+    req.relname        AS requested,
+    (c.oid IS NOT NULL) AS resolved,
+    c.relkind          AS relkind,
+    c.relowner         AS relowner,
+    c.relnamespace     AS relnamespace,
+    n.nspname          AS namespace
+  FROM pg_catalog.unnest($1::text[]) WITH ORDINALITY AS req(relname, ord)
+  LEFT JOIN pg_catalog.pg_class AS c
+    ON c.oid = pg_catalog.to_regclass(req.relname)
+  LEFT JOIN pg_catalog.pg_namespace AS n
+    ON n.oid = c.relnamespace
+  ORDER BY req.ord ASC
+`;
+
+/**
+ * One row of the object-binding read: what the session's name resolution makes
+ * of one requested relation. Every field is a catalog FACT, not a caller claim.
+ */
+export interface CanonicalObjectRow {
+  /** The bare relation name that was asked about. */
+  readonly requested: string;
+  /** Did the bare name resolve to any relation under the current session? */
+  readonly resolved: boolean;
+  /** `pg_class.relkind` of the resolved relation, or `null` when unresolved. */
+  readonly relkind: string | null;
+  /** `pg_class.relowner` (an oid), or `null` when unresolved. */
+  readonly relowner: string | number | null;
+  /** `pg_class.relnamespace` (an oid), or `null` when unresolved. */
+  readonly relnamespace: string | number | null;
+  /** `pg_namespace.nspname` of the resolved relation, or `null` when unresolved. */
+  readonly namespace: string | null;
+}
+
+/** The object-binding verdict. `bound` is the whole gate; reasons name failures. */
+export interface ObjectBindingVerdict {
+  /** True only when EVERY canonical relation binds to a trusted base table. */
+  readonly bound: boolean;
+  /** One entry per failed check, relation order. Empty exactly when `bound`. */
+  readonly reasons: readonly string[];
+  /** The ledger's namespace name, for the report; `null` if the ledger is absent. */
+  readonly ledgerNamespace: string | null;
+}
+
+/**
+ * Decide, from the binding read's rows, whether the exact canonical SQL will
+ * resolve to the TRUSTED canonical objects. PURE over catalog facts, so the
+ * decision is provable without a database (F-14).
+ *
+ * The migration ledger is the anchor: it must itself resolve to a base table,
+ * and every canonical relation must resolve to a base table in the ledger's
+ * namespace and owned by the ledger's owner. Anything else — unresolved, a
+ * non-table object, a different schema, a different owner, a duplicate or a
+ * missing row — is fail-closed. There is NO SQL-text inspection: the decision is
+ * over object identity PostgreSQL's own resolver reported, never over a string's
+ * shape.
+ */
+export function evaluateObjectBinding(
+  rows: readonly CanonicalObjectRow[],
+  expected: readonly string[] = CANONICAL_BINDING_RELATIONS,
+): ObjectBindingVerdict {
+  const byName = new Map<string, CanonicalObjectRow>();
+  for (const row of rows) {
+    if (byName.has(row.requested)) {
+      // Cannot happen through the published read (`to_regclass` resolves one oid
+      // per name), so a duplicate means the rows are not what was asked for.
+      return {
+        bound: false,
+        reasons: [`relation ${row.requested}: the binding read returned more than one row for it`],
+        ledgerNamespace: null,
+      };
+    }
+    byName.set(row.requested, row);
+  }
+
+  const ledger = byName.get(CANONICAL_LEDGER_RELATION);
+  if (ledger === undefined || !ledger.resolved || ledger.relkind !== 'r') {
+    return {
+      bound: false,
+      reasons: [
+        `migration ledger ${CANONICAL_LEDGER_RELATION}: a resolved base table (relkind 'r') is the ` +
+          'trusted anchor for object binding, and it is absent or substituted',
+      ],
+      ledgerNamespace: ledger?.resolved ? ledger.namespace : null,
+    };
+  }
+  const ledgerNs = String(ledger.relnamespace);
+  const ledgerOwner = String(ledger.relowner);
+
+  const reasons: string[] = [];
+  for (const name of expected) {
+    if (name === CANONICAL_LEDGER_RELATION) continue;
+    const row = byName.get(name);
+    if (row === undefined) {
+      reasons.push(`relation ${name}: the binding read returned no row for it`);
+      continue;
+    }
+    if (!row.resolved) {
+      reasons.push(
+        `relation ${name}: the bare name did not resolve to any object under the current session`,
+      );
+      continue;
+    }
+    if (row.relkind !== 'r') {
+      reasons.push(
+        `relation ${name}: resolved to relkind ${JSON.stringify(row.relkind)}, not a base table ('r'); ` +
+          "a view, matview, foreign table or partitioned parent under a canonical name can carry " +
+          'read-time side effects and is refused',
+      );
+      continue;
+    }
+    if (String(row.relnamespace) !== ledgerNs) {
+      reasons.push(
+        `relation ${name}: resolved in namespace ${JSON.stringify(row.namespace)}, outside the ` +
+          `migration ledger's schema ${JSON.stringify(ledger.namespace)}; a canonical name planted in ` +
+          'another schema is refused',
+      );
+      continue;
+    }
+    if (String(row.relowner) !== ledgerOwner) {
+      reasons.push(
+        `relation ${name}: owned by a different role than the migration ledger; a canonical name owned ` +
+          'outside the ledger owner is refused',
+      );
+      continue;
+    }
+  }
+
+  return { bound: reasons.length === 0, reasons, ledgerNamespace: ledger.namespace };
+}
+
+/**
+ * Issue the object-binding read on `client` and decide the binding.
+ *
+ * Issued through the SAME client the snapshot reads use, so it observes the SAME
+ * name resolution they will, and — when that client is the verifier's observed
+ * one — it is recorded and must be recognized like any other statement (see
+ * `recognizeCanonicalBindingRead`). This module both PUBLISHES and ISSUES the
+ * binding read, so its authority and its execution cannot drift apart, exactly
+ * as with the snapshot reads.
+ */
+export async function bindCanonicalObjects(client: PoolClient): Promise<ObjectBindingVerdict> {
+  const result = await client.query(CANONICAL_OBJECT_BINDING_READ, [[...CANONICAL_BINDING_RELATIONS]]);
+  return evaluateObjectBinding(result.rows as CanonicalObjectRow[]);
+}
+
+/**
+ * Is this statement the canonical object-binding read? True only for the exact
+ * published text (after the one whitespace normalization `canonicalReadText`
+ * applies), so a consumer that OBSERVED it recognizes it by the same membership
+ * rule the snapshot reads use — not by resembling a catalog query.
+ */
+export function recognizeCanonicalBindingRead(sql: string): boolean {
+  return canonicalReadText(sql) === canonicalReadText(CANONICAL_OBJECT_BINDING_READ);
 }
 
 export async function readStoreSnapshot(client: PoolClient): Promise<StoreSnapshot> {

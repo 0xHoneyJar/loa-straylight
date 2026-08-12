@@ -61,9 +61,12 @@ import type { PoolClient } from 'pg';
 import {
   CANONICAL_SNAPSHOT_READS,
   PostgresEstateHost,
+  PostgresIntegrityError,
+  bindCanonicalObjects,
   canonicalReadText,
   compareSnapshots,
   readStoreSnapshot,
+  recognizeCanonicalBindingRead,
   recognizeCanonicalRead,
   snapshotDigest,
   verifyChains,
@@ -75,8 +78,13 @@ import { replacementHost, sourceHost } from './hosts.js';
 export interface EstateReading {
   /**
    * Non-secret identity of the estate that was read — safe to print, because it
-   * is `PostgresEstateHost.describeTarget()`, which names the host, port and
-   * database `pg` resolved and carries no userinfo and no query text.
+   * is `PostgresEstateHost.describeTarget()`, which renders ONLY a caller-declared
+   * trusted descriptor (or the constant `<target unresolved>`) with the userinfo
+   * position redacted, and reads nothing back from `pg` (F-04). This verifier
+   * opens its host from a bare connection string and declares NO descriptor — it
+   * will not parse that string to reconstruct an identity — so this is the
+   * unresolved constant here, by design. Field-level content comparison, not this
+   * label, is what decides whether two estates agree.
    */
   readonly target: string;
   /** Whole-store content digest. */
@@ -126,8 +134,11 @@ export interface StatementAuthority {
     | 'src/straylight/storage/postgres/portability.ts'
     | 'scripts/phase-50a/verify-existing-restore.ts';
   /** The exported symbol that authorizes it. */
-  readonly published: 'CANONICAL_SNAPSHOT_READS' | 'READ_ONLY_BOUNDARY';
-  /** Which entry of that set: a snapshot section, or a boundary phase. */
+  readonly published:
+    | 'CANONICAL_SNAPSHOT_READS'
+    | 'CANONICAL_OBJECT_BINDING_READ'
+    | 'READ_ONLY_BOUNDARY';
+  /** Which entry of that set: a snapshot section, the object binding, or a boundary phase. */
   readonly entry: string;
 }
 
@@ -269,6 +280,19 @@ export function classifyObservedSql(sql: string): ObservationVerdict {
       },
     };
   }
+  // The object-binding read is also `portability.ts`'s, issued by
+  // `bindCanonicalObjects` before any snapshot read to prove the canonical names
+  // resolve to trusted base tables (F-14). Recognized by the same membership rule.
+  if (recognizeCanonicalBindingRead(sql)) {
+    return {
+      recognized: true,
+      authority: {
+        publisher: 'src/straylight/storage/postgres/portability.ts',
+        published: 'CANONICAL_OBJECT_BINDING_READ',
+        entry: 'canonical-object-binding',
+      },
+    };
+  }
   const boundary = BOUNDARY_TEXT.get(canonicalReadText(sql));
   if (boundary !== undefined) {
     return {
@@ -284,7 +308,8 @@ export function classifyObservedSql(sql: string): ObservationVerdict {
     recognized: false,
     reason:
       'UNRECOGNIZED statement: no module publishes it as one it issues ' +
-      `(not in CANONICAL_SNAPSHOT_READS, not in READ_ONLY_BOUNDARY): ${canonicalReadText(sql)}`,
+      '(not in CANONICAL_SNAPSHOT_READS, not the CANONICAL_OBJECT_BINDING_READ, ' +
+      `not in READ_ONLY_BOUNDARY): ${canonicalReadText(sql)}`,
   };
 }
 
@@ -380,19 +405,27 @@ export function observeQueries<TClient extends { query: (...args: never[]) => un
 }
 
 /**
- * Take the canonical snapshot INSIDE the read-only transaction boundary.
+ * Take the canonical snapshot INSIDE the read-only transaction boundary, but not
+ * before every canonical relation is BOUND to a trusted object (F-14).
  *
- * The order of statements is `BEGIN TRANSACTION READ ONLY`, the eight published
- * canonical reads, then `COMMIT` — or `ROLLBACK` if a read fails. Every one of
- * those statements passes through whatever client is handed in, so when that
- * client is the observed one they are all recorded and all must be authorized;
- * this module's own boundary is held to the same rule as `portability.ts`'s reads.
+ * The order of statements is `BEGIN TRANSACTION READ ONLY`, the object-binding
+ * read, the eight published canonical reads, then `COMMIT` — or `ROLLBACK` if the
+ * binding is refused or a read fails. The binding read runs FIRST and inside the
+ * same transaction, so it resolves the canonical names under exactly the session
+ * (and `search_path`) the snapshot reads will use; if it does not prove every
+ * canonical name resolves to a trusted base table, this throws BEFORE any
+ * snapshot read is issued, so a substituted relation is never read even once.
+ * Every one of those statements passes through whatever client is handed in, so
+ * when that client is the observed one they are all recorded and all must be
+ * authorized; this module's own boundary is held to the same rule as
+ * `portability.ts`'s reads and binding.
  *
  * Exported so the issuance ORDER can be proven at the real seam without a
  * database. That exposes no statement surface: the caller supplies a client (as
  * `observeQueries` already accepts one, by design) and cannot supply, name or
- * influence a statement — the texts come from `READ_ONLY_BOUNDARY` and from
- * `readStoreSnapshot`'s published plan, and from nowhere else.
+ * influence a statement — the texts come from `READ_ONLY_BOUNDARY`, from
+ * `bindCanonicalObjects`, and from `readStoreSnapshot`'s published plan, and from
+ * nowhere else.
  */
 export async function readSnapshotUnderReadOnlyBoundary(
   client: PoolClient,
@@ -400,6 +433,18 @@ export async function readSnapshotUnderReadOnlyBoundary(
   await client.query(READ_ONLY_BOUNDARY.begin);
   let snapshot: StoreSnapshot;
   try {
+    // BIND FIRST. A canonical name that does not resolve to a trusted base table
+    // in the migration ledger's schema is refused here, before a single snapshot
+    // read is issued against it — so a view with an `ON SELECT` rule, a foreign
+    // table, or a same-named table in another schema is never read (F-14).
+    const binding = await bindCanonicalObjects(client);
+    if (!binding.bound) {
+      throw new PostgresIntegrityError(
+        'restore_verification_failed',
+        'canonical object binding failed — the canonical relations do not resolve to the ' +
+          `trusted migrated objects under this session: ${binding.reasons.join(' | ')}`,
+      );
+    }
     snapshot = await readStoreSnapshot(client);
   } catch (err) {
     try {

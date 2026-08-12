@@ -79,6 +79,46 @@
 
 import { PostgresEstateHost } from '../../src/straylight/storage/postgres/index.js';
 
+// ── SEALING THE STORE'S OPERATIONS AT MODULE LOAD (sequence-116 audit, F-09) ──
+//
+// The rejected design let a destructive capability be redirected AFTER it was
+// minted. `authorizedBoundStore` read `store.migrate`/`store.withClient`/
+// `store.withEstateSession` and `closeBoundProofStore` read `store.close`, and
+// every one of those reads resolves through the `PostgresEstateHost` prototype
+// — an EXPORTED class whose prototype any code in the process can reassign. A
+// probe that replaced `PostgresEstateHost.prototype.withClient` on a genuine
+// minted handle redirected the store's `DROP SCHEMA`/`CREATE SCHEMA` through a
+// substituted client. Binding at mint did not help, because the bind captured
+// whatever the (already-replaced) prototype held. And even a capability whose
+// top-level method was pinned would re-dispatch INTERNALLY: the genuine
+// `withClient` body calls `this.checkout()` / `this.assertOpen()`, which resolve
+// through that same mutable prototype — so the client the destructive SQL runs
+// on was redirectable one level down regardless.
+//
+// The finite mechanism that closes BOTH channels at once, before/after mint:
+//
+//   1. CAPTURE the genuine operation identities once, here, at module load —
+//      before any test body has run (ES modules are singletons; this top-level
+//      code executes on first import, strictly before the tests that could
+//      mutate the class). A minted capability invokes THESE, bound to the
+//      module-private store, never a property re-read off a live prototype or an
+//      instance own-property shadow.
+//
+//   2. FREEZE the prototype, so no method on it — the four captured above, and
+//      the private `checkout`/`assertOpen`/`classify` the captured methods call
+//      internally — can be reassigned at all. A redirection attempt throws
+//      (module code is strict-mode) instead of taking hold, so the internal
+//      re-dispatch channel is sealed together with the outer one.
+//
+// Neither the capture nor the freeze is reachable or undoable by a caller, and
+// both are complete before the first test runs.
+const HOST_MIGRATE: PostgresEstateHost['migrate'] = PostgresEstateHost.prototype.migrate;
+const HOST_WITH_CLIENT: PostgresEstateHost['withClient'] = PostgresEstateHost.prototype.withClient;
+const HOST_WITH_ESTATE_SESSION: PostgresEstateHost['withEstateSession'] =
+  PostgresEstateHost.prototype.withEstateSession;
+const HOST_CLOSE: PostgresEstateHost['close'] = PostgresEstateHost.prototype.close;
+Object.freeze(PostgresEstateHost.prototype);
+
 /** The container each fixed harness instance runs in. */
 export type ProofContainer =
   | 'straylight-phase-50a-source'
@@ -537,12 +577,16 @@ export function authorizedToolTarget(
  * symbol of this module returns it.
  *
  * What a consumer gets instead is `authorizedBoundStore(bound)`: a FRESH frozen
- * capability, minted per call, whose operations are the store's own methods
- * ALREADY BOUND to the store. Nothing reachable from it can be made to point
- * elsewhere — a bound function does not expose its receiver, freezing refuses
- * field replacement, and a mutation, proxy, copy, spread or subclass of a handle
- * is not what a destructive consumer acts on, because that consumer mints its OWN
- * capability from the handle and an altered handle is not in the registry.
+ * capability, minted per call, whose operations are the GENUINE store methods
+ * CAPTURED AT MODULE LOAD (`HOST_*` above) and bound to the store — not
+ * properties re-read off the store or its prototype at mint time. Combined with
+ * the frozen prototype, nothing reachable from the capability can be made to
+ * point elsewhere: a prototype replacement throws rather than taking hold, an
+ * instance own-property shadow is never consulted, a bound function does not
+ * expose its receiver, freezing refuses field replacement, and a mutation,
+ * proxy, copy, spread or subclass of a handle is not what a destructive consumer
+ * acts on, because that consumer mints its OWN capability from the handle and an
+ * altered handle is not in the registry.
  *
  * Teardown is a module operation for the same reason: `closeBoundProofStore`.
  */
@@ -559,9 +603,10 @@ export interface BoundProofStore {
 declare const BOUND_PROOF_STORE: unique symbol;
 
 /**
- * The operations a bound store authorizes, as functions ALREADY BOUND to the
- * store this module constructed. This is the whole of what a consumer may do; the
- * store object itself is not part of it and is not obtainable from it.
+ * The operations a bound store authorizes, as the GENUINE store methods captured
+ * at module load and bound to the store this module constructed (F-09). This is
+ * the whole of what a consumer may do; the store object itself is not part of it
+ * and is not obtainable from it.
  */
 export interface AuthorizedBoundStore {
   readonly host: ProofHost;
@@ -631,16 +676,24 @@ function boundRecord(
  * anything reachable from the handle it was given — which is no longer a
  * discipline it must observe but the only thing available, since the handle holds
  * no store. The returned object is FRESH and FROZEN on every call and its
- * operations are pre-bound, so a capability that has been minted cannot be
- * redirected afterwards by anyone, including the consumer itself.
+ * operations are the GENUINE methods captured at module load, pre-bound to the
+ * store, so a capability that has been minted cannot be redirected afterwards by
+ * anyone — including the consumer itself — whether by replacing a prototype
+ * method (the prototype is frozen) or shadowing an instance one (never read).
  */
 export function authorizedBoundStore(bound: BoundProofStore): AuthorizedBoundStore {
   const { host, store } = boundRecord(bound);
+  // The operations are the GENUINE method identities captured at module load
+  // (`HOST_*`), bound to the module-private store — never a property re-read off
+  // the store or its prototype (F-09). A prototype replacement or an instance
+  // own-property shadow, before OR after this mint, changes nothing about what
+  // these functions are, and the frozen prototype refuses the replacement in the
+  // first place.
   return Object.freeze({
     host,
-    migrate: store.migrate.bind(store),
-    withClient: store.withClient.bind(store),
-    withEstateSession: store.withEstateSession.bind(store),
+    migrate: HOST_MIGRATE.bind(store),
+    withClient: HOST_WITH_CLIENT.bind(store),
+    withEstateSession: HOST_WITH_ESTATE_SESSION.bind(store),
   });
 }
 
@@ -652,7 +705,10 @@ export function authorizedBoundStore(bound: BoundProofStore): AuthorizedBoundSto
  * Idempotent, because `PostgresEstateHost.close` is.
  */
 export async function closeBoundProofStore(bound: BoundProofStore): Promise<void> {
-  await boundRecord(bound).store.close();
+  // Teardown runs the GENUINE close captured at module load (`HOST_CLOSE`),
+  // applied to the module-private store — not `store.close`, which would
+  // re-read a redirectable prototype/instance method (F-09).
+  await HOST_CLOSE.call(boundRecord(bound).store);
 }
 
 /**
