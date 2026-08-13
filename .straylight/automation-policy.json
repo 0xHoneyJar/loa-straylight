@@ -17,7 +17,7 @@
   "automatic_secret_use": false,
   "automatic_progression_beyond_mvp2": false,
   "maximum_patch_cycles": 3,
-  "lease_duration_minutes": 240,
+  "lease_duration_minutes": 2880,
   "stuck_lane_threshold_hours": 72,
   "actor_allowlist": {
     "_note": "GitHub commenter identity is the only authenticated identity available in v1; actor_role is a claimed field, not a cryptographic identity (ADR-050 §6). All model roles currently map to the operator's account. Distinct bot identities are a hard precondition for ever enabling auto_merge. github-actions[bot] is allowlisted for SYSTEM events only — it must never appear under operator, or workflow-posted comments could claim operator authority.",

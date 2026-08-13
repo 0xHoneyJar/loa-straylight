@@ -10,7 +10,7 @@ The work lease defined by ADR-050 is a **development control-plane coordination 
 
 ADR-050 coordinates systems that are building Straylight. It does not claim those systems are already running inside the finished Straylight authorization architecture.
 
-This distinction matters because the control-plane lease policy is intentionally operational. Its duration, renewal behavior, watchdog behavior, retry routing, and other parameters may be changed to suit the development environment without changing Straylight product doctrine. The current automation policy configures `lease_duration_minutes` as `240`; that value is a control-plane policy choice, not a four-hour Straylight authorization rule.
+This distinction matters because the control-plane lease policy is intentionally operational. Its duration, renewal behavior, watchdog behavior, retry routing, and other parameters may be changed to suit the development environment without changing Straylight product doctrine. The current automation policy configures `lease_duration_minutes` as `2880` — 48 hours, raised from the earlier `240` (four hours) because large coherent single-context implementation and proof runs can legitimately exceed four hours. That value is a control-plane policy choice, not a Straylight authorization rule of 48 hours, of four hours, or of any other fixed interval, and it is not a product invariant; a later development-ergonomics change may raise or lower it again under ordinary control-plane authorization.
 
 An expired development lease therefore means:
 

@@ -591,7 +591,9 @@ on every replay. Same durable content → same projection, on every run.
 Claude and Codex acquire a lease (`implementer.lease_acquired` /
 `auditor.lease_acquired`) before working. A lease records: lane ID, actor
 role, lease ID, grant sequence, acquisition time, expiry time, expected
-state. Duration comes from `policy.lease_duration_minutes` (default 240).
+state. Duration comes from `policy.lease_duration_minutes` — a mandatory
+policy field with no implementation fallback; the current shipped policy
+is 2880 minutes (48 hours).
 
 The reducer rejects: a second active lease for the same work role;
 completion from an actor without the active lease; lease release by

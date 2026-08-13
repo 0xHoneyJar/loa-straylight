@@ -41,6 +41,13 @@ describe("committed automation policy", () => {
   it("bounds patch cycles and leases", () => {
     expect(policy.maximum_patch_cycles).toBe(3);
     expect(policy.lease_duration_minutes).toBeGreaterThan(0);
+    // Deliberate operator ergonomics choice, recorded in the ADR-050
+    // development-worker lease applicability clarification: 48h development
+    // work leases (2880 minutes), raised from 240. Pinned here so the value
+    // cannot silently drift back. The reducer/watchdog duration tests stay
+    // policy-driven against the generic fixture — the mechanism is not tied
+    // to this number.
+    expect(policy.lease_duration_minutes).toBe(2880);
   });
 
   it("kill switch flipped off is honored by the validator-level reducer path", () => {
