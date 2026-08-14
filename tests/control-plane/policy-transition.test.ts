@@ -28,7 +28,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { canonicalize } from "../../.straylight/lib/canonical.mjs";
+import { canonicalize, payloadDigest } from "../../.straylight/lib/canonical.mjs";
 import { parseStrict } from "../../.straylight/lib/strict-json.mjs";
 import { validatePolicy, ADMISSION_FIELDS, ACTOR_ROLES } from "../../.straylight/lib/validate.mjs";
 import { admissionEpochDigest } from "../../.straylight/lib/admission-locks.mjs";
@@ -47,6 +47,11 @@ const COMMITTED_PATH = ".straylight/automation-policy.json";
 // is present.
 const V1_FIXTURE_PATH = "tests/control-plane/fixtures/policy/automation-policy.v1.json";
 const V1_FIXTURE_SHA256 = "e57db658986f991c0d65d4e69220183c4869f6ace176bf917ad0b51eb34f5bed";
+// Second, independent lock over the same evidence, matching the lane-fixture
+// mechanism: the digest of the CANONICALIZED PARSED policy. The byte lock binds
+// the file; this one binds its MEANING, so a reformat that preserves neither the
+// bytes nor the values cannot be mistaken for a whitespace change.
+const V1_FIXTURE_CANONICAL = "sha256:4e48dba1c6722da9569d7c5cb9f6da51b8a18aa2e4adc96b7f183be7516b9916";
 const SOURCE_MAIN_SHA = "5625c5be425c71fce90a22e81d123b42ed104538";
 
 function bytesSha256(path: string): string {
@@ -59,7 +64,14 @@ function parsed(path: string): any {
   return structuredClone((out as any).value);
 }
 
-const v1 = () => parsed(V1_FIXTURE_PATH);
+// The ONE reader for the v1 evidence. Both locks are verified BEFORE the value is
+// handed out, so no proof in this file can rest on a fixture that drifted.
+function v1(): any {
+  expect(bytesSha256(V1_FIXTURE_PATH), `${V1_FIXTURE_PATH} bytes changed`).toBe(V1_FIXTURE_SHA256);
+  const value = parsed(V1_FIXTURE_PATH);
+  expect(payloadDigest(value), `${V1_FIXTURE_PATH} canonical content changed`).toBe(V1_FIXTURE_CANONICAL);
+  return value;
+}
 const committed = () => parsed(COMMITTED_PATH);
 
 // A v2 policy over an arbitrary epoch history, with the required top-level
@@ -80,12 +92,36 @@ const E901 = makeEpoch({ epoch_id: "epoch-901", governs_from: "2026-08-01T00:00:
 
 const errorsOf = (r: ReturnType<typeof validatePolicyTransition>) => (r.ok ? [] : r.errors).join("; ");
 
+// An APPEND additionally requires the frozen frontier cutover: both sides
+// already disabled, and evidence of where the durable event stream ended. Those
+// rules have their own suite (frozen-frontier-transition.test.ts); here they are
+// satisfied minimally so that the PREFIX rules below are proven in isolation.
+const frozen = (p: any): any => {
+  p.enabled = false;
+  return p;
+};
+const FIXTURE_FRONTIER = Object.freeze({
+  schema: "straylight.durable-event-frontier.v1",
+  repository: "0xHoneyJar/loa-straylight",
+  captured_at: "2026-07-15T00:00:00Z",
+  lanes: [{
+    issue_number: 1,
+    lane_id: "lane-fixture",
+    last_event_comment_id: 1,
+    last_event_created_at: "2026-07-14T00:00:00Z",
+    event_count: 1,
+  }],
+  max_event_created_at: "2026-07-14T00:00:00Z",
+});
+const CTX = Object.freeze({ repository: "0xHoneyJar/loa-straylight", frontier: FIXTURE_FRONTIER });
+
 // =============================================================================
 // The evidence the migration proof rests on.
 // =============================================================================
 describe("the previous committed v1 policy, pinned as evidence", () => {
-  it("the fixture's bytes match their pinned digest", () => {
+  it("the fixture's bytes AND its canonical content match their pinned digests", () => {
     expect(bytesSha256(V1_FIXTURE_PATH)).toBe(V1_FIXTURE_SHA256);
+    expect(payloadDigest(parsed(V1_FIXTURE_PATH))).toBe(V1_FIXTURE_CANONICAL);
   });
 
   it("the fixture is byte-identical to the v1 policy committed at the base main SHA", () => {
@@ -208,27 +244,45 @@ describe("B1 — v1 → v2: the genesis epoch transcribes v1 without deciding an
 // =============================================================================
 describe("B3 — appending a new epoch is allowed", () => {
   it("appending one epoch onto an unlocked history is accepted", () => {
-    const out = validatePolicyTransition(v2With([E900]), v2With([E900, E901]));
+    const out = validatePolicyTransition(frozen(v2With([E900])), frozen(v2With([E900, E901])), CTX);
     expect(out.ok, errorsOf(out)).toBe(true);
     if (out.ok) {
       expect(out.kind).toBe("v2-append");
       expect(out.previous_epochs).toBe(1);
       expect(out.candidate_epochs).toBe(2);
       expect(out.appended).toEqual(["epoch-901"]);
+      // The verdict carries the evidence it rested on, not a claim about it.
+      expect(out.frontier).toEqual({
+        repository: "0xHoneyJar/loa-straylight",
+        captured_at: "2026-07-15T00:00:00Z",
+        lanes: 1,
+        events: 1,
+        max_event_created_at: "2026-07-14T00:00:00Z",
+        appended_governs_from: "2026-08-01T00:00:00Z",
+      });
     }
   });
 
-  it("appending two at once is allowed, and an unchanged policy is a trivial append", () => {
+  it("appending two at once is refused — one epoch per reviewed transition", () => {
     const two = validatePolicyTransition(
-      v2With([E900]),
-      v2With([E900, E901, makeEpoch({ epoch_id: "epoch-902", governs_from: "2026-09-01T00:00:00Z", lease_duration_minutes: 300 })]),
+      frozen(v2With([E900])),
+      frozen(v2With([E900, E901, makeEpoch({ epoch_id: "epoch-902", governs_from: "2026-09-01T00:00:00Z", lease_duration_minutes: 300 })])),
+      CTX,
     );
-    expect(two.ok, errorsOf(two)).toBe(true);
-    if (two.ok) expect(two.appended).toEqual(["epoch-901", "epoch-902"]);
+    expect(two.ok).toBe(false);
+    expect(errorsOf(two)).toMatch(/2 epochs appended in one transition \("epoch-901", "epoch-902"\)/);
+    expect(errorsOf(two)).toMatch(/single authorizable fact/);
+  });
 
+  it("an unchanged admission history is a LIVE-only transition, not an append", () => {
     const same = validatePolicyTransition(committed(), committed());
     expect(same.ok, errorsOf(same)).toBe(true);
-    if (same.ok) expect(same.appended).toEqual([]);
+    if (same.ok) {
+      expect(same.kind).toBe("v2-live");
+      expect(same.appended).toEqual([]);
+      // No admission decision moves, so no evidence is required or consulted.
+      expect(same.frontier).toBeNull();
+    }
   });
 
   it("LIVE fields may change freely — the kill switch would not be a kill switch otherwise", () => {
@@ -249,7 +303,7 @@ describe("B3 — appending a new epoch is allowed", () => {
     // has to be a policy the protocol would actually accept, and the previous
     // history has to survive as a prefix. Step 2 of the runbook in
     // admission-locks.mjs exists for exactly this.
-    const candidate = committed();
+    const candidate = frozen(committed());
     candidate.admission_history.push(makeEpoch({
       epoch_id: "epoch-002",
       governs_from: "2026-09-01T00:00:00Z",
@@ -257,9 +311,12 @@ describe("B3 — appending a new epoch is allowed", () => {
       provenance: { attributed_to: "test-fixture", reference: "hypothetical append with no lock entry" },
     }));
     for (const f of ADMISSION_FIELDS) candidate[f] = structuredClone(candidate.admission_history[1][f]);
-    const out = validatePolicyTransition(committed(), candidate);
+    // Frozen on both sides with sound evidence, so the ONLY thing left to refuse
+    // it is the missing lock entry.
+    const out = validatePolicyTransition(frozen(committed()), candidate, CTX);
     expect(out.ok).toBe(false);
     expect(errorsOf(out)).toMatch(/accepted epoch lock\(s\)/);
+    expect(errorsOf(out)).not.toMatch(/ALREADY FROZEN|context\.frontier|strictly after/);
     expect(readFileSync(".straylight/lib/admission-locks.mjs", "utf8")).toMatch(/APPEND its lock entry below/);
   });
 });
@@ -315,7 +372,7 @@ describe("B4–B7 — the accepted prefix is untouchable", () => {
   });
 
   it("B7: inserting an epoch INTO the accepted prefix is refused", () => {
-    const out = validatePolicyTransition(v2With([E900, E901]), v2With([E899, E900, E901]));
+    const out = validatePolicyTransition(frozen(v2With([E900, E901])), frozen(v2With([E899, E900, E901])), CTX);
     expect(out.ok).toBe(false);
     expect(errorsOf(out)).toMatch(/preceded by an insertion/);
     // Length grew, so nothing about it looks like an append except the count.
@@ -343,10 +400,18 @@ describe("B8 — an edit that the runtime lock cannot see is still refused here"
     expect(src).toMatch(/independence is the point/i);
     expect(code).not.toMatch(/admission-locks/);
     expect(code).not.toMatch(/ACCEPTED_ADMISSION_EPOCH_LOCKS|acceptedEpochLockErrors|admissionEpochDigest/);
-    // Its only inputs are its two arguments: no files, no clock, no lock table.
+    // Its only inputs are its ARGUMENTS: no files, no clock, no lock table, and
+    // no network — the frontier evidence is passed in, never fetched.
     expect(code).not.toMatch(/readFileSync|new Date|Date\.now|process\.env/);
+    expect(code).not.toMatch(/execFileSync|spawn|fetch\(|https?:\/\//);
     const imports = [...code.matchAll(/from "([^"]+)"/g)].map((m) => m[1]);
-    expect(imports.sort()).toEqual(["./canonical.mjs", "./validate.mjs"]);
+    expect(imports.sort()).toEqual(["./canonical.mjs", "./durable-frontier.mjs", "./validate.mjs"]);
+    // ...and the frontier library it leans on is pure by the same standard.
+    const frontierSrc = readFileSync(".straylight/lib/durable-frontier.mjs", "utf8");
+    const frontierCode = frontierSrc.split("\n").map((l) => (l.trim().startsWith("//") ? "" : l)).join("\n");
+    expect(frontierCode).not.toMatch(/readFileSync|new Date|Date\.now|process\.env|execFileSync|fetch\(/);
+    expect([...frontierCode.matchAll(/from "([^"]+)"/g)].map((m) => m[1]).sort())
+      .toEqual(["./lane-target.mjs", "./validate.mjs"]);
   });
 
   it("J8: with the runtime lock silent (unlocked epochs), the edit is caught anyway", () => {

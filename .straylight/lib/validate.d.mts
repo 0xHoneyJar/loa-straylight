@@ -64,3 +64,5 @@ export declare function validatePrMetadata(v: unknown): ValidationResult;
  * Date.UTC (whose legacy remapping collapses years 0–99 onto 1900–1999).
  */
 export declare function parseIsoInstant(s: unknown): number | null;
+/** The one canonical "owner/name" repository pattern. */
+export declare const REPO_RE: RegExp;

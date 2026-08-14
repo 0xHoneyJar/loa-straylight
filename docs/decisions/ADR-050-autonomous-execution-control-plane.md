@@ -224,13 +224,28 @@ Policy `straylight.automation-policy.v2` binds those four fields to
   editing, deleting, reordering, or substituting an accepted epoch fails
   closed. The lock is deliberately OUTSIDE the policy file: a digest
   stored beside the epoch could be recomputed by whoever edits it.
-- **Policy evolution is append-only, mechanically.**
+- **Policy evolution is append-only.**
   `.straylight/lib/policy-transition.mjs` requires the previous committed
   admission history to remain a canonical prefix of any candidate. It
   never consults the lock table, so the two protections are independent:
   editing an epoch and recomputing its lock in the same change satisfies
-  the runtime lock and is still refused by the transition guard. This is
-  enforcement, not convention.
+  the runtime lock and is still refused by the transition guard.
+- **Every appended epoch must be prospective, not merely last in the
+  array.** An epoch appended at the end whose `governs_from` points back
+  into time that already has events in it satisfies both protections above
+  — clean append, untouched prefix, valid locks — and still re-judges
+  recorded history. So an APPEND additionally requires the frozen frontier
+  cutover: the previous committed policy already `enabled: false`, the
+  candidate still `enabled: false`, explicit durable event frontier
+  evidence (`.straylight/lib/durable-frontier.mjs`; captured read-only by
+  `scripts/capture-durable-frontier.mjs`), and a boundary strictly after
+  the global maximum authenticated event time DERIVED from that evidence.
+  Requiring the freeze to be already committed is what makes the evidence
+  meaningful: the append cannot be combined with the change that stops
+  automation. Policy evolution is therefore a multi-transition operation —
+  freeze, capture, append, re-enable — each merged and audited separately.
+  Live-only changes (admission history canonically identical) need no
+  frontier, which is what permits the freeze and the later re-enable.
 
 **What this does and does not claim.** It does not make protocol code
 immutable, and there is no cryptographic anchor, notary, or signature
@@ -240,6 +255,25 @@ protocol-code change, reviewed and audited at an exact SHA. Provenance
 fields (including strings like `operator:eileen`) are descriptive
 metadata bound by the epoch digest — they authenticate nothing and grant
 nothing; authority comes from the operator-controlled repository change.
+
+**Where enforcement actually sits.** Accepted prefix integrity is
+mechanically enforced at runtime: every load of the real committed policy
+fails closed if the accepted history's content, ids, or length changed.
+Candidate policy evolution is mechanically checked by the transition
+guard, which is an executable audit gate — no repository setting invokes
+it on a push, and this ADR asserts none — and becomes an authorized
+repository transition only through the operator's exact-SHA gate. Two
+limits belong to that gate rather than to the code, and are stated rather
+than papered over: the transition library cannot prove that GitHub lane
+discovery was complete, and a policy file carries no repository identity,
+so the library can only require that the caller name a repository and that
+the evidence agree. The verdict echoes the repository, capture instant,
+lane count, event count, and frontier maximum it relied on, so the review
+reads the evidence instead of assuming it. Nothing here defeats the
+operator: `operator:eileen` can post lane comments by hand or change
+protocol code, and protocol-code changes were never inside the claim — the
+operator must not write lane events during a cutover, and evidence
+overtaken by one is stale and must be recaptured.
 
 **Live fields stay live.** `enabled` remains the immediate global kill
 switch, and `mode`, `auto_merge`, the `automatic_*` prohibitions, and
@@ -253,8 +287,9 @@ durable protocol event in the repository (issue #118 comment
 5080520742). That boundary records when the replayable history begins; it
 asserts nothing about authorization or policy effect before the control
 plane existed. The shipped lease duration remains **240 minutes**; a
-longer lease would be a new appended epoch with its own lock entry and
-its own review, and would not change how any earlier lease was judged.
+longer lease would be a new appended epoch with its own lock entry and its
+own review, appended through the frozen frontier cutover, and could not
+change how any earlier lease was judged.
 
 ---
 

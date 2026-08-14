@@ -19,7 +19,7 @@ import { pinnedEpochLockErrors, acceptedEpochLockErrors } from "./admission-lock
 const LANE_ID_RE = /^lane-[a-z0-9][a-z0-9-]{1,62}$/;
 const PHASE_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
-const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+export const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BRANCH_RE = /^[A-Za-z0-9._/-]{1,200}$/;
 const LEASE_ID_RE = /^lease-[a-z0-9][a-z0-9-]{1,62}$/;
 const EVENT_ID_RE = /^evt-[a-z0-9][a-z0-9-]{1,62}$/;

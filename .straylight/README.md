@@ -134,8 +134,12 @@ that nothing merges.
     policy-transition-check.mjs ← the reusable comparison command:
                                `--previous <file> --candidate <file>`
                                (both required, no defaults) → exit 0 when
-                               the change is an append / a faithful v1→v2
-                               transcription, exit 2 otherwise
+                               the change is an append / a live-only change
+                               / a faithful v1→v2 transcription, exit 2
+                               otherwise. An admission APPEND additionally
+                               requires `--frontier <file> --repository
+                               <owner/name>` and enabled:false on both
+                               sides (§ "Admission policy history")
     policy-gate.mjs          ← canonical workflow policy gate (exit 0 =
                                valid policy + enabled boolean true; exit 3 =
                                valid kill switch; exit 2 = malformed policy,
@@ -641,7 +645,7 @@ editing today's policy silently re-judged the past. It was not
 hypothetical: raising `lease_duration_minutes` from 240 to 2880 flipped
 lane #122's refused `lease-expiry-unbounded` claim into an accepted one.
 
-Policy v2 fixes this in three independent layers.
+Policy v2 fixes this in four independent layers.
 
 **1. Selection by authenticated observation time.** The four fields live
 in `admission_history`, an ordered list of epochs. Epoch *i* governs the
@@ -685,9 +689,61 @@ the previous policy as input, so the two protections are independent:
 editing an epoch and recomputing its lock entry in the same change
 satisfies the runtime lock, and the transition guard still refuses it.
 
-**Append-only here is mechanically enforced, not a convention.** (Event
-append-orientation on GitHub comments is a different matter and remains a
-convention — see § "The one-paragraph model".)
+**4. Every appended epoch must be prospective: the frozen frontier
+cutover.** Layers 2 and 3 both hold for an epoch appended at the END of
+the array whose `governs_from` points BACKWARDS into time that already
+has events in it. The array is a clean append, the accepted prefix is
+untouched, every lock still matches — and replaying the same durable
+comments now judges them under the new epoch. Ordering the array is not
+the same as being prospective; the boundary has to be later than the
+history, not merely later than the previous boundary.
+
+So appending an admission epoch requires four things together:
+
+- the PREVIOUS committed policy already has `enabled: false`;
+- the CANDIDATE also has `enabled: false`;
+- explicit **durable event frontier** evidence
+  ([`lib/durable-frontier.mjs`](./lib/durable-frontier.mjs)) — the
+  repository, the capture instant, every cp-lane with its `lane_id`, its
+  last protocol-event comment id, that event's authenticated `created_at`,
+  and its protocol-event count;
+- the appended epoch's `governs_from` **strictly after** the global
+  maximum authenticated event time, which the validator DERIVES from the
+  lane entries and cross-checks against the frontier's own claimed
+  maximum in both directions (a claim that disagrees is a refusal, not a
+  correction).
+
+Exactly one epoch may be appended per reviewed transition, so the thing
+being reviewed is a single authorizable fact. A missing, malformed,
+duplicate-laned, incoherent, or stale-relative-to-its-own-contents
+frontier is a refusal.
+
+The first two conditions are what make the third meaningful: because the
+freeze must ALREADY be committed, the append cannot be combined with the
+change that stops automation, and nothing can be written between
+capturing the evidence and relying on it. This deliberately makes policy
+evolution a multi-transition operation — freeze, capture, append,
+re-enable — each merged and audited on its own. Historical authority is
+worth more than saving a round trip. The kill switch itself is never
+epoched: `enabled` is live operational policy, and a live-only change
+(admission history canonically identical) needs no frontier, which is
+what lets the freeze and the later re-enable happen at all.
+
+**What each layer actually enforces.** Accepted prefix integrity is
+enforced mechanically at runtime — every load of the real policy fails
+closed if the accepted history's content, ids, or length changed. Candidate
+policy evolution is checked mechanically by the transition guard, which is
+an executable audit gate: nothing in the repository invokes it on a push,
+it asserts no repository settings, and a candidate becomes an authorized
+repository transition only through the operator's exact-SHA review. Two
+limits belong to that review rather than to the code: the transition
+library cannot prove that lane discovery was complete, and a policy file
+carries no repository identity, so the library can only require that the
+caller name a repository and that the evidence agree. The verdict echoes
+the repository, capture instant, lane count, event count, and frontier
+maximum it relied on, so the review reads the evidence instead of assuming
+it. (Event append-orientation on GitHub comments is a different matter and
+remains a convention — see § "The one-paragraph model".)
 
 **The genesis epoch.** `epoch-001` transcribes, without alteration, the
 four admission fields of `straylight.automation-policy.v1` as committed
@@ -722,18 +778,74 @@ top-level projection): corridor `phase-49p…phase-50b`,
 `maximum_patch_cycles: 3`, `lease_duration_minutes: 240`, single-operator
 allowlist. **240 minutes is the active lease duration.** A longer lease
 (for example 48 hours) would be a NEW appended epoch with its own lock
-entry and its own review; nothing about it is active here, and appending
-one would not change how any earlier lease was judged.
+entry and its own review, appended through the eight-step cutover below;
+nothing about it is active here, and appending one could not change how
+any earlier lease was judged.
 
-To append an epoch: add it at the end of `admission_history`, add its
-lock entry to `ACCEPTED_ADMISSION_EPOCH_LOCKS`, update the top-level
-projection to mirror the new final epoch, and prove the change:
+**Appending an epoch — the eight-step cutover.** Three separate merges,
+in this order. Steps 1–2 freeze, 3–7 append under the freeze, 8 resumes.
 
-```bash
-git show <previous-main-sha>:.straylight/automation-policy.json > /tmp/prev.json
-node .straylight/bin/policy-transition-check.mjs \
-  --previous /tmp/prev.json --candidate .straylight/automation-policy.json
-```
+1. Merge a **live-only** transition setting `enabled: false`. The
+   admission history is untouched, so no frontier is required:
+
+   ```bash
+   git show <previous-main-sha>:.straylight/automation-policy.json > /tmp/prev.json
+   node .straylight/bin/policy-transition-check.mjs \
+     --previous /tmp/prev.json --candidate .straylight/automation-policy.json
+   ```
+
+2. Verify the freeze is the committed state on `main` — not merely
+   proposed — and that the workflows read it (`bin/policy-gate.mjs`
+   returns literal `false`).
+
+3. Capture the durable event frontier read-only. GET operations only;
+   nothing is posted, edited, labelled, or merged:
+
+   ```bash
+   node scripts/capture-durable-frontier.mjs \
+     --repo 0xHoneyJar/loa-straylight --out /tmp/frontier.json
+   ```
+
+   The capture discovers lanes through the canonical
+   `straylight:lane:v1` marker parser over two unioned issue
+   enumerations (plain and `cp-lane`-labelled — the label is a derived
+   projection, never discovery authority), paginates every lane's
+   comments, and fails closed on any unreadable genesis, duplicated
+   `lane_id`, or ambiguous protocol payload. Read the emitted document:
+   the lane list is the completeness claim, and it is the operator's
+   claim, not the tool's.
+
+4. Prepare the append: add the new epoch at the end of
+   `admission_history` with `governs_from` **strictly after** the
+   frontier's `max_event_created_at`, add its lock entry to
+   `ACCEPTED_ADMISSION_EPOCH_LOCKS`, and update the top-level projection
+   to mirror the new final epoch. Keep `enabled: false`.
+
+5. Run the transition guard **with the evidence**. `--repository` is
+   required alongside `--frontier` and must match it:
+
+   ```bash
+   git show <frozen-main-sha>:.straylight/automation-policy.json > /tmp/prev.json
+   node .straylight/bin/policy-transition-check.mjs \
+     --previous /tmp/prev.json --candidate .straylight/automation-policy.json \
+     --frontier /tmp/frontier.json --repository 0xHoneyJar/loa-straylight
+   ```
+
+6. Independent exact-SHA audit of the append, including the frontier
+   document and the verdict's echoed evidence.
+
+7. Merge the append **while still frozen**. If any lane protocol event
+   was posted between step 3 and this merge, the evidence is stale:
+   recapture, and move the candidate boundary if it no longer clears the
+   new maximum. `operator:eileen` must not write lane events during a
+   cutover.
+
+8. Merge a **separate** live-only transition restoring `enabled: true`.
+
+The appended epoch becomes the top-level admission projection the moment
+step 7 merges, before its `governs_from` arrives — that interval is
+precisely why steps 1–2 and 7 require the freeze: no worker can acquire a
+lease under a projection whose epoch has not begun.
 
 ## Leases
 
@@ -926,4 +1038,15 @@ A policy CHANGE is additionally proven against the policy it replaces
 ```bash
 node .straylight/bin/policy-transition-check.mjs \
   --previous /tmp/prev.json --candidate .straylight/automation-policy.json
+```
+
+An admission APPEND also needs durable event frontier evidence, captured
+read-only while automation is already frozen — see the eight-step cutover
+in § "Admission policy history":
+
+```bash
+node scripts/capture-durable-frontier.mjs --out /tmp/frontier.json
+node .straylight/bin/policy-transition-check.mjs \
+  --previous /tmp/prev.json --candidate .straylight/automation-policy.json \
+  --frontier /tmp/frontier.json --repository 0xHoneyJar/loa-straylight
 ```

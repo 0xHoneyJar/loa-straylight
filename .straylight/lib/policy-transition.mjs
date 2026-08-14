@@ -28,15 +28,75 @@
 //              may be edited (content, boundary, or provenance), deleted,
 //              reordered, replaced, or preceded by an insertion.
 //
-// LIVE fields are deliberately unconstrained here: enabled, mode, auto_merge,
-// the automatic_* prohibitions and stuck_lane_threshold_hours are meant to
-// change, and the kill switch would not be a kill switch otherwise. The
-// top-level admission projection is constrained transitively — validatePolicy
-// requires it to deep-equal the final epoch, so it cannot move without an
-// appended epoch to move to.
+//              LIVE-ONLY (history canonically identical): the live fields may
+//              change freely. This is how the kill switch is flipped, and it is
+//              the path used to FREEZE the control plane before an append and to
+//              RE-ENABLE it afterwards. No frontier evidence is required,
+//              because no admission decision moves.
+//
+//              APPEND (history grows): additionally gated by the FROZEN
+//              FRONTIER CUTOVER below.
+//
+// FROZEN FRONTIER CUTOVER — why array order is not enough
+//
+// An appended epoch sits at the end of the array but its `governs_from` is a
+// point in TIME. If that point lies before events already recorded, replaying
+// the same durable comments re-judges them: the array is still a clean append,
+// the runtime accepted-epoch lock still holds, this guard's prefix check still
+// passes, and history has nevertheless changed. Demonstrated on real material:
+// an epoch boundary shortly before lane #122 comment 5257177236 turns that
+// REFUSED lease claim into an ACCEPTED one and moves the lane's final state.
+//
+// So an append additionally requires:
+//
+//   1. the PREVIOUS committed policy already has enabled === false, and
+//   2. the CANDIDATE also has enabled === false, and
+//   3. an explicit durable event frontier captured under that freeze, and
+//   4. every appended epoch's governs_from STRICTLY AFTER that frontier.
+//
+// (1) and (2) together mean an append can never be combined with the change that
+// first disables automation: the freeze must ALREADY be merged and in effect
+// before the frontier is captured, so nothing can be written between capturing
+// the evidence and relying on it. Policy evolution is therefore deliberately a
+// multi-transition operation — freeze, capture, append, re-enable — each merged
+// and audited on its own. Historical authority is worth more than saving a PR.
+//
+// The kill switch stays LIVE operational policy. It is not epoched, and freezing
+// is itself a live-only transition that needs no evidence.
+//
+// THREAT BOUNDARY, stated precisely. This does not defeat the operator. The
+// operator can still post lane comments by hand during the frozen window, or
+// change protocol code — and protocol-code changes were never inside the claim.
+// `operator:eileen` is the control-plane authority and MUST NOT write lane events
+// during a cutover; if an event is posted anyway, the frontier evidence is stale
+// and must be recaptured. What the mechanism does establish is that a backdated
+// append is not an ordinary policy edit: it cannot be done while automation is
+// running, it cannot be done without committing evidence that contradicts it,
+// and the contradiction is mechanical rather than a matter of review attention.
+//
+// Two further limits belong to the same provenance boundary, and are recorded so
+// they are not overclaimed. First, this library cannot prove that GitHub lane
+// discovery was COMPLETE; a frontier that silently omitted a lane would bound the
+// append too early. Second, a policy file carries no repository identity, so this
+// library cannot know which repository it is deciding for: it requires the caller
+// to NAME one and requires the evidence to agree, and echoes the repository it
+// relied on in the verdict. Both facts are established at authorization time, by a
+// read-only capture run under the freeze and by the operator's exact-SHA review of
+// the resulting evidence — not by this function.
+//
+// LIVE fields are deliberately unconstrained here (apart from the append freeze
+// rule above): enabled, mode, auto_merge, the automatic_* prohibitions and
+// stuck_lane_threshold_hours are meant to change, and the kill switch would not
+// be a kill switch otherwise. The top-level admission projection is constrained
+// transitively — validatePolicy requires it to deep-equal the final epoch, so it
+// cannot move without an appended epoch to move to. NOTE that this makes the
+// projection follow an appended future epoch IMMEDIATELY on merge; that interval
+// is exactly why the append requires enabled === false on both sides, so no
+// worker can act under a projection whose epoch has not begun.
 
 import { canonicalize } from "./canonical.mjs";
-import { validatePolicy, ADMISSION_FIELDS, ACTOR_ROLES, admissionHistoryErrors } from "./validate.mjs";
+import { validatePolicy, ADMISSION_FIELDS, ACTOR_ROLES, admissionHistoryErrors, parseIsoInstant } from "./validate.mjs";
+import { validateDurableFrontier } from "./durable-frontier.mjs";
 
 export const POLICY_SCHEMA_V1 = "straylight.automation-policy.v1";
 export const POLICY_SCHEMA_V2 = "straylight.automation-policy.v2";
@@ -143,15 +203,130 @@ function v2AppendErrors(previous, candidate) {
   return errors;
 }
 
+// The closed shape of the transition-evidence argument. Naming the repository
+// separately from the frontier file is deliberate: the operator's command has to
+// assert which repository this append is for, so a frontier captured somewhere
+// else cannot be presented as this repository's history.
+const CONTEXT_KEYS = ["repository", "frontier"];
+
+// v2 -> v2 APPEND: the frozen frontier cutover gate. Additional to the prefix
+// check, and reached only when the candidate's history is LONGER than the
+// previous one. Returns { errors, bound } — bound is the derived frontier
+// summary when the evidence is sound, so an accepted result can report the
+// evidence it relied on instead of merely claiming it existed.
+function appendGateErrors(previous, candidate, context, prevLen) {
+  const errors = [];
+
+  // 1 + 2. Both sides frozen. The freeze must already be the committed state:
+  // otherwise the append lands in the same change that stops automation, and the
+  // frontier would have been captured while workers could still write.
+  if (previous.enabled !== false) {
+    errors.push(
+      `previous.enabled: ${JSON.stringify(previous.enabled)} — appending an admission epoch requires the ` +
+        "control plane to be ALREADY FROZEN. Merge a live-only transition setting enabled: false (admission " +
+        "history unchanged) first, confirm it is the committed state, capture the durable event frontier under " +
+        "that freeze, and then append.",
+    );
+  }
+  if (candidate.enabled !== false) {
+    errors.push(
+      `candidate.enabled: ${JSON.stringify(candidate.enabled)} — the candidate must keep enabled: false. ` +
+        "Automation is restored by a separate later live-only transition, after the append is merged.",
+    );
+  }
+
+  const appended = candidate.admission_history.slice(prevLen);
+  if (appended.length !== 1) {
+    errors.push(
+      `candidate.admission_history: ${appended.length} epochs appended in one transition ` +
+        `(${appended.map((e) => JSON.stringify(isPlainObject(e) ? e.epoch_id : e)).join(", ")}) — append exactly ` +
+        "ONE epoch per reviewed transition, so its boundary, its values, and the frontier that bounds it are a " +
+        "single authorizable fact",
+    );
+  }
+
+  // 3. Explicit evidence. The library stays pure: it never goes looking for the
+  // frontier, so a caller that omits it gets a refusal rather than a default.
+  if (context === null || context === undefined) {
+    errors.push(
+      "context: required for an admission append — pass { repository, frontier } where frontier is a durable " +
+        "event frontier captured read-only while enabled: false (scripts/capture-durable-frontier.mjs). " +
+        "Appending without evidence of where history ended cannot be authorized.",
+    );
+    return { errors, bound: null };
+  }
+  if (!isPlainObject(context)) {
+    errors.push("context: not an object");
+    return { errors, bound: null };
+  }
+  for (const key of Object.keys(context)) {
+    if (!CONTEXT_KEYS.includes(key)) errors.push(`context.${key}: unknown key — the context shape is closed`);
+  }
+  if (context.frontier === undefined) {
+    errors.push(
+      "context.frontier: missing — an admission append must be bounded by a captured durable event frontier",
+    );
+  }
+  if (typeof context.repository !== "string" || context.repository.length === 0) {
+    errors.push(
+      `context.repository: ${JSON.stringify(context.repository)} — name the repository this append is for, ` +
+        "independently of the evidence file",
+    );
+  }
+
+  let bound = null;
+  if (context.frontier !== undefined) {
+    const verdict = validateDurableFrontier(context.frontier);
+    if (!verdict.ok) {
+      errors.push(...verdict.errors.map((e) => `context.${e}`));
+    } else {
+      bound = verdict.value;
+      if (typeof context.repository === "string" && context.repository !== bound.repository) {
+        errors.push(
+          `context.repository: ${JSON.stringify(context.repository)} does not match ` +
+            `frontier.repository ${JSON.stringify(bound.repository)} — the evidence describes a different repository`,
+        );
+      }
+    }
+  }
+
+  // 4. Strict prospectivity. Checked for EVERY appended epoch, not just the
+  // first: the invariant is that no appended epoch governs an event that already
+  // exists. (validatePolicy separately requires boundaries to ascend strictly,
+  // so with a sound history the first is the binding one.)
+  if (bound !== null) {
+    appended.forEach((epoch, offset) => {
+      const index = prevLen + offset;
+      const boundary = parseIsoInstant(isPlainObject(epoch) ? epoch.governs_from : undefined);
+      if (boundary === null) return; // malformed boundary already reported structurally
+      if (boundary > bound.max_millis) return;
+      const label = isPlainObject(epoch) ? String(epoch.epoch_id) : "?";
+      errors.push(
+        `candidate.admission_history[${index}] (${label}).governs_from: ${JSON.stringify(epoch.governs_from)} is ` +
+          `not strictly after the durable event frontier ${bound.max_event_created_at} — an appended epoch may ` +
+          "govern only events that do not yet exist. A boundary at or before the frontier RE-JUDGES events " +
+          `already recorded (${bound.event_count} protocol event(s) across ${bound.lane_count} lane(s) as of ` +
+          `${bound.captured_at}): the array is still append-only and the runtime lock still holds, yet history changes.`,
+      );
+    });
+  }
+
+  return { errors, bound };
+}
+
 // Validate a policy change.
 //
 //   previous   the policy as committed before the change (v1 or v2)
 //   candidate  the proposed policy (must be v2)
+//   context    transition evidence: { repository, frontier }. REQUIRED when the
+//              candidate appends an admission epoch; ignored otherwise (the
+//              result reports frontier: null so the output shows it was not
+//              consulted).
 //
-// Returns { ok: true, kind, previous_epochs, candidate_epochs, appended } or
-// { ok: false, errors }. Pure: reads nothing outside its arguments — no files,
-// no clock, no lock table.
-export function validatePolicyTransition(previous, candidate) {
+// Returns { ok: true, kind, previous_epochs, candidate_epochs, appended,
+// frontier } or { ok: false, errors }. Pure: reads nothing outside its arguments
+// — no files, no clock, no network, no lock table.
+export function validatePolicyTransition(previous, candidate, context = null) {
   if (!isPlainObject(previous)) return { ok: false, errors: ["previous: not an object"] };
   if (!isPlainObject(candidate)) return { ok: false, errors: ["candidate: not an object"] };
 
@@ -173,12 +348,26 @@ export function validatePolicyTransition(previous, candidate) {
   if (!structural.ok) errors.push(...structural.errors.map((e) => `candidate: ${e}`));
 
   let kind;
+  let bound = null;
   if (previous.schema === POLICY_SCHEMA_V1) {
+    // The genesis migration transcribes v1's live admission values, so it cannot
+    // move any decision wherever its boundary sits, and needs no frontier.
     kind = "v1-to-v2";
     errors.push(...v1ToV2Errors(previous, candidate));
   } else if (previous.schema === POLICY_SCHEMA_V2) {
-    kind = "v2-append";
     errors.push(...v2AppendErrors(previous, candidate));
+    // Classify by whether the admission history GROWS. A history that is
+    // identical (or that v2AppendErrors has already refused as mutated) is a
+    // live-only change: no admission decision moves, so no evidence is needed.
+    const prevHistory = Array.isArray(previous.admission_history) ? previous.admission_history : null;
+    const nextHistory = Array.isArray(candidate.admission_history) ? candidate.admission_history : null;
+    const grows = prevHistory !== null && nextHistory !== null && nextHistory.length > prevHistory.length;
+    kind = grows ? "v2-append" : "v2-live";
+    if (grows) {
+      const gate = appendGateErrors(previous, candidate, context, prevHistory.length);
+      errors.push(...gate.errors);
+      bound = gate.bound;
+    }
   } else {
     return {
       ok: false,
@@ -198,5 +387,18 @@ export function validatePolicyTransition(previous, candidate) {
     previous_epochs: prevLen,
     candidate_epochs: candidate.admission_history.length,
     appended,
+    // The evidence the verdict rests on, so the output IS the evidence. null on
+    // paths where no admission decision moves and none was consulted.
+    frontier:
+      bound === null
+        ? null
+        : {
+            repository: bound.repository,
+            captured_at: bound.captured_at,
+            lanes: bound.lane_count,
+            events: bound.event_count,
+            max_event_created_at: bound.max_event_created_at,
+            appended_governs_from: candidate.admission_history[prevLen].governs_from,
+          },
   };
 }
