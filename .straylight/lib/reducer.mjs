@@ -30,6 +30,7 @@ import {
   validateAuditRecord,
   validatePrMetadata,
   parseIsoInstant,
+  admissionPolicyFor,
 } from "./validate.mjs";
 import { payloadDigest } from "./canonical.mjs";
 
@@ -49,8 +50,11 @@ function advance(lane, event, state, extra = {}, effects = [], note = "") {
   return { ok: true, lane: next, effects, note };
 }
 
-function actorAllowed(policy, role, githubActor) {
-  const list = policy.actor_allowlist?.[role];
+// Identity admission is read from the RESOLVED ADMISSION EPOCH, never from the
+// live policy: whether an identity was allowed to act is a fact about the
+// moment the event was recorded.
+function actorAllowed(admission, role, githubActor) {
+  const list = admission.actor_allowlist?.[role];
   return Array.isArray(list) && list.includes(githubActor);
 }
 
@@ -115,10 +119,32 @@ export function reduce(lane, event, policy, context = {}) {
     );
   }
 
+  // -- 2.5. Admission epoch: resolved ONCE, from authenticated event time. ----
+  // Admission is a fact about the moment the event was RECORDED, so it is
+  // adjudicated under the admission epoch in force at the event's authenticated
+  // GitHub time — never under whatever policy happens to be live during this
+  // replay. One resolution serves all four replay-sensitive decisions below
+  // (corridor, identity allowlist, patch ceiling, lease bound) so a single
+  // event can never be judged under a mixture of epochs. Fail closed: no
+  // observed time, or no epoch governing it, means no admission at all.
+  const admissionAt = observedAt(context);
+  if (admissionAt === null) {
+    return refuse(
+      lane,
+      "time-missing",
+      "admission requires the authenticated event time (event_observed_at or now)",
+    );
+  }
+  const selected = admissionPolicyFor(policy, admissionAt);
+  if (!selected.ok) {
+    return refuse(lane, "admission-epoch-unresolved", selected.reason);
+  }
+  const admission = selected.admission;
+
   // -- 3. Corridor. -----------------------------------------------------------
   // Operator events bypass the corridor check so the operator can always
   // pause, decide, or supersede a lane that has fallen out of the corridor.
-  if (!isOperatorEvent && !policy.authorized_corridor.includes(lane.phase)) {
+  if (!isOperatorEvent && !admission.authorized_corridor.includes(lane.phase)) {
     return refuse(
       lane,
       "outside-corridor",
@@ -131,7 +157,7 @@ export function reduce(lane, event, policy, context = {}) {
   // Every role — including "system" — has its own allowlist. The CI bot
   // identity lives ONLY under system; validatePolicy rejects any policy
   // that puts a bot under operator (ADR-050 §3).
-  if (!actorAllowed(policy, event.actor_role, event.github_actor)) {
+  if (!actorAllowed(admission, event.actor_role, event.github_actor)) {
     return refuse(
       lane,
       "actor-not-allowlisted",
@@ -253,7 +279,7 @@ export function reduce(lane, event, policy, context = {}) {
         if (packet.patch_cycle !== nextCycle) {
           return refuse(lane, "task-packet-wrong-patch-cycle", `patch packet cycle ${packet.patch_cycle} != expected ${nextCycle}`);
         }
-        if (nextCycle > policy.maximum_patch_cycles) {
+        if (nextCycle > admission.maximum_patch_cycles) {
           // Every escalation to operator-required clears the lease (checkLease
           // already refuses coordinator events under an active lease, so this
           // is belt-and-braces): a lease carried into operator-required would
@@ -262,7 +288,7 @@ export function reduce(lane, event, policy, context = {}) {
           return advance(
             lane, event, "operator-required",
             {
-              operator_required_reason: `patch cycle ${nextCycle} exceeds maximum ${policy.maximum_patch_cycles}`,
+              operator_required_reason: `patch cycle ${nextCycle} exceeds maximum ${admission.maximum_patch_cycles}`,
               lease: null,
             },
             [{ type: "label", value: "cp-operator-required" }],
@@ -310,6 +336,9 @@ export function reduce(lane, event, policy, context = {}) {
       // cannot bound its expiry, so fail closed rather than store an
       // actor-chosen, unbounded window. observedAt uses the GitHub-recorded
       // comment time (event_observed_at), NOT the actor-supplied occurred_at.
+      // Non-null by construction here (admission resolution above refuses
+      // time-missing first); re-derived rather than reused so the bound and the
+      // epoch can never be computed from different instants.
       const grantAt = observedAt(context);
       if (grantAt === null) {
         return refuse(lane, "time-missing", "lease grant requires event_observed_at or now");
@@ -334,7 +363,10 @@ export function reduce(lane, event, policy, context = {}) {
       // + the policy lease duration, and must be a real calendar instant. An
       // unbounded (e.g. year-2099) expiry would park the lane forever: the
       // watchdog only reaps a lease once its recorded expiry passes.
-      const maxExpiry = grantAt + policy.lease_duration_minutes * 60000;
+      // The bound comes from the admission epoch governing THIS grant, so a
+      // later epoch that lengthens leases cannot retroactively un-refuse a
+      // grant that was unbounded under the policy in force when it was posted.
+      const maxExpiry = grantAt + admission.lease_duration_minutes * 60000;
       const claimedExpiry = parseIsoInstant(event.lease_expires_at);
       if (claimedExpiry === null) {
         return refuse(lane, "lease-expiry-invalid", "lease_expires_at is not a valid UTC calendar instant");
@@ -343,7 +375,7 @@ export function reduce(lane, event, policy, context = {}) {
         return refuse(
           lane,
           "lease-expiry-unbounded",
-          `lease_expires_at ${event.lease_expires_at} exceeds observed grant + ${policy.lease_duration_minutes}m`,
+          `lease_expires_at ${event.lease_expires_at} exceeds observed grant + ${admission.lease_duration_minutes}m`,
         );
       }
       // The lease is bound to the AUTHENTICATED comment author, not the

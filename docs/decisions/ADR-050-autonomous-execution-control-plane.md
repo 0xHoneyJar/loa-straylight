@@ -182,7 +182,17 @@ operator mandate:
 - **Revocation preserves history.** Suspension and revocation never
   rewrite lane history: the event record is append-only, and a revoked
   mandate simply stops advancing lanes. Un-suspending resumes from the
-  recorded state.
+  recorded state. The kill switch is a LIVE field for exactly this
+  reason — it must apply to what the plane does next, and must not
+  become a condition under which past events are re-judged (§5.4).
+- **Changing current admission policy is not the same operation as
+  changing past authority.** The corridor, actor allowlist, patch-cycle
+  ceiling, and lease duration are *admission* decisions attached to the
+  moment an event was posted. They are therefore versioned by epoch
+  (§5.4): current policy changes by APPENDING an epoch, and appending is
+  incapable of altering the disposition of an event that already
+  happened. Editing an existing epoch is the one operation that would
+  rewrite recorded authority, and is not an ordinary policy change.
 - **Shadow mode is the default.** `"mode": "shadow"` means: events are
   validated, state is reduced, eligibility is computed and reported — and
   nothing merges, tags, releases, deploys, or mutates anything outside
@@ -325,6 +335,58 @@ SHA and eligibility is never confirmed. (2) ATTESTATION:
 `audit_committed_in_pr` is the auditor's self-report; the validator
 rejects a `true` attestation. The mechanical layer is the real guarantee —
 the field is a declared attestation, not a claim of file-list inspection.
+
+### 5.4 Admission policy epochs (policy v2)
+
+Because state is reconstructed by replaying the entire durable record, the
+automation policy is an INPUT to every reduction, not a setting applied
+once. Four fields decide whether an event was admissible when it was
+posted — `authorized_corridor`, `actor_allowlist`,
+`maximum_patch_cycles`, `lease_duration_minutes` — and under policy v1
+they were single live values, so an ordinary operator edit silently
+re-adjudicated the whole past. Measured on the real lanes: 240 → 2880
+lease minutes moved lane #122 from `ready-for-claude` at sequence 121
+back to `codex-working` at sequence 109; 3 → 2 patch cycles
+retro-escalated it to `operator-required` at sequence 17. No event was
+posted and no history was rewritten — the reconstruction simply reported
+a different past. That is a replay-integrity defect, and it is the reason
+the 48-hour lease change was rejected: the value was not the problem, the
+architecture that would have applied it retroactively was.
+
+Policy v2 (`straylight.automation-policy.v2`) fixes it:
+
+- The four fields are authority only inside `admission_history`, an
+  append-oriented ledger of epochs. Each epoch carries a stable
+  `epoch_id`, an explicit `effective_from` boundary, operator provenance
+  (`authorized_by`, `authorization_ref`), and all four fields.
+- Every event is adjudicated under the epoch in force at the
+  **authenticated GitHub comment time** of the event that recorded it —
+  never the actor-supplied `occurred_at`, and never the replay run's wall
+  clock. A protocol comment without an authenticated time is refused, not
+  dated from `now`.
+- One selector (`admissionPolicyFor`) resolves exactly one governing
+  epoch per event and fails closed rather than falling back to current
+  policy; all four decisions come from that single resolution.
+- **Current admission policy changes by APPENDING an epoch.** Appending
+  cannot alter the disposition of an already-recorded event, because that
+  event resolves to its own earlier epoch. Editing an existing epoch is
+  the operation that would rewrite recorded authority; the ledger's
+  ordering and provenance requirements exist to make such an edit visible
+  rather than routine.
+- The four fields remain at top level as a validated projection of the
+  final epoch — readable current posture, deliberately not authority.
+- `enabled` (the §4 kill switch) and `stuck_lane_threshold_hours` stay
+  LIVE and un-epoched: they govern what the plane does next, and an
+  epoched kill switch would be a suspension that stops applying to past
+  events.
+
+The genesis epoch transcribes the admission policy the plane has operated
+under since v1 shipped, field-for-field with no change in value, and its
+boundary predates every lane in the repository — so this migration is a
+change of replay architecture with zero intended change to any historical
+disposition, proven by golden replay of every real lane. Any later change
+to lease duration or the other three fields is a separately authorized
+appended epoch.
 
 ---
 

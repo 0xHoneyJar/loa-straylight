@@ -13,6 +13,7 @@
 // Unknown/missing/mistyped fields are errors, never warnings.
 
 import { STATES, ROLES, VERDICTS, isState, isRole, nextActorFor } from "./state-machine.mjs";
+import { canonicalize } from "./canonical.mjs";
 
 const LANE_ID_RE = /^lane-[a-z0-9][a-z0-9-]{1,62}$/;
 const PHASE_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
@@ -24,6 +25,12 @@ const EVENT_ID_RE = /^evt-[a-z0-9][a-z0-9-]{1,62}$/;
 const GH_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(\[bot\])?$/;
 const RELATIVE_PATH_RE = /^(?!\/)(?!.*\.\.)[\x20-\x7E]{1,300}$/;
 const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
+const EPOCH_ID_RE = /^epoch-[a-z0-9][a-z0-9-]{1,62}$/;
+// An admission epoch may only be authorized by an OPERATOR identity: changing
+// who may act, which phases are admissible, how many patch cycles are allowed,
+// or how long a lease may run is semantic authority, and operator:eileen is the
+// sole Straylight authority (ADR-049 §6, ADR-050 §3).
+const EPOCH_AUTHORITY_RE = /^operator:[a-z0-9][a-z0-9-]{0,62}$/;
 
 // Strict UTC calendar instant: the ISO shape AND a real calendar date/time.
 // A regex alone accepts 2026-13-40T25:61:99Z; this rejects impossible months,
@@ -499,31 +506,86 @@ export function validatePrMetadata(v) {
 }
 
 // ---------------------------------------------------------------------------
-// Automation policy (automation-policy.json)
+// Automation policy (automation-policy.json) — admission epochs
 // ---------------------------------------------------------------------------
+//
+// REPLAY INVARIANT (policy v2). The control plane reconstructs a lane by
+// replaying its whole durable event history through reduce(). Under v1 a
+// SINGLE live policy object adjudicated every historical event, so editing one
+// of four fields silently re-adjudicated the past: raising
+// lease_duration_minutes un-refused a historically refused lease, lowering
+// maximum_patch_cycles retro-escalated a lane to operator-required, and any
+// corridor/allowlist edit rewrote lanes wholesale. Historical authority is not
+// a tunable.
+//
+// v2 therefore splits the policy in two:
+//
+//   LIVE OPERATIONAL fields — `enabled` (kill switch), mode, auto_merge, the
+//   automatic_* prohibitions, stuck_lane_threshold_hours. These describe what
+//   the plane may do NOW; flipping them must take effect immediately and must
+//   never be epoched.
+//
+//   ADMISSION fields — authorized_corridor, actor_allowlist,
+//   maximum_patch_cycles, lease_duration_minutes. These adjudicate whether a
+//   PAST event was admissible, so they live in `admission_history`: an
+//   append-oriented ledger of epochs, each keyed by the instant from which it
+//   governs. An event is adjudicated under the epoch in force at the
+//   authenticated GitHub time of the comment that recorded it. Appending a new
+//   epoch cannot reach backwards, because a later epoch's effective_from is
+//   after the historical event's observed time.
+//
+// The four top-level admission fields are RETAINED as CURRENT-POLICY
+// PROJECTIONS: readable at a glance, mechanically pinned below to the final
+// epoch, and NOT independent authority. reduce() must never read them (see
+// admissionPolicyFor and the structural guard in the control-plane tests).
+//
+// The schema identifier is bumped v1 -> v2 because validatePolicy ignores
+// unknown keys: without the bump, v1 code would accept a v2 policy and
+// silently ignore admission_history — adjudicating history from the mutable
+// top-level fields it was told not to trust. The exact-match enum makes both
+// crossings fail closed (v1 code + v2 policy, v2 code + v1 policy).
 
-export function validatePolicy(v) {
+// The replay-sensitive admission fields, in canonical order. Exported so the
+// policy, the reducer, and the anti-regression tests all name the same set.
+export const ADMISSION_FIELDS = Object.freeze([
+  "actor_allowlist",
+  "authorized_corridor",
+  "lease_duration_minutes",
+  "maximum_patch_cycles",
+]);
+
+const EPOCH_KEYS = Object.freeze([
+  "epoch_id",
+  "effective_from",
+  "authorized_by",
+  "authorization_ref",
+  "note",
+  ...ADMISSION_FIELDS,
+]);
+
+// Structural check of the four admission fields on `v`. Returns raw error
+// strings (unprefixed) so the caller can attribute them to either an epoch
+// entry or the top-level projection.
+function admissionErrors(v) {
+  if (!isPlainObject(v)) return ["admission fields: not an object"];
   const errors = [];
-  if (!isPlainObject(v)) return { ok: false, errors: ["policy: not an object"] };
-  checkEnum(errors, v, "schema", ["straylight.automation-policy.v1"]);
-  checkEnum(errors, v, "mode", ["shadow"]);
-  checkBool(errors, v, "enabled");
-  checkBool(errors, v, "auto_merge");
   checkStringArray(errors, v, "authorized_corridor", PHASE_RE, { minItems: 1 });
-  checkBool(errors, v, "automatic_estate_semantic_decisions");
-  checkBool(errors, v, "automatic_cross_repo_contract_changes");
-  checkBool(errors, v, "automatic_sibling_repo_edits");
-  checkBool(errors, v, "automatic_external_infrastructure");
-  checkBool(errors, v, "automatic_secret_use");
-  checkBool(errors, v, "automatic_progression_beyond_mvp2");
   checkInt(errors, v, "maximum_patch_cycles", { min: 1 });
   checkInt(errors, v, "lease_duration_minutes", { min: 1 });
-  checkInt(errors, v, "stuck_lane_threshold_hours", { min: 1 });
   if (!isPlainObject(v.actor_allowlist)) {
     errors.push("actor_allowlist: missing or not an object");
   } else {
-    for (const role of ["coordinator", "implementer", "auditor", "operator", "system"]) {
+    const roles = ["coordinator", "implementer", "auditor", "operator", "system"];
+    for (const role of roles) {
       checkStringArray(errors, v.actor_allowlist, role, GH_LOGIN_RE, { minItems: 1 });
+    }
+    // CLOSED role set: an unrecognized key here is either a typo that silently
+    // leaves a real role at its default, or an identity grant for a role the
+    // state machine does not know — both invisible if ignored. (Commentary
+    // belongs beside the allowlist, not inside it: the allowlist is compared
+    // field-for-field against its epoch.)
+    for (const k of Object.keys(v.actor_allowlist)) {
+      if (!roles.includes(k)) errors.push(`actor_allowlist.${k}: unknown actor role`);
     }
     // The mechanical CI identity must never hold operator authority: an
     // operator-role event from a workflow-posted comment would let repo
@@ -533,6 +595,117 @@ export function validatePolicy(v) {
       errors.push("actor_allowlist.operator: bot identities are forbidden in the operator role");
     }
   }
+  return errors;
+}
+
+// The four admission fields of `v`, and nothing else — the value compared
+// between the top-level projection and the final epoch.
+function admissionProjection(v) {
+  const out = {};
+  for (const k of ADMISSION_FIELDS) out[k] = v[k];
+  return out;
+}
+
+function validateAdmissionHistory(errors, v) {
+  const history = v.admission_history;
+  if (history === undefined || history === null) {
+    errors.push("admission_history: missing (policy v2 adjudicates history by epoch)");
+    return;
+  }
+  if (!Array.isArray(history)) {
+    errors.push("admission_history: not an array");
+    return;
+  }
+  if (history.length === 0) {
+    errors.push("admission_history: empty — no epoch could govern any event");
+    return;
+  }
+  const seenIds = new Set();
+  let prevFrom = null;
+  history.forEach((e, i) => {
+    const at = `admission_history[${i}]`;
+    if (!isPlainObject(e)) {
+      errors.push(`${at}: not an object`);
+      return;
+    }
+    // CLOSED entry shape: an unrecognized key in an epoch is a shape the
+    // reducer does not understand, and silently ignoring it would let an
+    // unreviewed admission dimension ride along invisibly.
+    for (const k of Object.keys(e)) {
+      if (!EPOCH_KEYS.includes(k)) errors.push(`${at}.${k}: unknown epoch field`);
+    }
+    const idErrors = [];
+    checkString(idErrors, e, "epoch_id", EPOCH_ID_RE);
+    checkTimestamp(idErrors, e, "effective_from");
+    checkString(idErrors, e, "authorized_by", EPOCH_AUTHORITY_RE);
+    checkString(idErrors, e, "authorization_ref", null, { minLength: 8, maxLength: 500 });
+    checkString(idErrors, e, "note", null, { optional: true, minLength: 8, maxLength: 2000 });
+    for (const m of idErrors) errors.push(`${at}: ${m}`);
+    for (const m of admissionErrors(e)) errors.push(`${at}: ${m}`);
+
+    if (typeof e.epoch_id === "string") {
+      if (seenIds.has(e.epoch_id)) {
+        errors.push(`${at}: duplicate epoch_id ${JSON.stringify(e.epoch_id)}`);
+      }
+      seenIds.add(e.epoch_id);
+    }
+    // STRICT ordering. The ledger is append-oriented and each boundary opens a
+    // half-open interval [effective_from, next.effective_from), so equal or
+    // decreasing boundaries are ambiguous overlaps, not merely untidy: two
+    // epochs starting at the same instant have no defined precedence.
+    const from = parseIsoInstant(e.effective_from);
+    if (from !== null) {
+      if (prevFrom !== null && from <= prevFrom) {
+        errors.push(`${at}: effective_from ${e.effective_from} does not strictly follow the previous epoch (unordered/overlapping history)`);
+      }
+      prevFrom = from;
+    }
+  });
+}
+
+export function validatePolicy(v) {
+  const errors = [];
+  if (!isPlainObject(v)) return { ok: false, errors: ["policy: not an object"] };
+  checkEnum(errors, v, "schema", ["straylight.automation-policy.v2"]);
+  checkEnum(errors, v, "mode", ["shadow"]);
+  checkBool(errors, v, "enabled");
+  checkBool(errors, v, "auto_merge");
+  checkBool(errors, v, "automatic_estate_semantic_decisions");
+  checkBool(errors, v, "automatic_cross_repo_contract_changes");
+  checkBool(errors, v, "automatic_sibling_repo_edits");
+  checkBool(errors, v, "automatic_external_infrastructure");
+  checkBool(errors, v, "automatic_secret_use");
+  checkBool(errors, v, "automatic_progression_beyond_mvp2");
+  checkInt(errors, v, "stuck_lane_threshold_hours", { min: 1 });
+
+  validateAdmissionHistory(errors, v);
+
+  // Top-level admission fields are an OPTIONAL, PURELY DESCRIPTIVE projection
+  // of the final epoch: the committed policy keeps them so an operator (and the
+  // agent prompts that quote them) can read current policy at a glance. They
+  // are not authority — a policy carrying only `admission_history` is fully
+  // valid and reduces identically, which is what proves the reducer never
+  // consults them. Declared all-four-or-none, and when declared they must be
+  // structurally valid AND deep-equal the final epoch, so the file can never
+  // display one current policy while adjudicating another.
+  const declared = ADMISSION_FIELDS.filter((k) => v[k] !== undefined && v[k] !== null);
+  const history = Array.isArray(v.admission_history) ? v.admission_history : null;
+  const finalEpoch = history !== null && history.length > 0 ? history[history.length - 1] : null;
+  if (declared.length > 0 && declared.length < ADMISSION_FIELDS.length) {
+    errors.push(
+      `top-level admission projection is partial (${declared.join(", ")}): declare all four projection fields or none`,
+    );
+  } else if (declared.length === ADMISSION_FIELDS.length) {
+    for (const m of admissionErrors(v)) errors.push(m);
+    if (isPlainObject(finalEpoch) &&
+        canonicalize(admissionProjection(v)) !== canonicalize(admissionProjection(finalEpoch))) {
+      errors.push(
+        `top-level admission projection does not equal the final admission epoch ` +
+          `(${JSON.stringify(finalEpoch.epoch_id ?? null)}); the top-level fields are a projection, not authority`,
+      );
+    }
+  }
+
   // Hard v1 invariants: these fields exist so that flipping them is loud,
   // but v1 refuses to run with them flipped.
   if (v.auto_merge === true) errors.push("auto_merge: must be false in control plane v1");
@@ -547,4 +720,80 @@ export function validatePolicy(v) {
     if (v[k] === true) errors.push(`${k}: must be false in control plane v1`);
   }
   return result(errors, v);
+}
+
+// ---------------------------------------------------------------------------
+// Admission epoch selector
+// ---------------------------------------------------------------------------
+//
+// THE single way to obtain admission policy for a decision. Closed interface:
+// give it a policy and an authenticated instant (epoch millis), and it either
+// resolves exactly one governing epoch or fails. It has NO fallback: it never
+// reads the top-level admission fields, never substitutes the newest epoch for
+// a missing one, and never consults a clock. A caller that cannot supply the
+// event's authenticated time cannot obtain admission policy at all.
+//
+//   { ok: true,  epoch_id, effective_from, admission: { ...4 fields } }
+//   { ok: false, reason }
+//
+// The resolved `admission` is used for ALL FOUR replay-sensitive decisions of
+// that event (corridor, allowlist, patch ceiling, lease bound) so a single
+// event can never be adjudicated under a mixture of epochs.
+export function admissionPolicyFor(policy, atMillis) {
+  if (!isPlainObject(policy)) return { ok: false, reason: "policy: not an object" };
+  if (!Number.isInteger(atMillis)) {
+    return { ok: false, reason: "admission time: not an integer epoch-millis instant" };
+  }
+  const history = policy.admission_history;
+  if (!Array.isArray(history) || history.length === 0) {
+    return {
+      ok: false,
+      reason: "admission_history: missing or empty (no fallback to current top-level policy)",
+    };
+  }
+  let chosen = null;
+  let chosenFrom = null;
+  for (let i = 0; i < history.length; i += 1) {
+    const e = history[i];
+    if (!isPlainObject(e)) {
+      return { ok: false, reason: `admission_history[${i}]: not an object` };
+    }
+    const from = parseIsoInstant(e.effective_from);
+    if (from === null) {
+      return {
+        ok: false,
+        reason: `admission_history[${i}]: unresolvable effective_from ${JSON.stringify(e.effective_from ?? null)}`,
+      };
+    }
+    if (from <= atMillis && (chosenFrom === null || from > chosenFrom)) {
+      chosen = e;
+      chosenFrom = from;
+    }
+  }
+  if (chosen === null) {
+    return {
+      ok: false,
+      reason: `no admission epoch is in force at ${new Date(atMillis).toISOString()} (earliest epoch begins later)`,
+    };
+  }
+  // Defensive revalidation of the SELECTED epoch: callers reach this function
+  // through reduce(), which has already run validatePolicy, but the selector
+  // must not hand out a structurally broken admission policy under any call
+  // path.
+  const errors = admissionErrors(chosen);
+  if (errors.length > 0) {
+    return {
+      ok: false,
+      reason: `admission epoch ${JSON.stringify(chosen.epoch_id ?? null)} is structurally invalid: ${errors.join("; ")}`,
+    };
+  }
+  if (typeof chosen.epoch_id !== "string" || !EPOCH_ID_RE.test(chosen.epoch_id)) {
+    return { ok: false, reason: "selected admission epoch has no usable epoch_id (provenance would be unrecordable)" };
+  }
+  return {
+    ok: true,
+    epoch_id: chosen.epoch_id,
+    effective_from: chosen.effective_from,
+    admission: Object.freeze(admissionProjection(chosen)),
+  };
 }

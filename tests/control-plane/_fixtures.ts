@@ -21,22 +21,64 @@ export const REPO = "0xHoneyJar/loa-straylight";
 
 export { payloadDigest };
 
+// The genesis admission epoch's boundary for fixture policies. Earlier than
+// every fixture timestamp (NOW and the lane-history fixtures alike), so a
+// fixture event always resolves to the single epoch below.
+export const EPOCH_FROM = "2026-01-01T00:00:00Z";
+export const EPOCH_ID = "epoch-test-001";
+
+// Policy v2: the four replay-sensitive admission fields are authority only
+// inside `admission_history`; at top level they are a projection of the final
+// epoch (validatePolicy requires the two to be deep-equal). A test that
+// overrides one of the four means "this was the admission policy in force", so
+// the override lands in BOTH — pass an explicit `admission_history` to build a
+// multi-epoch or deliberately-inconsistent policy.
 export function makePolicy(overrides: Record<string, any> = {}) {
+  const admission: Record<string, any> = {
+    authorized_corridor: ["phase-49p", "phase-49q", "phase-50a", "phase-50b"],
+    maximum_patch_cycles: 3,
+    lease_duration_minutes: 240,
+    actor_allowlist: {
+      coordinator: ["chatgpt-login"],
+      implementer: ["claude-login"],
+      auditor: ["codex-login"],
+      operator: ["eileen1337"],
+      system: ["eileen1337", "github-actions[bot]"],
+    },
+  };
+  for (const k of Object.keys(admission)) {
+    if (k in overrides) admission[k] = overrides[k];
+  }
   return {
-    schema: "straylight.automation-policy.v1",
+    schema: "straylight.automation-policy.v2",
     mode: "shadow",
     enabled: true,
     auto_merge: false,
-    authorized_corridor: ["phase-49p", "phase-49q", "phase-50a", "phase-50b"],
     automatic_estate_semantic_decisions: false,
     automatic_cross_repo_contract_changes: false,
     automatic_sibling_repo_edits: false,
     automatic_external_infrastructure: false,
     automatic_secret_use: false,
     automatic_progression_beyond_mvp2: false,
+    stuck_lane_threshold_hours: 72,
+    admission_history: [makeEpoch(admission)],
+    ...admission,
+    ...overrides,
+  };
+}
+
+// One admission epoch. `overrides` may carry epoch metadata (epoch_id,
+// effective_from, authorized_by, authorization_ref, note) and any of the four
+// admission fields.
+export function makeEpoch(overrides: Record<string, any> = {}) {
+  return {
+    epoch_id: EPOCH_ID,
+    effective_from: EPOCH_FROM,
+    authorized_by: "operator:eileen",
+    authorization_ref: "test fixture: admission policy in force for the fixture timeline",
+    authorized_corridor: ["phase-49p", "phase-49q", "phase-50a", "phase-50b"],
     maximum_patch_cycles: 3,
     lease_duration_minutes: 240,
-    stuck_lane_threshold_hours: 72,
     actor_allowlist: {
       coordinator: ["chatgpt-login"],
       implementer: ["claude-login"],
@@ -46,6 +88,18 @@ export function makePolicy(overrides: Record<string, any> = {}) {
     },
     ...overrides,
   };
+}
+
+// A policy whose admission ledger is exactly `epochs` and which carries NO
+// top-level projection at all — the shape that proves the reducer reads
+// admission policy only from the resolved epoch (a stray read of
+// `policy.authorized_corridor` here throws or silently mis-adjudicates).
+export function makeEpochPolicy(epochs: Record<string, any>[], overrides: Record<string, any> = {}) {
+  const {
+    authorized_corridor, maximum_patch_cycles, lease_duration_minutes, actor_allowlist,
+    ...rest
+  } = makePolicy(overrides) as Record<string, any>;
+  return { ...rest, admission_history: epochs };
 }
 
 // States in which the lane working branch has been established by the

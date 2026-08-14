@@ -1,26 +1,52 @@
 {
-  "schema": "straylight.automation-policy.v1",
+  "schema": "straylight.automation-policy.v2",
   "_kill_switch": "Set `enabled` to false to suspend ALL autonomous processing. One field, one file. Suspension never rewrites lane history.",
+  "_admission_history": "HISTORICAL ADMISSION IS IMMUTABLE. The four replay-sensitive fields (authorized_corridor, actor_allowlist, maximum_patch_cycles, lease_duration_minutes) live in `admission_history`, an append-oriented ledger of epochs. Every durable event is adjudicated under the epoch in force at the AUTHENTICATED GitHub time of the comment that recorded it, so appending a new epoch can never change the disposition of an event that already happened. To change current admission policy, APPEND an epoch — never edit an existing one, and never reorder the ledger.",
+  "_projection": "The four admission fields at TOP LEVEL are a CURRENT-POLICY PROJECTION of the LAST epoch, kept so current policy is readable at a glance. They are not authority: the reducer reads only the resolved epoch, and validatePolicy requires these to deep-equal the final epoch.",
   "mode": "shadow",
   "enabled": true,
   "auto_merge": false,
-  "authorized_corridor": [
-    "phase-49p",
-    "phase-49q",
-    "phase-50a",
-    "phase-50b"
-  ],
   "automatic_estate_semantic_decisions": false,
   "automatic_cross_repo_contract_changes": false,
   "automatic_sibling_repo_edits": false,
   "automatic_external_infrastructure": false,
   "automatic_secret_use": false,
   "automatic_progression_beyond_mvp2": false,
+  "stuck_lane_threshold_hours": 72,
+  "admission_history": [
+    {
+      "epoch_id": "epoch-001-mvp2-shadow",
+      "effective_from": "2026-01-01T00:00:00Z",
+      "authorized_by": "operator:eileen",
+      "authorization_ref": "ADR-050 §4 (automation policy, kill switch, corridor, limits); ADR-049 §6 (operator:eileen is the sole Straylight authority)",
+      "note": "GENESIS EPOCH. Records the admission policy the control plane has operated under since v1 shipped, transcribed field-for-field with NO change in value: corridor phase-49p/49q/50a/50b, single-operator allowlist with github-actions[bot] under system only, maximum_patch_cycles 3, lease_duration_minutes 240. Its boundary predates every lane in the repository so that every event already recorded is adjudicated exactly as it was when it was posted. Changing any value in this entry would rewrite history; a change to current policy is a NEW epoch appended after this one.",
+      "authorized_corridor": [
+        "phase-49p",
+        "phase-49q",
+        "phase-50a",
+        "phase-50b"
+      ],
+      "maximum_patch_cycles": 3,
+      "lease_duration_minutes": 240,
+      "actor_allowlist": {
+        "coordinator": ["eileen1337"],
+        "implementer": ["eileen1337"],
+        "auditor": ["eileen1337"],
+        "operator": ["eileen1337"],
+        "system": ["eileen1337", "github-actions[bot]"]
+      }
+    }
+  ],
+  "authorized_corridor": [
+    "phase-49p",
+    "phase-49q",
+    "phase-50a",
+    "phase-50b"
+  ],
   "maximum_patch_cycles": 3,
   "lease_duration_minutes": 240,
-  "stuck_lane_threshold_hours": 72,
+  "_actor_allowlist": "GitHub commenter identity is the only authenticated identity available in v1; actor_role is a claimed field, not a cryptographic identity (ADR-050 §6). All model roles currently map to the operator's account. Distinct bot identities are a hard precondition for ever enabling auto_merge. github-actions[bot] is allowlisted for SYSTEM events only — it must never appear under operator, or workflow-posted comments could claim operator authority.",
   "actor_allowlist": {
-    "_note": "GitHub commenter identity is the only authenticated identity available in v1; actor_role is a claimed field, not a cryptographic identity (ADR-050 §6). All model roles currently map to the operator's account. Distinct bot identities are a hard precondition for ever enabling auto_merge. github-actions[bot] is allowlisted for SYSTEM events only — it must never appear under operator, or workflow-posted comments could claim operator authority.",
     "coordinator": ["eileen1337"],
     "implementer": ["eileen1337"],
     "auditor": ["eileen1337"],

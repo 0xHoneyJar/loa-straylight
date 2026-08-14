@@ -49,3 +49,15 @@ Because current Claude, Codex, ChatGPT, and GitHub Actions workers have not adop
 Changing a lease duration or introducing a bounded renewal/heartbeat mechanism for development workers would therefore require ordinary control-plane authorization and audit, but it would not weaken the product invariant above. The invariant is not that authorization must expire after a particular number of minutes. The invariant is that once the governing authorization boundary has been crossed, forward authority cannot be inferred from historical authority alone.
 
 A future Straylight-native renewal mechanism should itself be modeled as an explicit governed transition rather than an invisible extension of stale permission. Such a transition may reference a prior grant, but current state, policy, signer competence, revocation state, environment, risk, and requested scope must be evaluated anew.
+
+## Addendum — how a lease duration change is now made (policy v2)
+
+Under control-plane policy v2 (`ADR-050 §5.4`), `lease_duration_minutes` is an **admission** parameter versioned by epoch, not a single live value. The current admission epoch configures it as `240`, and this addendum does not change that.
+
+Changing it is done by **appending a new admission epoch** carrying the new duration and its own operator authorization, never by editing the existing entry. The consequence is that a duration change bounds future lease grants only: every lease already recorded was adjudicated under the epoch in force at the authenticated time it was granted, and stays adjudicated that way on every later replay.
+
+This is the same invariant this clarification already states, now mechanically enforced rather than merely intended:
+
+> Past authorization remains historical evidence; present action requires present authority.
+
+A longer development lease duration may therefore be authorized as a later epoch once the epoch migration has proven stable. That is an ordinary control-plane authorization and audit, and it is deliberately not part of the migration that introduced the mechanism.

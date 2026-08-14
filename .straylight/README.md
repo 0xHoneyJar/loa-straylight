@@ -48,8 +48,11 @@ that nothing merges.
 ```
 .straylight/
   README.md                  ← this protocol document (normative)
-  automation-policy.json     ← operator-owned policy: kill switch, corridor,
-                               allowlist, patch-cycle max, lease duration
+  automation-policy.json     ← operator-owned policy (schema v2): LIVE fields
+                               (kill switch, stuck-lane threshold) plus
+                               `admission_history`, the append-oriented ledger
+                               of admission epochs (corridor, allowlist,
+                               patch-cycle max, lease duration)
   schemas/                   ← published v1 contracts (JSON Schema 2020-12)
     lane-v1.schema.json
     event-v1.schema.json
@@ -527,9 +530,10 @@ Universal fail-closed rules enforced by the reducer:
   (`not-next-actor`); operator and system keep their escape hatches;
 - a reused `event_id` within a lane is refused (`duplicate-event-id`) so the
   append-only record stays uniquely addressable;
-- a lease whose `expires_at` exceeds the observed grant time plus
-  `lease_duration_minutes` is refused (`lease-expiry-unbounded`) so no lease
-  can outlive the watchdog's ability to reap it;
+- a lease whose `expires_at` exceeds the observed grant time plus the
+  governing epoch's `lease_duration_minutes` is refused
+  (`lease-expiry-unbounded`) so no lease can outlive the watchdog's
+  ability to reap it;
 - a lane record whose stored `next_actor` disagrees with the projection
   derived from its state is structurally invalid, as is an embedded lease
   whose `lane_id` differs from the lane (cross-lane), whose
@@ -542,9 +546,12 @@ Universal fail-closed rules enforced by the reducer:
 - a packet or audit-completion event without its declared content digest —
   or whose bound artifact no longer matches the declared digest — is
   refused (`…-digest-missing` / `…-digest-mismatch`);
-- a lane whose phase is outside `authorized_corridor` escalates to
+- a lane whose phase is outside the governing epoch's
+  `authorized_corridor` escalates to `operator-required`;
+- exceeding the governing epoch's `maximum_patch_cycles` escalates to
   `operator-required`;
-- exceeding `maximum_patch_cycles` escalates to `operator-required`;
+- an event whose admission epoch cannot be resolved is refused
+  (`admission-epoch-unresolved`) — there is no fallback to current policy;
 - EVERY escalation to `operator-required` — reducer verdicts, corridor
   escalations, watchdog escalations, and reconstruction's edited-comment
   routing alike — clears any active lease: a lease carried into
@@ -568,6 +575,11 @@ Universal fail-closed rules enforced by the reducer:
   `policy-invalid` before the edited-comment check (or any identity/
   artifact/event route) can change lane state, so the lane stays at its
   genesis state and event sequence;
+- a protocol comment carrying no valid GitHub `created_at` is refused
+  (`event-time-unavailable`) rather than adjudicated against the replay
+  run's wall clock: the authenticated event time is a precondition for
+  resolving an admission epoch, and a missing one is an adapter defect,
+  not evidence of tampering, so the lane simply stays where it was;
 - `policy.enabled: false` (kill switch) → every event refused;
 - workflows consult the canonical executable gate
   (`.straylight/bin/policy-gate.mjs` → strict duplicate-key-rejecting
@@ -586,12 +598,99 @@ live signal. Live PR facts enter the protocol exclusively as the durable
 `pr_metadata` field of `system.eligibility_confirmed` events, re-validated
 on every replay. Same durable content → same projection, on every run.
 
+## Admission policy and history immutability
+
+Every reduction replays the whole comment stream, so the policy object the
+reducer consults is not a setting — it is part of the input. Four policy
+fields decide whether an event was ADMISSIBLE at all:
+
+| Field | Decides |
+|---|---|
+| `authorized_corridor` | is the lane's phase inside the mandate? |
+| `actor_allowlist` | may this authenticated login act in this role? |
+| `maximum_patch_cycles` | has the patch budget been spent? |
+| `lease_duration_minutes` | is this lease grant within bounds? |
+
+Under policy **v1** these lived at top level as single live values, which
+meant editing one of them silently re-adjudicated the entire past.
+Measured on the real lanes: raising `lease_duration_minutes` from 240 to
+2880 moved lane #122 from `ready-for-claude` at sequence 121 back to
+`codex-working` at sequence 109, and lowering `maximum_patch_cycles` from
+3 to 2 retro-escalated the same lane to `operator-required` at sequence
+17 — in both directions, from a one-line policy edit, with no event
+posted and no history rewritten. A projection that changes when policy
+changes is not a reconstruction of what happened.
+
+Policy **v2** therefore makes historical admission immutable by epoch.
+
+- The four fields are authority ONLY inside `admission_history`, an
+  append-oriented ledger of **admission epochs**. Each epoch carries a
+  stable `epoch_id`, an explicit `effective_from` boundary, provenance
+  (`authorized_by: operator:<login>`, `authorization_ref`, optional
+  `note`), and all four admission fields.
+- Epochs are half-open intervals `[effective_from, next.effective_from)`
+  ordered by STRICTLY increasing boundary; the final epoch has no end.
+- Every event is adjudicated under the epoch in force at the
+  **authenticated GitHub `created_at`** of the comment that recorded it —
+  never the actor-supplied `occurred_at` (which an actor controls), and
+  never the replay run's wall clock. Reconstruction supplies that
+  observed time per comment; a comment without one is refused
+  (`event-time-unavailable`). Direct isolated `reduce()` calls may pass
+  `context.event_observed_at` explicitly, and it always wins over
+  `context.now`.
+- One explicit selector resolves it: `admissionPolicyFor(policy, atMillis)`
+  returns `{ ok: true, epoch_id, effective_from, admission }` or
+  `{ ok: false, reason }`. It fails closed on a missing, empty, unordered,
+  or unresolvable ledger, on a structurally invalid selected epoch, on a
+  non-instant selection time, and on any instant before the earliest
+  epoch — it NEVER falls back to current or top-level policy
+  (`admission-epoch-unresolved`). The reducer resolves ONCE per event and
+  takes all four decisions from that one resolved epoch, so the four can
+  never disagree about which policy governed an event.
+- **To change current admission policy, APPEND an epoch.** Never edit an
+  existing entry, never reorder the ledger. Appending is safe by
+  construction: an event already recorded resolves to its own earlier
+  epoch, so a later epoch cannot reach backwards — proven mechanically
+  over every real lane, for both permissive and restrictive changes to
+  all four fields
+  ([`tests/control-plane/admission-epochs.test.ts`](../tests/control-plane/admission-epochs.test.ts)).
+  Editing an existing epoch is the one operation that WOULD rewrite
+  history, which is why the ledger is append-oriented by convention and
+  why each entry records who authorized it.
+- The four fields also appear at TOP LEVEL as a **current-policy
+  projection** of the final epoch, so today's posture is readable at a
+  glance. They are documentation, not authority: `validatePolicy` requires
+  them to deep-equal the final epoch (all four or none), and the reducer
+  reads none of them. A ledger-only policy — no projection at all — is
+  valid and replays every lane identically.
+
+**`enabled` and `stuck_lane_threshold_hours` are LIVE and deliberately
+un-epoched.** They describe what the plane may do NOW, not whether a past
+event was admissible. The kill switch keeps its exact v1 behavior: an
+`enabled: false` policy freezes the projection and refuses every event
+without rewinding anything, and an `enabled` value that is not a literal
+boolean is an invalid policy (every protocol comment refused
+`policy-invalid`, lane pinned at genesis) rather than an engaged switch.
+Epoching a kill switch would produce a freeze that stops applying to old
+events — a freeze that rewrites history.
+
+The `schema` bump from `straylight.automation-policy.v1` to
+`straylight.automation-policy.v2` is the fail-closed mechanism, not a
+label: `validatePolicy` gates on the exact schema id in both directions,
+so v1 code cannot accept a v2 policy and then adjudicate from the mutable
+top-level fields while silently ignoring the ledger, and v2 code cannot
+accept a v1 policy that has no ledger at all.
+
 ## Leases
 
 Claude and Codex acquire a lease (`implementer.lease_acquired` /
 `auditor.lease_acquired`) before working. A lease records: lane ID, actor
 role, lease ID, grant sequence, acquisition time, expiry time, expected
-state. Duration comes from `policy.lease_duration_minutes` (default 240).
+state. The maximum duration comes from the `lease_duration_minutes` of the
+admission epoch governing the GRANT (currently 240) — measured from the
+authenticated grant time, so an actor cannot inflate its own lease by
+back-dating `occurred_at`. A later epoch with a longer duration bounds
+future grants only; it never extends a lease already recorded.
 
 The reducer rejects: a second active lease for the same work role;
 completion from an actor without the active lease; lease release by
@@ -699,7 +798,9 @@ the verdict cleared.
 
 `actor_role` is a claimed field, not a cryptographic identity. The
 authenticated identity available in v1 is the GitHub commenter login,
-checked against the per-role allowlist in `automation-policy.json`. In
+checked against the per-role allowlist of the admission epoch governing
+that event (`admission_history` in `automation-policy.json`) — so rotating
+an identity today cannot retroactively de-authorize what it already did. In
 the current deployment all three model actors may post through the same
 GitHub user. Distinct GitHub App/bot identities or signed events are a
 hard precondition for ever enabling auto-merge. Shadow mode remains safe

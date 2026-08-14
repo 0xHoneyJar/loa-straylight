@@ -10,6 +10,31 @@ export declare function validateAuditRecord(v: unknown): ValidationResult;
 export declare function validatePolicy(v: unknown): ValidationResult;
 export declare function validatePrMetadata(v: unknown): ValidationResult;
 /**
+ * The four replay-sensitive admission fields, canonical order. Any policy
+ * change to these re-adjudicates history unless it is added as a new epoch.
+ */
+export declare const ADMISSION_FIELDS: readonly [
+  "actor_allowlist",
+  "authorized_corridor",
+  "lease_duration_minutes",
+  "maximum_patch_cycles",
+];
+export type AdmissionPolicy = {
+  actor_allowlist: Record<string, string[]>;
+  authorized_corridor: string[];
+  lease_duration_minutes: number;
+  maximum_patch_cycles: number;
+};
+export type AdmissionSelection =
+  | { ok: true; epoch_id: string; effective_from: string; admission: AdmissionPolicy }
+  | { ok: false; reason: string };
+/**
+ * Resolve the ONE admission epoch governing an event observed at `atMillis`
+ * (authenticated GitHub comment time, epoch millis). Fails closed: no clock,
+ * no fallback to the top-level projection, no "newest epoch wins" default.
+ */
+export declare function admissionPolicyFor(policy: unknown, atMillis: unknown): AdmissionSelection;
+/**
  * Strict UTC calendar instant → epoch millis, or null if impossible/malformed.
  * At most MILLISECOND (3-digit) fractional precision: a finer fraction is
  * rejected (null), never rounded, so distinct instants cannot collapse.

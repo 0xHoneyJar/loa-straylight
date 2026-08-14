@@ -9,11 +9,15 @@
 //
 // input = {
 //   issue_body:  string,
-//   comments:    [{ id, user, body, created_at?, updated_at? }...]
+//   comments:    [{ id, user, body, created_at, updated_at? }...]
 //                // user = AUTHENTICATED GitHub commenter login from the
 //                // API; created_at = GitHub-recorded post time; updated_at =
 //                // GitHub-recorded last-edit time. All supplied by the
 //                // adapter — never taken from the payload itself.
+//                // created_at is REQUIRED on any protocol comment: it selects
+//                // the governing admission epoch and bounds lease grants, so a
+//                // comment without it is refused rather than adjudicated
+//                // against the replay run's wall clock.
 //   policy:      parsed automation-policy.json
 //   context:     { now }
 // }
@@ -208,10 +212,30 @@ export function reconstructLane(input) {
       continue;
     }
 
-    const ctx = { ...context };
-    if (typeof comment.created_at === "string") {
-      ctx.event_observed_at = comment.created_at;
+    // AUTHENTICATED EVENT TIME IS MANDATORY. The GitHub-recorded created_at is
+    // authority-bearing input: it selects the admission epoch that adjudicates
+    // the event and bounds any lease the event grants. Falling back to the
+    // replay run's wall clock (as v1 did when created_at was absent) would make
+    // reconstruction non-deterministic and would adjudicate old events under
+    // today's policy — the exact defect admission epochs exist to close. A
+    // protocol comment whose observed time the adapter did not supply is
+    // therefore REFUSED, not guessed. The refusal does not escalate: a missing
+    // created_at is a defect of the fetch, not evidence that the durable record
+    // was tampered with (an unparseable one is already caught above as edited),
+    // and rewriting lane state from an adapter's omission would be its own
+    // history rewrite. The lane simply does not advance past it.
+    if (typeof comment.created_at !== "string" || parseIsoInstant(comment.created_at) === null) {
+      dispositions.push({
+        comment_id: comment.id,
+        status: "refused",
+        refusal: "event-time-unavailable",
+        detail: `comment ${comment.id} has no valid GitHub created_at; authenticated event time is required to adjudicate an event`,
+      });
+      continue;
     }
+
+    const ctx = { ...context };
+    ctx.event_observed_at = comment.created_at;
     // The authenticated comment author binds the lease holder + holder checks.
     ctx.comment_author = typeof comment.user === "string" ? comment.user : null;
     ctx.used_lease_ids = usedLeaseIds;
