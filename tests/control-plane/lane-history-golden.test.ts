@@ -109,6 +109,19 @@ function evidence(file: string): any {
   return (parseStrict(readFileSync(`${DIR}/${file}`, "utf8")) as any).value;
 }
 
+// Blank comments so a source scan reads what the file DOES, not what it says
+// about itself. Full-line `//`, trailing `//` on lines that contain no quote or
+// slash before it (so URLs, regexes and string literals are left intact), and
+// `/* */` blocks. Under-blanking makes a scan fail loudly, which is the safe
+// direction; over-blanking would let a real special-case hide in a comment.
+function executableText(src: string): string {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .split("\n")
+    .map((l) => (l.trim().startsWith("//") ? "" : l.replace(/^([^"'`/]*)\/\/.*$/, "$1")))
+    .join("\n");
+}
+
 const policy = (() => {
   const loaded = loadProtocolPolicy({ committedPath: ".straylight/automation-policy.json" });
   if (!loaded.ok) throw new Error(`committed policy refused: ${loaded.refusal} (${loaded.detail})`);
@@ -372,15 +385,33 @@ describe("I — lane #122's lease history, event by event", () => {
   });
 
   it("no control-plane source special-cases any of these comment ids or lanes", () => {
+    // Scanned against EXECUTABLE text, not raw bytes. The claim being proven is
+    // "no code branches on these ids" — a header comment that documents WHY
+    // 5257177236 is the load-bearing row is exactly the provenance this repair
+    // is supposed to carry, and must not be forbidden by its own regression
+    // test. (The inverse hazard applies to absence checks over raw bytes: they
+    // fail on legitimate prose and tempt the author to delete the prose.)
     const ids = ["5257177236", "5257220713", "5274503689", "5276134089", "5080520742", "5096236059"];
     const files = execFileSync("git", ["ls-files", ".straylight/lib", ".straylight/bin", "scripts"], { encoding: "utf8" })
       .split("\n").filter((f) => f.endsWith(".mjs"));
     expect(files.length).toBeGreaterThan(15);
+    // Every file this scan covers must be one git tracks: while these sources
+    // were untracked, `git ls-files` skipped them and the scan proved nothing.
+    for (const f of [
+      ".straylight/lib/admission-locks.mjs",
+      ".straylight/lib/policy-source.mjs",
+      ".straylight/lib/policy-transition.mjs",
+      ".straylight/bin/policy-transition-check.mjs",
+      "scripts/capture-cp-lane-history.mjs",
+    ]) expect(files, f).toContain(f);
     for (const file of files) {
-      const src = readFileSync(file, "utf8");
-      for (const id of ids) expect(src, `${file} names ${id}`).not.toContain(id);
-      expect(src, `${file} names a lane id`).not.toContain("lane-phase-50a");
+      const code = executableText(readFileSync(file, "utf8"));
+      for (const id of ids) expect(code, `${file} names ${id} in executable text`).not.toContain(id);
+      expect(code, `${file} names a lane id in executable text`).not.toContain("lane-phase-50a");
     }
+    // And the documentation the blanking permits is REQUIRED to exist: the lock
+    // table has to say which durable row the rejected attempts rewrote.
+    expect(readFileSync(".straylight/lib/admission-locks.mjs", "utf8")).toContain("5257177236");
   });
 });
 
@@ -463,8 +494,7 @@ describe("I — the watchdog reaches the same verdict, and epochs cannot move it
   });
 
   it("the watchdog reads no epoched admission field at all", () => {
-    const code = readFileSync(".straylight/lib/watchdog.mjs", "utf8")
-      .split("\n").map((l) => (l.trim().startsWith("//") ? "" : l)).join("\n");
+    const code = executableText(readFileSync(".straylight/lib/watchdog.mjs", "utf8"));
     for (const field of ADMISSION_FIELDS) expect(code, field).not.toContain(field);
     expect(code).toContain("stuck_lane_threshold_hours");
   });
