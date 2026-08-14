@@ -27,7 +27,7 @@
 import { readFileSync, writeFileSync, realpathSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseStrict } from "../lib/strict-json.mjs";
+import { loadProtocolPolicy } from "../lib/policy-source.mjs";
 import { planWatchdogWrites } from "../lib/watchdog-plan.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -80,17 +80,15 @@ function containedReader(dir) {
   };
 }
 
+// Strict parse + validation; the accepted-epoch digest lock additionally
+// applies when the file read is the protocol's own committed policy.
 function loadPolicy() {
-  const policyPath = arg("--policy") ?? resolve(here, "..", "automation-policy.json");
-  let text;
-  try {
-    text = readFileSync(policyPath, "utf8");
-  } catch (e) {
-    fail("policy-unreadable", String(e?.message ?? e));
-  }
-  const parsed = parseStrict(text);
-  if (!parsed.ok) fail("policy-unreadable", `strict JSON parse failed: ${parsed.reason}`);
-  return parsed.value;
+  const loaded = loadProtocolPolicy({
+    committedPath: resolve(here, "..", "automation-policy.json"),
+    overridePath: arg("--policy"),
+  });
+  if (!loaded.ok) fail(loaded.refusal, loaded.detail);
+  return loaded.value;
 }
 
 function readText(path, label) {

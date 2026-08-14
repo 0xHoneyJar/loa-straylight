@@ -48,8 +48,15 @@ that nothing merges.
 ```
 .straylight/
   README.md                  ← this protocol document (normative)
-  automation-policy.json     ← operator-owned policy: kill switch, corridor,
-                               allowlist, patch-cycle max, lease duration
+  automation-policy.json     ← operator-owned policy (schema
+                               straylight.automation-policy.v2): LIVE
+                               operational fields (kill switch, mode,
+                               auto-merge, automatic-* prohibitions,
+                               stuck-lane threshold) plus the APPEND-ONLY
+                               `admission_history` — the epoched corridor,
+                               allowlist, patch-cycle max, and lease
+                               duration that govern replay (§ "Admission
+                               policy history")
   schemas/                   ← published v1 contracts (JSON Schema 2020-12)
     lane-v1.schema.json
     event-v1.schema.json
@@ -58,7 +65,25 @@ that nothing merges.
   lib/                       ← pure, dependency-free ESM logic (Node 22)
     state-machine.mjs        ← states, event table, transition legality
     markers.mjs              ← hidden-marker payload extraction (fail-closed)
-    validate.mjs             ← structural validators mirroring the schemas
+    validate.mjs             ← structural validators mirroring the schemas;
+                               ALSO the policy validator, the epoch
+                               selector (`admissionPolicyFor`), and
+                               `acceptPolicy` (validation + the accepted-
+                               epoch lock)
+    admission-locks.mjs      ← the accepted admission epochs, pinned by
+                               canonical content digest IN PROTOCOL CODE:
+                               rewriting an accepted epoch is a code
+                               change, not a policy edit
+    policy-source.mjs        ← the single policy loader: the committed
+                               policy is loaded through `acceptPolicy`
+                               (locks enforced); an explicit `--policy`
+                               override is a caller-supplied hypothetical
+                               and gets `validatePolicy` only
+    policy-transition.mjs    ← change-time guard: the previous committed
+                               admission history must remain a canonical
+                               PREFIX of the candidate's (append-only),
+                               and a v1→v2 migration must transcribe v1's
+                               four admission fields exactly
     reducer.mjs              ← the single state-advancement authority
     reconstruct.mjs          ← full lane rebuild from issue + comments
     watchdog.mjs             ← recovery scan (expired leases, moved heads…);
@@ -106,6 +131,11 @@ that nothing merges.
     merge-guard-check.mjs
     validate-protocol.mjs
     lane-scan.mjs
+    policy-transition-check.mjs ← the reusable comparison command:
+                               `--previous <file> --candidate <file>`
+                               (both required, no defaults) → exit 0 when
+                               the change is an append / a faithful v1→v2
+                               transcription, exit 2 otherwise
     policy-gate.mjs          ← canonical workflow policy gate (exit 0 =
                                valid policy + enabled boolean true; exit 3 =
                                valid kill switch; exit 2 = malformed policy,
@@ -518,8 +548,9 @@ Universal fail-closed rules enforced by the reducer:
 - an event whose `sequence` ≠ lane `event_sequence + 1` is stale — refused;
 - an event whose `prior_state` ≠ current lane state is refused;
 - an event whose `lane_id` differs is refused (wrong lane);
-- an event whose authenticated GitHub commenter is not in the policy
-  allowlist for the claimed role is refused;
+- an event whose authenticated GitHub commenter is not in the
+  `actor_allowlist` for the claimed role — read from the admission epoch
+  governing that event's authenticated observation time — is refused;
 - an event whose claimed `github_actor` differs from the authenticated
   commenter is refused (`actor-identity-mismatch`);
 - an event from a model role (coordinator/implementer/auditor) that is not
@@ -527,9 +558,11 @@ Universal fail-closed rules enforced by the reducer:
   (`not-next-actor`); operator and system keep their escape hatches;
 - a reused `event_id` within a lane is refused (`duplicate-event-id`) so the
   append-only record stays uniquely addressable;
-- a lease whose `expires_at` exceeds the observed grant time plus
-  `lease_duration_minutes` is refused (`lease-expiry-unbounded`) so no lease
-  can outlive the watchdog's ability to reap it;
+- a lease whose `expires_at` exceeds the observed grant time plus the
+  `lease_duration_minutes` of the epoch governing that grant is refused
+  (`lease-expiry-unbounded`) so no lease can outlive the watchdog's
+  ability to reap it — and the bound a historical grant was judged
+  against never moves when policy changes;
 - a lane record whose stored `next_actor` disagrees with the projection
   derived from its state is structurally invalid, as is an embedded lease
   whose `lane_id` differs from the lane (cross-lane), whose
@@ -542,9 +575,10 @@ Universal fail-closed rules enforced by the reducer:
 - a packet or audit-completion event without its declared content digest —
   or whose bound artifact no longer matches the declared digest — is
   refused (`…-digest-missing` / `…-digest-mismatch`);
-- a lane whose phase is outside `authorized_corridor` escalates to
+- a lane whose phase is outside the governing epoch's
+  `authorized_corridor` escalates to `operator-required`;
+- exceeding the governing epoch's `maximum_patch_cycles` escalates to
   `operator-required`;
-- exceeding `maximum_patch_cycles` escalates to `operator-required`;
 - EVERY escalation to `operator-required` — reducer verdicts, corridor
   escalations, watchdog escalations, and reconstruction's edited-comment
   routing alike — clears any active lease: a lease carried into
@@ -568,6 +602,17 @@ Universal fail-closed rules enforced by the reducer:
   `policy-invalid` before the edited-comment check (or any identity/
   artifact/event route) can change lane state, so the lane stays at its
   genesis state and event sequence;
+- a policy whose `admission_history` does not present the accepted epochs
+  with exactly their pinned content is INVALID (`policy-invalid`) — an
+  edited, deleted, reordered, or substituted accepted epoch fails closed
+  at every real-policy load (§ "Admission policy history");
+- an event with no authenticated observation time is refused
+  (`event-time-unavailable`): the reducer run's wall clock is not
+  admission authority, and cannot select an epoch, establish a lease
+  grant instant, or decide whether a historical completion was timely;
+- an event observed before the earliest admission epoch is refused
+  (`admission-epoch-unresolved`) — an unproven earlier event fails
+  closed, it is never assumed to be governed by the genesis epoch;
 - `policy.enabled: false` (kill switch) → every event refused;
 - workflows consult the canonical executable gate
   (`.straylight/bin/policy-gate.mjs` → strict duplicate-key-rejecting
@@ -586,12 +631,118 @@ live signal. Live PR facts enter the protocol exclusively as the durable
 `pr_metadata` field of `system.eligibility_confirmed` events, re-validated
 on every replay. Same durable content → same projection, on every run.
 
+## Admission policy history
+
+Four policy fields decide whether a historical event was ADMISSIBLE:
+`authorized_corridor`, `actor_allowlist`, `maximum_patch_cycles`, and
+`lease_duration_minutes`. Because the reducer replays the whole comment
+stream on every run, reading these from a single mutable value meant that
+editing today's policy silently re-judged the past. It was not
+hypothetical: raising `lease_duration_minutes` from 240 to 2880 flipped
+lane #122's refused `lease-expiry-unbounded` claim into an accepted one.
+
+Policy v2 fixes this in three independent layers.
+
+**1. Selection by authenticated observation time.** The four fields live
+in `admission_history`, an ordered list of epochs. Epoch *i* governs the
+half-open interval `[governs_from_i, governs_from_i+1)`; the final epoch
+governs `[governs_from_n, ∞)`. Each event is judged by the epoch
+governing **its own** authenticated GitHub `created_at` — the only
+observation time the protocol trusts. `occurred_at` is actor-supplied and
+never authoritative, and the reducer run's wall clock is not admission
+authority at all: an event with no authenticated observation time is
+refused rather than judged against "now".
+
+**2. Accepted epochs are digest-locked in protocol code.**
+[`lib/admission-locks.mjs`](./lib/admission-locks.mjs) pins each accepted
+epoch's `epoch_id` together with the canonical content digest of the
+COMPLETE epoch object — id, boundary, all four admission fields, and
+provenance. Every load of the real committed policy goes through
+`acceptPolicy`, which requires the history to be exactly the accepted
+history: same length, same ids at the same indices, same content. So a
+policy edit alone fails closed; an append without its lock entry fails
+closed; a lock change without the matching policy fails closed. A digest
+stored *next to* the epoch inside `automation-policy.json` would be
+worthless — whoever edits the epoch would just recompute it — so the lock
+lives outside the mutable policy representation, in executable code.
+
+This is NOT immutability against a change of the protocol implementation,
+and there is no cryptographic anchor, external notary, or signature
+here. What it does is make rewriting an accepted historical epoch a
+**protocol-code change**: it must land in reviewed code at an exact SHA,
+where a reviewer sees it, instead of passing as an ordinary policy edit.
+
+**3. Change-time append-only guard.**
+[`lib/policy-transition.mjs`](./lib/policy-transition.mjs) (CLI:
+[`bin/policy-transition-check.mjs`](./bin/policy-transition-check.mjs))
+takes the PREVIOUS committed policy and a candidate and requires the
+previous admission history to remain a canonical prefix of the
+candidate's. Appending is allowed; editing, deleting, reordering,
+replacing, or inserting into the accepted prefix is not. For a v1→v2
+migration it additionally requires the genesis epoch to transcribe v1's
+four fields exactly. This guard never consults the lock table and takes
+the previous policy as input, so the two protections are independent:
+editing an epoch and recomputing its lock entry in the same change
+satisfies the runtime lock, and the transition guard still refuses it.
+
+**Append-only here is mechanically enforced, not a convention.** (Event
+append-orientation on GitHub comments is a different matter and remains a
+convention — see § "The one-paragraph model".)
+
+**The genesis epoch.** `epoch-001` transcribes, without alteration, the
+four admission fields of `straylight.automation-policy.v1` as committed
+at main `5625c5be425c71fce90a22e81d123b42ed104538` — the policy under
+which every durable control-plane event up to that commit was admitted.
+Its `governs_from` is `2026-07-25T20:49:00Z`, the authenticated
+`created_at` of the earliest durable protocol event in the repository
+(lane-phase-49p sequence 1, issue #118 comment 5080520742). That
+boundary records **when the replayable history begins**. It asserts
+nothing about operator authorization, or about any policy being in
+effect, before that instant — the control plane did not exist earlier,
+and an event claiming an earlier observation time fails closed rather
+than being adopted into the genesis epoch. (The lane #118 genesis lane
+record in the issue body is 89 seconds older; it is a lane record, not
+an admitted event, and no epoch is selected for it.)
+
+**Provenance is metadata.** `provenance.attributed_to` /`reference` /
+`note` are inspectable descriptive fields, bound by the epoch's digest so
+they cannot be rewritten silently. A string such as `"operator:eileen"`
+authenticates nothing and grants nothing — no code compares it to a
+signer. Authority comes from the operator-controlled repository change,
+reviewed at an exact SHA, that introduced the epoch and its lock.
+
+**Live fields are still live.** `enabled` remains the global kill switch
+and takes effect immediately; `stuck_lane_threshold_hours`, `mode`,
+`auto_merge`, and the `automatic_*` prohibitions are likewise current
+operational settings, not history. Epochs govern admission of the past,
+never the kill switch.
+
+**Current shipped values** (epoch-001, also mirrored in the required
+top-level projection): corridor `phase-49p…phase-50b`,
+`maximum_patch_cycles: 3`, `lease_duration_minutes: 240`, single-operator
+allowlist. **240 minutes is the active lease duration.** A longer lease
+(for example 48 hours) would be a NEW appended epoch with its own lock
+entry and its own review; nothing about it is active here, and appending
+one would not change how any earlier lease was judged.
+
+To append an epoch: add it at the end of `admission_history`, add its
+lock entry to `ACCEPTED_ADMISSION_EPOCH_LOCKS`, update the top-level
+projection to mirror the new final epoch, and prove the change:
+
+```bash
+git show <previous-main-sha>:.straylight/automation-policy.json > /tmp/prev.json
+node .straylight/bin/policy-transition-check.mjs \
+  --previous /tmp/prev.json --candidate .straylight/automation-policy.json
+```
+
 ## Leases
 
 Claude and Codex acquire a lease (`implementer.lease_acquired` /
 `auditor.lease_acquired`) before working. A lease records: lane ID, actor
 role, lease ID, grant sequence, acquisition time, expiry time, expected
-state. Duration comes from `policy.lease_duration_minutes` (default 240).
+state. Duration comes from the `lease_duration_minutes` of the admission
+epoch governing the grant's authenticated observation time (currently 240
+minutes; § "Admission policy history").
 
 The reducer rejects: a second active lease for the same work role;
 completion from an actor without the active lease; lease release by
@@ -699,7 +850,9 @@ the verdict cleared.
 
 `actor_role` is a claimed field, not a cryptographic identity. The
 authenticated identity available in v1 is the GitHub commenter login,
-checked against the per-role allowlist in `automation-policy.json`. In
+checked against the per-role allowlist of the admission epoch governing
+the event's authenticated observation time. Epoch `provenance` strings
+are descriptive metadata and authenticate nobody. In
 the current deployment all three model actors may post through the same
 GitHub user. Distinct GitHub App/bot identities or signed events are a
 hard precondition for ever enabling auto-merge. Shadow mode remains safe
@@ -743,7 +896,9 @@ cosmetic.
 
 Any actor, on any run, can rebuild everything from GitHub:
 
-1. read `automation-policy.json` at the merged main HEAD;
+1. read `automation-policy.json` at the merged main HEAD — including its
+   `admission_history`, which is what makes step 3's replay reproduce the
+   same dispositions it produced when the events were first posted;
 2. enumerate all open issues and identify lane issues through the
    canonical marker parser (`node .straylight/bin/lane-scan.mjs
    --all-lanes`) — the `cp-lane` label is a derived convenience
@@ -760,6 +915,15 @@ GitHub does not exist, protocol-wise.
 ## Validation
 
 ```bash
-npm run control-plane:validate   # policy + schemas + state machine + markers
+npm run control-plane:validate   # policy (incl. accepted-epoch locks) +
+                                 # schemas + state machine + markers
 npm run control-plane:test       # vitest suite: tests/control-plane/
+```
+
+A policy CHANGE is additionally proven against the policy it replaces
+(§ "Admission policy history"):
+
+```bash
+node .straylight/bin/policy-transition-check.mjs \
+  --previous /tmp/prev.json --candidate .straylight/automation-policy.json
 ```

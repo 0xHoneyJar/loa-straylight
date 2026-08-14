@@ -29,6 +29,7 @@ import {
   validateTaskPacket,
   validateAuditRecord,
   validatePrMetadata,
+  admissionPolicyFor,
   parseIsoInstant,
 } from "./validate.mjs";
 import { payloadDigest } from "./canonical.mjs";
@@ -49,18 +50,25 @@ function advance(lane, event, state, extra = {}, effects = [], note = "") {
   return { ok: true, lane: next, effects, note };
 }
 
-function actorAllowed(policy, role, githubActor) {
-  const list = policy.actor_allowlist?.[role];
+// Allowlist membership is read from the RESOLVED admission epoch, never from
+// the live policy: whether an actor was allowlisted is a fact about the moment
+// the event was recorded, not about today.
+function actorAllowed(admission, role, githubActor) {
+  const list = admission.actor_allowlist?.[role];
   return Array.isArray(list) && list.includes(githubActor);
 }
 
-// context (all optional, but absence fails closed where noted):
-//   now                 ISO timestamp of reduction time
-//   event_observed_at   AUTHORITATIVE time the event was recorded (the
-//                       GitHub comment's created_at) — used for lease-expiry
-//                       checks so replaying history is deterministic: an
-//                       event valid when posted stays valid on every replay,
-//                       and a late event stays refused. Falls back to `now`.
+// context:
+//   event_observed_at   REQUIRED. The AUTHORITATIVE time the event was recorded
+//                       — the authenticated GitHub comment created_at, supplied
+//                       by reconstruct from the API. It selects the admission
+//                       epoch, sets the lease grant instant, and decides
+//                       whether a completion was timely. There is NO fallback
+//                       to a reduction wall clock: the reducer's own run time is
+//                       not authority over any of those questions, and letting
+//                       it stand in would make a historical event's admission
+//                       depend on when the reducer happened to run. The
+//                       actor-supplied occurred_at is likewise never authority.
 //   comment_author      authenticated GitHub login of the event's comment,
 //                       used to bind a lease to its real holder (R3)
 //   used_lease_ids      Set/array of lease IDs already consumed earlier in
@@ -115,10 +123,39 @@ export function reduce(lane, event, policy, context = {}) {
     );
   }
 
+  // -- 2.5. Admission epoch resolution. --------------------------------------
+  // The four admission fields — authorized_corridor, actor_allowlist,
+  // maximum_patch_cycles, lease_duration_minutes — are HISTORICAL authority:
+  // they decide whether a DURABLE PAST event was admissible. They are resolved
+  // ONCE here, from the epoch governing the event's authenticated observation
+  // time, and every check below reads that resolved epoch. Nothing downstream
+  // reads the live policy's top-level projection, so replaying the same durable
+  // comment yields the same decision forever, whatever today's policy says.
+  //
+  // The observation time comes ONLY from context.event_observed_at. Absence or
+  // an unparseable value fails closed; there is deliberately no reduction-clock
+  // fallback, because the reducer's run time is not authority over which policy
+  // governed a past event, when a lease was granted, or whether a completion
+  // was timely.
+  const observedMs = eventObservedAt(context);
+  const observedIso = eventObservedIso(context);
+  if (observedMs === null || observedIso === null) {
+    return refuse(
+      lane,
+      "event-time-unavailable",
+      "event admission requires context.event_observed_at (the authenticated GitHub comment time); the reducer run clock is not admission authority",
+    );
+  }
+  const resolved = admissionPolicyFor(policy, observedMs);
+  if (!resolved.ok) {
+    return refuse(lane, "admission-epoch-unresolved", resolved.errors.join("; "));
+  }
+  const admission = resolved.admission;
+
   // -- 3. Corridor. -----------------------------------------------------------
   // Operator events bypass the corridor check so the operator can always
   // pause, decide, or supersede a lane that has fallen out of the corridor.
-  if (!isOperatorEvent && !policy.authorized_corridor.includes(lane.phase)) {
+  if (!isOperatorEvent && !admission.authorized_corridor.includes(lane.phase)) {
     return refuse(
       lane,
       "outside-corridor",
@@ -131,7 +168,7 @@ export function reduce(lane, event, policy, context = {}) {
   // Every role — including "system" — has its own allowlist. The CI bot
   // identity lives ONLY under system; validatePolicy rejects any policy
   // that puts a bot under operator (ADR-050 §3).
-  if (!actorAllowed(policy, event.actor_role, event.github_actor)) {
+  if (!actorAllowed(admission, event.actor_role, event.github_actor)) {
     return refuse(
       lane,
       "actor-not-allowlisted",
@@ -178,7 +215,7 @@ export function reduce(lane, event, policy, context = {}) {
   const spec = EVENT_TYPES[event.event_type];
 
   // -- 6. Lease discipline. ---------------------------------------------------
-  const leaseCheck = checkLease(lane, event, policy, context);
+  const leaseCheck = checkLease(lane, event);
   if (leaseCheck) return leaseCheck;
 
   // -- 7. Per-event semantic checks and routing. ------------------------------
@@ -253,7 +290,7 @@ export function reduce(lane, event, policy, context = {}) {
         if (packet.patch_cycle !== nextCycle) {
           return refuse(lane, "task-packet-wrong-patch-cycle", `patch packet cycle ${packet.patch_cycle} != expected ${nextCycle}`);
         }
-        if (nextCycle > policy.maximum_patch_cycles) {
+        if (nextCycle > admission.maximum_patch_cycles) {
           // Every escalation to operator-required clears the lease (checkLease
           // already refuses coordinator events under an active lease, so this
           // is belt-and-braces): a lease carried into operator-required would
@@ -262,7 +299,7 @@ export function reduce(lane, event, policy, context = {}) {
           return advance(
             lane, event, "operator-required",
             {
-              operator_required_reason: `patch cycle ${nextCycle} exceeds maximum ${policy.maximum_patch_cycles}`,
+              operator_required_reason: `patch cycle ${nextCycle} exceeds maximum ${admission.maximum_patch_cycles}`,
               lease: null,
             },
             [{ type: "label", value: "cp-operator-required" }],
@@ -306,14 +343,12 @@ export function reduce(lane, event, policy, context = {}) {
       if (!event.lease_id || !event.lease_expires_at) {
         return refuse(lane, "lease-fields-missing", "lease_id and lease_expires_at required");
       }
-      // A lease grant is time-bearing: without a trusted observed time we
-      // cannot bound its expiry, so fail closed rather than store an
-      // actor-chosen, unbounded window. observedAt uses the GitHub-recorded
-      // comment time (event_observed_at), NOT the actor-supplied occurred_at.
-      const grantAt = observedAt(context);
-      if (grantAt === null) {
-        return refuse(lane, "time-missing", "lease grant requires event_observed_at or now");
-      }
+      // A lease grant is time-bearing, and its instant is the GitHub-recorded
+      // comment time resolved at step 2.5 — NOT the actor-supplied occurred_at
+      // and NOT the reducer's run clock. A run-clock grant instant would let the
+      // same durable grant get a different (and on a later replay, a wider)
+      // window purely because the reducer ran later.
+      const grantAt = observedMs;
       if (lane.lease) {
         // Unknown time already handled above; the existing lease is active
         // until its recorded expiry.
@@ -334,7 +369,7 @@ export function reduce(lane, event, policy, context = {}) {
       // + the policy lease duration, and must be a real calendar instant. An
       // unbounded (e.g. year-2099) expiry would park the lane forever: the
       // watchdog only reaps a lease once its recorded expiry passes.
-      const maxExpiry = grantAt + policy.lease_duration_minutes * 60000;
+      const maxExpiry = grantAt + admission.lease_duration_minutes * 60000;
       const claimedExpiry = parseIsoInstant(event.lease_expires_at);
       if (claimedExpiry === null) {
         return refuse(lane, "lease-expiry-invalid", "lease_expires_at is not a valid UTC calendar instant");
@@ -343,7 +378,7 @@ export function reduce(lane, event, policy, context = {}) {
         return refuse(
           lane,
           "lease-expiry-unbounded",
-          `lease_expires_at ${event.lease_expires_at} exceeds observed grant + ${policy.lease_duration_minutes}m`,
+          `lease_expires_at ${event.lease_expires_at} exceeds observed grant + ${admission.lease_duration_minutes}m`,
         );
       }
       // The lease is bound to the AUTHENTICATED comment author, not the
@@ -380,10 +415,11 @@ export function reduce(lane, event, policy, context = {}) {
         lease_id: event.lease_id,
         holder_login: holderLogin,
         grant_sequence: event.sequence,
-        // acquired_at comes from the TRUSTED GitHub comment time, not the
-        // actor-supplied occurred_at, so a forged occurred_at cannot widen
-        // the lease window.
-        acquired_at: observedIso(context) ?? event.occurred_at,
+        // acquired_at is the TRUSTED GitHub comment time resolved at step 2.5.
+        // There is no fallback to the actor-supplied occurred_at: a forged
+        // occurred_at must not be able to widen the lease window, and the
+        // observed time is already known to be present and parseable here.
+        acquired_at: observedIso,
         expires_at: event.lease_expires_at,
         expected_state: role === "implementer" ? "claude-working" : "codex-working",
       };
@@ -396,7 +432,7 @@ export function reduce(lane, event, policy, context = {}) {
     }
 
     case "implementer.completed": {
-      const held = requireHeldLease(lane, event, "implementer", context);
+      const held = requireHeldLease(lane, event, "implementer", context, observedMs);
       if (held) return held;
       if (!event.head_sha) {
         return refuse(lane, "head-sha-missing", "implementer.completed requires head_sha");
@@ -429,14 +465,14 @@ export function reduce(lane, event, policy, context = {}) {
     case "implementer.lease_released":
     case "auditor.lease_released": {
       const role = event.event_type.startsWith("implementer") ? "implementer" : "auditor";
-      const held = requireHeldLease(lane, event, role, context);
+      const held = requireHeldLease(lane, event, role, context, observedMs);
       if (held) return held;
       return advance(lane, event, spec.to, { lease: null });
     }
 
     case "implementer.blocked":
     case "implementer.escalated": {
-      const held = requireHeldLease(lane, event, "implementer", context);
+      const held = requireHeldLease(lane, event, "implementer", context, observedMs);
       if (held) return held;
       return advance(lane, event, spec.to, {
         lease: null,
@@ -445,7 +481,7 @@ export function reduce(lane, event, policy, context = {}) {
     }
 
     case "auditor.audit_completed": {
-      const held = requireHeldLease(lane, event, "auditor", context);
+      const held = requireHeldLease(lane, event, "auditor", context, observedMs);
       if (held) return held;
       const ar = validateAuditRecord(context.audit_record ?? null);
       if (!ar.ok) {
@@ -673,10 +709,9 @@ export function reduce(lane, event, policy, context = {}) {
       if (!lane.lease) {
         return refuse(lane, "no-lease-to-expire", "system.lease_expired without an active lease");
       }
-      const at = observedAt(context);
-      if (at === null) {
-        return refuse(lane, "time-missing", "lease expiry check requires event_observed_at or now");
-      }
+      // Whether a lease had expired is a question about the PAST, so it is
+      // answered against the observed (authenticated) time of THIS event —
+      // resolved at step 2.5 — never against the reducer run's wall clock.
       // Strict parsed-instant comparison (never lexical, never lenient
       // Date.parse): an unparseable recorded expiry fails closed as
       // NOT-expired-yet-unreapable → surfaced via refusal, not guessed.
@@ -684,7 +719,7 @@ export function reduce(lane, event, policy, context = {}) {
       if (recordedExpiry === null) {
         return refuse(lane, "lease-expiry-invalid", "recorded lease expiry is not a valid UTC calendar instant");
       }
-      if (recordedExpiry > at) {
+      if (recordedExpiry > observedMs) {
         return refuse(lane, "lease-not-expired", `lease valid until ${lane.lease.expires_at}`);
       }
       // Record WHICH role lost its lease so recovery routes to the correct
@@ -753,18 +788,27 @@ export function reduce(lane, event, policy, context = {}) {
   }
 }
 
-// Authoritative time for lease checks: the GitHub-recorded comment time
-// when replaying history (deterministic), else reduction wall-clock.
-// Returns epoch millis or null (null → callers fail closed). Uses the strict
-// calendar parser so an ISO-shaped but impossible time fails closed.
-function observedAt(context) {
-  const iso = context.event_observed_at ?? context.now;
+// THE ONLY time authority for event admission.
+//
+// `context.event_observed_at` is the AUTHENTICATED GitHub comment time of the
+// event being reduced (reconstruct.mjs populates it from comment.created_at).
+// There is deliberately NO fallback to the reducer run's wall clock: a wall
+// clock would make "which admission epoch governs this event", "when was this
+// lease granted", and "was this historical completion timely" depend on WHEN
+// the replay happened rather than on when the event happened. Replaying the
+// same history tomorrow would then produce different answers. Missing or
+// unparseable observed time fails closed (null → the caller refuses).
+//
+// Returns epoch millis, using the strict calendar parser so an ISO-shaped but
+// impossible instant fails closed rather than being coerced.
+function eventObservedAt(context) {
+  const iso = context.event_observed_at;
   return parseIsoInstant(typeof iso === "string" ? iso : null);
 }
 
-// The observed time as its ISO string (the trusted comment time), or null.
-function observedIso(context) {
-  const iso = context.event_observed_at ?? context.now;
+// The same authenticated instant as its ISO string, or null.
+function eventObservedIso(context) {
+  const iso = context.event_observed_at;
   return typeof iso === "string" && parseIsoInstant(iso) !== null ? iso : null;
 }
 
@@ -780,7 +824,10 @@ function leaseIdSet(context) {
 // A completion/release for a work role requires the active, unexpired lease
 // with a matching lease_id AND a matching authenticated holder login. Late
 // results after expiry are refused (v1 has no validated late-result path).
-function requireHeldLease(lane, event, role, context) {
+// `observedMs` is the authenticated observed instant of THIS event, resolved
+// once in reduce(); it is threaded in rather than re-derived so that lease
+// validity cannot be decided by a different clock than admission was.
+function requireHeldLease(lane, event, role, context, observedMs) {
   if (!lane.lease) {
     return refuse(lane, "no-active-lease", `${event.event_type} requires an active lease`);
   }
@@ -806,12 +853,8 @@ function requireHeldLease(lane, event, role, context) {
       );
     }
   }
-  const at = observedAt(context);
-  if (at === null) {
-    return refuse(lane, "time-missing", "lease validity check requires event_observed_at or now");
-  }
   const exp = parseIsoInstant(lane.lease.expires_at);
-  if (exp === null || exp <= at) {
+  if (exp === null || exp <= observedMs) {
     return refuse(lane, "lease-expired", `lease expired at ${lane.lease.expires_at}; no late-result path in v1`);
   }
   return null;
@@ -821,7 +864,7 @@ function requireHeldLease(lane, event, role, context) {
 // but not yet reaped) must not let its holder mutate state through OTHER
 // event types either. Only lease_acquired (fresh grant), system events, and
 // operator events bypass this; completions are checked in requireHeldLease.
-function checkLease(lane, event, _policy, context) {
+function checkLease(lane, event) {
   if (!lane.lease) return null;
   const bypass =
     event.actor_role === "operator" ||

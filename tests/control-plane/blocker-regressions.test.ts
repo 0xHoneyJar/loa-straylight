@@ -25,7 +25,7 @@ import {
 } from "./_fixtures.js";
 
 const policy = makePolicy();
-const ctx = { now: NOW };
+const ctx = { event_observed_at: NOW };
 
 // -- helpers for reconstruction-level exploits --------------------------------
 
@@ -151,7 +151,7 @@ describe("B3 — lease expiry is bounded by policy; recovery routes by lost role
       event_type: "implementer.lease_acquired", prior_state: "ready-for-claude",
       lease_id: "lease-claude-1", lease_expires_at: "2099-01-01T00:00:00Z",
     });
-    const out = reduce(lane, event, policy, { now: NOW, event_observed_at: NOW, task_packet: makeTaskPacket() });
+    const out = reduce(lane, event, policy, { event_observed_at: NOW, task_packet: makeTaskPacket() });
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.refusal).toBe("lease-expiry-unbounded");
   });
@@ -163,7 +163,7 @@ describe("B3 — lease expiry is bounded by policy; recovery routes by lost role
       event_type: "implementer.lease_acquired", prior_state: "ready-for-claude",
       lease_id: "lease-claude-1", lease_expires_at: LEASE_EXPIRY, // NOW + 240m exactly
     });
-    const out = reduce(lane, event, policy, { now: NOW, event_observed_at: NOW, task_packet: makeTaskPacket() });
+    const out = reduce(lane, event, policy, { event_observed_at: NOW, task_packet: makeTaskPacket() });
     expect(out.ok).toBe(true);
   });
 
@@ -174,7 +174,7 @@ describe("B3 — lease expiry is bounded by policy; recovery routes by lost role
       sequence: 4, actor_role: "system", github_actor: "eileen1337",
       event_type: "system.lease_expired", prior_state: "claude-working",
     });
-    const expired = reduce(working, expire, policy, { now: AFTER_EXPIRY });
+    const expired = reduce(working, expire, policy, { event_observed_at: AFTER_EXPIRY });
     expect(expired.ok).toBe(true);
     if (!expired.ok) return;
     expect(expired.lane.state).toBe("lease-expired");
@@ -186,7 +186,7 @@ describe("B3 — lease expiry is bounded by policy; recovery routes by lost role
       event_type: "system.requeued", prior_state: "lease-expired",
       requested_state: "ready-for-codex",
     });
-    const bad = reduce(expired.lane, badRequeue, policy, { now: AFTER_EXPIRY });
+    const bad = reduce(expired.lane, badRequeue, policy, { event_observed_at: AFTER_EXPIRY });
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(bad.refusal).toBe("requeue-role-mismatch");
 
@@ -196,7 +196,7 @@ describe("B3 — lease expiry is bounded by policy; recovery routes by lost role
       event_type: "system.requeued", prior_state: "lease-expired",
       requested_state: "ready-for-claude",
     });
-    const good = reduce(expired.lane, goodRequeue, policy, { now: AFTER_EXPIRY });
+    const good = reduce(expired.lane, goodRequeue, policy, { event_observed_at: AFTER_EXPIRY });
     expect(good.ok).toBe(true);
     if (good.ok) expect(good.lane.state).toBe("ready-for-claude");
   });

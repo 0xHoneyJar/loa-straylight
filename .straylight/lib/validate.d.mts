@@ -7,7 +7,53 @@ export declare function validateLane(v: unknown): ValidationResult;
 export declare function validateEvent(v: unknown): ValidationResult;
 export declare function validateTaskPacket(v: unknown): ValidationResult;
 export declare function validateAuditRecord(v: unknown): ValidationResult;
+/**
+ * Structural validation of a CANDIDATE policy. Applies the accepted-epoch
+ * digest lock to any history that presents an accepted epoch id (see
+ * pinnedEpochLockErrors in admission-locks.mjs), but does not require an
+ * arbitrary candidate to BE the accepted history.
+ */
 export declare function validatePolicy(v: unknown): ValidationResult;
+/**
+ * validatePolicy PLUS the unconditional accepted-epoch lock. Every loader of
+ * the real committed .straylight/automation-policy.json must go through this,
+ * so an edited, deleted, reordered, or wholesale-substituted accepted epoch
+ * fails closed at the boundary where the policy claims real authority.
+ */
+export declare function acceptPolicy(v: unknown): ValidationResult;
+/**
+ * Resolve the admission epoch governing `atMillis`. Fails closed on its own
+ * contract: a non-array/empty history, a malformed epoch, duplicate epoch ids,
+ * non-strictly-ascending or invalid boundaries, or an instant before the
+ * earliest epoch all produce errors. Structural selection only — production
+ * reduce() runs validatePolicy (including the epoch locks) first.
+ */
+export declare function admissionPolicyFor(
+  policy: unknown,
+  atMillis: unknown
+):
+  | { ok: true; index: number; epoch_id: string; governs_from: string; admission: AdmissionPolicy }
+  | { ok: false; errors: string[] };
+export interface AdmissionPolicy {
+  authorized_corridor: string[];
+  actor_allowlist: Record<string, string[]>;
+  maximum_patch_cycles: number;
+  lease_duration_minutes: number;
+}
+/**
+ * Structural errors of a whole admission_history: non-array, empty, malformed
+ * epoch, duplicate epoch id, or non-strictly-ascending boundary. [] when sound.
+ */
+export declare function admissionHistoryErrors(history: unknown): string[];
+/** The four replay-sensitive admission fields, canonical order. Frozen. */
+export declare const ADMISSION_FIELDS: readonly [
+  "authorized_corridor",
+  "actor_allowlist",
+  "maximum_patch_cycles",
+  "lease_duration_minutes",
+];
+/** The closed actor-role set; any other allowlist key is a policy error. */
+export declare const ACTOR_ROLES: readonly string[];
 export declare function validatePrMetadata(v: unknown): ValidationResult;
 /**
  * Strict UTC calendar instant → epoch millis, or null if impossible/malformed.

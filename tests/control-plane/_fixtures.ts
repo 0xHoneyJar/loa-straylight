@@ -21,13 +21,56 @@ export const REPO = "0xHoneyJar/loa-straylight";
 
 export { payloadDigest };
 
-export function makePolicy(overrides: Record<string, any> = {}) {
+// The fixture admission epoch's id is deliberately NOT a production accepted
+// epoch id. ACCEPTED_ADMISSION_EPOCH_LOCKS pins the real history, so a fixture
+// policy claiming "epoch-001" must fail closed (proved in
+// tests/control-plane/admission-epochs.test.ts) — the fixtures must therefore
+// never borrow an accepted id, and the suite must never be able to make one
+// pass by adjusting a fixture.
+export const FIXTURE_EPOCH_ID = "epoch-900";
+// Boundary well before NOW so every fixture event resolves to this epoch, and
+// late enough to be an obviously synthetic test value.
+export const FIXTURE_EPOCH_FROM = "2026-07-01T00:00:00Z";
+
+const FIXTURE_ALLOWLIST = {
+  coordinator: ["chatgpt-login"],
+  implementer: ["claude-login"],
+  auditor: ["codex-login"],
+  operator: ["eileen1337"],
+  system: ["eileen1337", "github-actions[bot]"],
+};
+const FIXTURE_CORRIDOR = ["phase-49p", "phase-49q", "phase-50a", "phase-50b"];
+
+// One admission epoch. Callers override individual fields to build adversarial
+// histories (edited content, bad boundaries, duplicate ids).
+export function makeEpoch(overrides: Record<string, any> = {}) {
   return {
-    schema: "straylight.automation-policy.v1",
+    epoch_id: FIXTURE_EPOCH_ID,
+    governs_from: FIXTURE_EPOCH_FROM,
+    authorized_corridor: [...FIXTURE_CORRIDOR],
+    maximum_patch_cycles: 3,
+    lease_duration_minutes: 240,
+    actor_allowlist: structuredClone(FIXTURE_ALLOWLIST),
+    provenance: {
+      attributed_to: "test-fixture",
+      reference: "tests/control-plane/_fixtures.ts (synthetic epoch; not protocol history)",
+    },
+    ...overrides,
+  };
+}
+
+// A v2 policy. The four admission fields exist at top level as the REQUIRED
+// current-policy projection AND inside a single admission epoch, and
+// validatePolicy demands they be deep-equal — so overriding one (the way most
+// of this suite exercises admission policy) must change both. Overriding
+// `admission_history` explicitly takes full control of the history instead.
+export function makePolicy(overrides: Record<string, any> = {}) {
+  const policy: Record<string, any> = {
+    schema: "straylight.automation-policy.v2",
     mode: "shadow",
     enabled: true,
     auto_merge: false,
-    authorized_corridor: ["phase-49p", "phase-49q", "phase-50a", "phase-50b"],
+    authorized_corridor: [...FIXTURE_CORRIDOR],
     automatic_estate_semantic_decisions: false,
     automatic_cross_repo_contract_changes: false,
     automatic_sibling_repo_edits: false,
@@ -37,15 +80,20 @@ export function makePolicy(overrides: Record<string, any> = {}) {
     maximum_patch_cycles: 3,
     lease_duration_minutes: 240,
     stuck_lane_threshold_hours: 72,
-    actor_allowlist: {
-      coordinator: ["chatgpt-login"],
-      implementer: ["claude-login"],
-      auditor: ["codex-login"],
-      operator: ["eileen1337"],
-      system: ["eileen1337", "github-actions[bot]"],
-    },
+    actor_allowlist: structuredClone(FIXTURE_ALLOWLIST),
     ...overrides,
   };
+  if (!("admission_history" in overrides)) {
+    policy.admission_history = [
+      makeEpoch({
+        authorized_corridor: policy.authorized_corridor,
+        maximum_patch_cycles: policy.maximum_patch_cycles,
+        lease_duration_minutes: policy.lease_duration_minutes,
+        actor_allowlist: policy.actor_allowlist,
+      }),
+    ];
+  }
+  return policy;
 }
 
 // States in which the lane working branch has been established by the

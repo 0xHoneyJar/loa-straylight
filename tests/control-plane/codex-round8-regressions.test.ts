@@ -37,6 +37,7 @@ import { parseStrict } from "../../.straylight/lib/strict-json.mjs";
 import { makePolicy } from "./_fixtures.js";
 
 const GATE = ".straylight/bin/policy-gate.mjs";
+const POLICY_SOURCE = ".straylight/lib/policy-source.mjs";
 const CP_WORKFLOWS = [
   ".github/workflows/straylight-reducer.yml",
   ".github/workflows/straylight-watchdog.yml",
@@ -158,29 +159,39 @@ describe("H1 — policy-gate parses the policy text strictly; duplicate keys fai
     expect(runGateText(JSON.stringify(noEnabled, null, 2)).status).toBe(2);
   });
 
-  it("source pin: the gate never calls JSON.parse; the policy text flows through parseStrict before validatePolicy", () => {
-    const src = readFileSync(GATE, "utf8");
+  it("source pin: neither the gate nor the loader calls JSON.parse; the text flows through parseStrict before validation", () => {
+    // The read → strict-parse → validate sequence now lives in the ONE shared
+    // loader the gate delegates to (policy-source.mjs), so the pin follows the
+    // code there rather than asserting an order the gate no longer performs.
+    const gate = readFileSync(GATE, "utf8");
+    const loader = readFileSync(POLICY_SOURCE, "utf8");
     // Comments may EXPLAIN why JSON.parse is banned; executable lines may
     // not invoke it.
-    const code = src.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
-    expect(code).not.toMatch(/JSON\.parse/);
-    expect(src).toMatch(/import \{ parseStrict \} from "\.\.\/lib\/strict-json\.mjs"/);
-    const read = src.indexOf("readFileSync(policyPath");
-    const strict = src.indexOf("parseStrict(policyText)");
-    const validate = src.indexOf("validatePolicy(policy");
+    const executable = (s: string) => s.split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
+    expect(executable(gate)).not.toMatch(/JSON\.parse/);
+    expect(executable(loader)).not.toMatch(/JSON\.parse/);
+    expect(loader).toMatch(/import \{ parseStrict \} from "\.\/strict-json\.mjs"/);
+    const read = loader.indexOf("readFileSync(path");
+    const strict = loader.indexOf("parseStrict(text)");
+    const accept = loader.indexOf("acceptPolicy(parsed.value)");
+    const validate = loader.indexOf("validatePolicy(parsed.value)");
     expect(read).toBeGreaterThan(-1);
     expect(strict).toBeGreaterThan(read);
+    expect(accept).toBeGreaterThan(strict);
     expect(validate).toBeGreaterThan(strict);
   });
 
   it("the gate stays dependency-free and no-network with the strict parser wired in", () => {
-    const src = readFileSync(GATE, "utf8");
-    const imports = [...src.matchAll(/from "([^"]+)"/g)].map((m) => m[1] ?? "");
-    expect(imports.length).toBeGreaterThan(0);
-    expect(imports.every((s) =>
-      s.startsWith("node:") || s === "../lib/validate.mjs" || s === "../lib/strict-json.mjs",
-    )).toBe(true);
-    expect(src).not.toMatch(/fetch\(|https?:\/\//);
+    for (const [file, allowed] of [
+      [GATE, ["../lib/policy-source.mjs"]],
+      [POLICY_SOURCE, ["./strict-json.mjs", "./validate.mjs"]],
+    ] as const) {
+      const src = readFileSync(file, "utf8");
+      const imports = [...src.matchAll(/from "([^"]+)"/g)].map((m) => m[1] ?? "");
+      expect(imports.length, file).toBeGreaterThan(0);
+      expect(imports.every((s) => s.startsWith("node:") || allowed.includes(s as never)), `${file}: ${imports.join(", ")}`).toBe(true);
+      expect(src, file).not.toMatch(/fetch\(|https?:\/\//);
+    }
   });
 
   it("output contract preserved: single JSON result with ok/enabled/refusal/detail shapes", () => {

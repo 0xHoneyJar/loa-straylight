@@ -33,6 +33,7 @@ import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { parseStrict } from "../lib/strict-json.mjs";
+import { loadProtocolPolicy } from "../lib/policy-source.mjs";
 import { parseIssuePages, parseIssue, parseCommentPages, parsePr, parseCheckRunPages, parseCombinedStatus } from "../lib/evidence.mjs";
 import { assertUniqueLaneTarget, scanLanes } from "../lib/lane-target.mjs";
 import { reconstructLane } from "../lib/reconstruct.mjs";
@@ -72,19 +73,14 @@ for (const [name, v] of [["--gather-1", gather1], ["--gather-2", gather2], ["--i
 const issueNumber = Number(issueArg);
 if (!Number.isInteger(issueNumber) || issueNumber < 1) fail("usage", "--issue-number must be a positive integer");
 
-const policyPath = arg("--policy") ?? resolve(here, "..", "automation-policy.json");
-let policy;
-{
-  let text;
-  try {
-    text = readFileSync(policyPath, "utf8");
-  } catch (e) {
-    fail("policy-unreadable", String(e?.message ?? e));
-  }
-  const parsed = parseStrict(text);
-  if (!parsed.ok) fail("policy-unreadable", `strict JSON parse failed: ${parsed.reason}`);
-  policy = parsed.value;
-}
+// Strict parse + validation; the accepted-epoch digest lock additionally
+// applies when the file read is the protocol's own committed policy.
+const loadedPolicy = loadProtocolPolicy({
+  committedPath: resolve(here, "..", "automation-policy.json"),
+  overridePath: arg("--policy"),
+});
+if (!loadedPolicy.ok) fail(loadedPolicy.refusal, loadedPolicy.detail);
+const policy = loadedPolicy.value;
 
 // Parse one complete BASE read (enumeration + issue + comments), retaining
 // raw byte digests so the probe claim can be rebound to the exact

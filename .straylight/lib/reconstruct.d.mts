@@ -4,9 +4,12 @@ export interface ReconstructInput {
   comments: Array<{ id: number; user: string; body: string; created_at?: string; updated_at?: string }>;
   policy: Record<string, any>;
   /**
-   * DETERMINISM: reconstruction is a pure function of the durable content.
-   * No transient live signal enters the replay; live PR facts reach the
-   * protocol only as durable fields of system.eligibility_confirmed events.
+   * ACCEPTED AND IGNORED. Reconstruction is a pure function of the durable
+   * content and takes NO wall clock: each event's authoritative time is the
+   * authenticated comment.created_at, and the reducer context is built from
+   * the durable comment alone, so nothing here can supply or override an
+   * observation time. Live PR facts likewise reach the protocol only as
+   * durable fields of system.eligibility_confirmed events.
    */
   context?: Record<string, any>;
 }

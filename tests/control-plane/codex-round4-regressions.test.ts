@@ -33,7 +33,7 @@ import {
 } from "./_fixtures.js";
 
 const policy = makePolicy();
-const ctx = { now: NOW };
+const ctx = { event_observed_at: NOW };
 
 // =============================================================================
 // D1 — escalation to operator-required must clear an active lease.

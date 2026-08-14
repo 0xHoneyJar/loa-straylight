@@ -49,3 +49,18 @@ Because current Claude, Codex, ChatGPT, and GitHub Actions workers have not adop
 Changing a lease duration or introducing a bounded renewal/heartbeat mechanism for development workers would therefore require ordinary control-plane authorization and audit, but it would not weaken the product invariant above. The invariant is not that authorization must expire after a particular number of minutes. The invariant is that once the governing authorization boundary has been crossed, forward authority cannot be inferred from historical authority alone.
 
 A future Straylight-native renewal mechanism should itself be modeled as an explicit governed transition rather than an invisible extension of stale permission. Such a transition may reference a prior grant, but current state, policy, signer competence, revocation state, environment, risk, and requested scope must be evaluated anew.
+
+## How a lease-duration change is now made (policy v2)
+
+`lease_duration_minutes` is one of the four **epoched** admission fields (ADR-050 §4.1; normative detail in `.straylight/README.md` § "Admission policy history"). That changes the mechanics of the paragraph above without changing its meaning.
+
+A lease-duration change is made by **appending a new admission epoch** — never by editing the current one. Consequently:
+
+1. every lease grant is judged against the `lease_duration_minutes` of the epoch governing that grant's authenticated observation time;
+2. appending a longer (or shorter) duration governs only grants observed at or after the new epoch's boundary;
+3. earlier grants keep the bound they were originally judged against — including refusals such as `lease-expiry-unbounded`, which cannot be converted into acceptances by a later policy change;
+4. the accepted epochs are digest-locked in protocol code and policy evolution is checked as an append against the previously committed policy, so rewriting the historical duration is a reviewed protocol-code change rather than an ordinary policy edit.
+
+This is the same invariant this clarification already states, now mechanically enforced: **past authorization remains historical evidence; present action requires present authority.** A change to development-lease ergonomics is a forward-looking policy act, not a re-judgement of the durable record.
+
+The current shipped value remains `240` minutes. Whether to append a longer development lease (for example 48 hours) is an open, separately authorized control-plane question; no such epoch is active, and appending one would not alter any historical disposition.

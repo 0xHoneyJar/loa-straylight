@@ -1,0 +1,730 @@
+{
+  "_comment": "DURABLE cp-lane history captured from the GitHub API for offline replay. Bodies are stored at payload level; renderPayload() rebuilds them exactly. Regenerate with: node scripts/capture-cp-lane-history.mjs --issue 120 NEVER hand-edit: this is evidence, not configuration. Its SHA-256 is pinned in tests/control-plane/lane-history-golden.test.ts.",
+  "repository": "0xHoneyJar/loa-straylight",
+  "issue_number": 120,
+  "source_main_sha": "5625c5be425c71fce90a22e81d123b42ed104538",
+  "lane_id": "lane-phase-49q",
+  "genesis_lane": {
+    "schema": "straylight.lane.v1",
+    "lane_id": "lane-phase-49q",
+    "phase": "phase-49q",
+    "authorized_corridor": [
+      "phase-49p",
+      "phase-49q",
+      "phase-50a",
+      "phase-50b"
+    ],
+    "repository": "0xHoneyJar/loa-straylight",
+    "base_branch": "main",
+    "base_sha": "77030a93ec2dddef5a96a7a7e047a009043252d5",
+    "tier": "tier-1",
+    "authority_bearing": true,
+    "state": "planning",
+    "next_actor": "coordinator",
+    "working_branch": null,
+    "pr_number": null,
+    "pr_head_sha": null,
+    "audited_sha": null,
+    "verdict": null,
+    "attempt": 0,
+    "patch_cycle": 0,
+    "audit_retry": 0,
+    "mode": "shadow",
+    "auto_merge_allowed": false,
+    "operator_pause": false,
+    "operator_required_reason": null,
+    "last_lease_role": null,
+    "lease": null,
+    "event_sequence": 0,
+    "last_transition": null
+  },
+  "comment_count": 29,
+  "comments": [
+    {
+      "id": 5116618043,
+      "user": "eileen1337",
+      "created_at": "2026-07-29T10:38:16Z",
+      "updated_at": "2026-07-29T10:38:16Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49q-activate-001",
+          "lane_id": "lane-phase-49q",
+          "sequence": 1,
+          "actor_role": "coordinator",
+          "github_actor": "eileen1337",
+          "event_type": "lane.activated",
+          "prior_state": "planning",
+          "requested_state": "ready-for-coordinator",
+          "base_sha": "77030a93ec2dddef5a96a7a7e047a009043252d5",
+          "reason": "operator:eileen authorized beginning the next large slice: Phase 49Q PR B, a Tier-1 operator decision ADR for bounded Railway PostgreSQL host acceptance and provider-neutral Phase 50A implementation authorization. Activation authorizes preparation and audit only; the substantive decision remains unsigned until a separate operator-authorized merge.",
+          "occurred_at": "2026-07-29T10:38:20Z"
+        }
+      }
+    },
+    {
+      "id": 5116619530,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-29T10:38:24Z",
+      "updated_at": "2026-07-29T10:38:24Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    },
+    {
+      "id": 5116653927,
+      "user": "eileen1337",
+      "created_at": "2026-07-29T10:41:46Z",
+      "updated_at": "2026-07-29T10:41:46Z",
+      "payloads": {
+        "task_packet": {
+          "schema": "straylight.task-packet.v1",
+          "lane_id": "lane-phase-49q",
+          "authority_basis": "operator:eileen activation event evt-phase-49q-activate-001 on lane #120; ADR-050 authorized corridor phase-49q; ADR-049 §5 Tier-1 process, §6 sole operator authority, §9.1 required acceptance clauses, §9.2 corridor compression, and §10 step 4 PR B; merged Phase 49P PR #119 at 77030a93ec2dddef5a96a7a7e047a009043252d5, including docs/PHASE-49P-PROVIDER-NEUTRAL-PERSISTENCE-SIBLING-EVIDENCE-INTAKE.md; bounded sibling evidence remains pinned to Finn 0e04a4c8f2d3865c58dd7c6afa9249d86bcc87e3 and Dixie d36c0846f03bfd097d35dd2c001de19eec817cf0.",
+          "base_sha": "77030a93ec2dddef5a96a7a7e047a009043252d5",
+          "repository": "0xHoneyJar/loa-straylight",
+          "target_branch": "phase-49q-railway-postgresql-acceptance-implementation-authorization",
+          "allowed_paths": [
+            "docs/decisions/ADR-049Q-railway-postgresql-canonical-store-host-acceptance-and-implementation-authorization.md",
+            "docs/decisions/ADR-022E-phase-22-deferred-features.md",
+            "docs/decisions/ADR-048B-canonical-store-physical-host-ownership-routing.md",
+            "docs/ADR-022E-SIBLING-GATE-9-10-EVIDENCE-RESULT-INTAKE-COMPLETION-GATE.md"
+          ],
+          "forbidden_paths": [
+            ".github/",
+            ".straylight/",
+            "src/",
+            "tests/",
+            "packages/",
+            "scripts/",
+            "migrations/",
+            "sql/",
+            "fixtures/",
+            "generated/",
+            "dist/",
+            "dist-types/",
+            "node_modules/",
+            "package.json",
+            "package-lock.json",
+            ".env",
+            ".env.*",
+            ".claude/",
+            ".loa/",
+            "grimoires/"
+          ],
+          "capability_success_condition": "Create one coherent Tier-1 Phase 49Q PR B that is explicitly pending operator signature until merge. Add a comprehensive operator-decision ADR and make only minimal, clearly marked current-state/supersession annotations in the three named historical or gate-registry documents; do not rewrite their historical claims. The ADR must bind the merged Phase 49P intake and exact Finn/Dixie evidence SHAs, distinguish evidence from operator acceptance, and state the decision that becomes effective only if operator:eileen merges the audited PR: (1) accept Railway PostgreSQL as the bounded, reversible MVP-2 canonical-store physical host, never the Straylight product boundary or semantic owner; (2) discharge ADR-022E gate #8 only for bounded host selection and opening the provider-neutral durable-storage implementation lane; (3) resolve D.1(ii), record full D.1 satisfied because D.1(i) was already accepted, and authorize D.2/Phase 50A to start without claiming D.2 complete; (4) authorize a provider-neutral PostgreSQL StorageAdapter, canonical migrations, local/non-production integration proof, export/restore, rollback, audit-chain continuity, idempotency/concurrency, and provider-replacement work in loa-straylight under a later exact Phase 50A packet; (5) keep gates #9 and #10 HELD at PARTIAL_RECORDED for their sibling-specific runtime/boundary responsibilities, including Finn's unresolved TIER_TRUST_MAP and CRITICAL_ACTIONS findings; (6) keep MVP-2 OPEN pending Phase 50A capability delivery and Phase 50B independent proof acceptance; and (7) preserve loa-straylight as permanent semantic owner, Dixie as the current route/admission boundary, and Finn's authorized runtime-enforcement role. Carry every ADR-049 §9.1 clause, a precise authorization matrix, rollback/reopening triggers, a provider-portability contract, an evidence appendix, a gate/dependency before-and-after matrix, and a Phase 50A handoff envelope. Treat absent provider operational facts—durability, backup/restore, failover, version pinning, isolation, tenancy—as mandatory pre-production proof obligations, not as already proven facts and not as authority for production admission.",
+          "non_goals": [
+            "Do not implement the StorageAdapter, migrations, SQL, schema, tests, configuration, runtime wiring, deployment, backup job, restore job, or any Phase 50A code.",
+            "Do not provision, configure, access, or mutate Railway or any external infrastructure; do not use credentials, secrets, connection strings, endpoints, account identifiers, project identifiers, regions, ports, pricing, or topology details.",
+            "Do not authorize production admission, production estate writes, production migration execution, production rollout, cutover, living-estate admission, or a claim that Railway is production-ready.",
+            "Do not authorize or implement auth, consent, signer, controller-binding, identity-mutation, challenge, revocation, forgetting, inheritance, commitment, or permanence semantics.",
+            "Do not close gates #9 or #10, resolve Finn's two locally defined classifications, impose a new Dixie substrate contract, modify a sibling repository, or transfer any semantic authority.",
+            "Do not close MVP-2, claim D.2 complete, claim Phase 50A or Phase 50B complete, or progress beyond MVP-2.",
+            "Do not make Railway a permanent dependency, embed provider-specific concepts in the estate domain model or canonical migration semantics, or define a Railway-specific adapter contract.",
+            "Do not create a Tier-2 cross-repository contract or Tier-3 estate-semantic decision; escalate if the evidence indicates either is required.",
+            "Do not treat Claude's authorship, the lane activation, PR opening, audit acceptance, or control-plane eligibility as the operator signature; only a later operator-authorized merge makes the ADR decision effective.",
+            "Do not edit historical decision text to pretend an earlier document made the Phase 49Q decision; use explicit later-status or supersession annotations only.",
+            "Do not merge the PR."
+          ],
+          "required_tests": [
+            "Verify current main equals exact base 77030a93ec2dddef5a96a7a7e047a009043252d5 before work and before completion.",
+            "Run npm run build before typecheck or tests, then npm run typecheck, npm run control-plane:validate, npm test, and npm run control-plane:test.",
+            "Verify the complete base-to-head diff changes only the four allowed Markdown paths and that the new ADR is the only newly created file.",
+            "Run git diff --check and verify LF-only text with no tabs, trailing whitespace, placeholders, or conflict markers.",
+            "Resolve every repository path:line citation, relative link, section reference, result token, PR number, and exact SHA against the bound commits.",
+            "Independently re-read merged Phase 49P at 77030a93ec2dddef5a96a7a7e047a009043252d5 and the exact Finn/Dixie evidence artifacts before deriving the decision.",
+            "Verify all ten ADR-049 §9.1 clauses appear as enforceable conditions and are consistent with the Phase 49P P-1 through P-14 requirements.",
+            "Verify a machine-readable or clearly tabulated before/after matrix covers gate #8, gates #9/#10, D.1(i), D.1(ii), full D.1, D.2, MVP-2, semantic owner, physical host, and authorized implementation scope.",
+            "Verify the three existing documents preserve their original historical assertions and add only unambiguous later-status/supersession annotations that point to the new ADR.",
+            "Verify the decision and every summary distinguish host acceptance, implementation authorization, production admission, and product/MVP acceptance as separate transitions."
+          ],
+          "required_negative_tests": [
+            "No statement may claim provider durability, backup/restore, failover, version pinning, isolation, tenancy, availability, compliance, or production readiness is already proven.",
+            "No statement may authorize production database writes, production credentials, production migration execution, living-estate admission, production auth/consent/signer behavior, or unrelated rollout.",
+            "No statement may close gates #9/#10, resolve TIER_TRUST_MAP or CRITICAL_ACTIONS, close MVP-2, complete D.2, or claim MVP-2 product acceptance.",
+            "No statement may transfer semantic ownership from loa-straylight or let Railway, PostgreSQL, Finn, Dixie, a cloud, runtime, adapter, controller, tenant, or model provider define estate semantics.",
+            "No Railway-, deployment-, or host-specific product concept, behavior, or configuration may enter the estate domain model or canonical migration semantics.",
+            "No provider acceptance may be represented as automatic acceptance of a StorageAdapter implementation, production wiring, provider operations, or Phase 50B proof.",
+            "No operator authority may be attributed to Claude, Codex, sibling maintainers, GitHub labels, an audit verdict, or the control plane.",
+            "No historical document may be silently rewritten so its earlier held/unselected state appears never to have existed.",
+            "No path outside the four allowed Markdown files may change; no second PR may be opened."
+          ],
+          "required_no_leak_checks": [
+            "Scan the complete diff for credentials, tokens, keys, connection strings, database URLs, endpoints, hostnames, ports, account/project identifiers, regions, topology details, environment-variable values, pricing, commands, deployment instructions, and secret-bearing examples.",
+            "Ensure Railway is discussed only as a bounded product/provider decision and proof target; include no live infrastructure values or operational access instructions.",
+            "Ensure sibling evidence is cited by public repository path, PR, section, and exact commit only; include no local paths, hidden files, worktree details, model memory, or private session content."
+          ],
+          "required_completion_report": "Report reconstructed lane state and accepted lease; exact base, branch, head, parent/ancestry, PR number and status; complete changed-file list and per-file purpose; a decision table for host acceptance, gate #8, D.1(ii), D.1, D.2, gates #9/#10, MVP-2, Phase 50A and Phase 50B; all ten §9.1 clause locations; authorization/non-authorization matrix; provider-proof obligations; historical-annotation proof; exact validation results; citation/no-leak/negative results; completion event ID/comment; final lane state; and explicit confirmation that Claude did not sign, audit, accept, or merge the decision.",
+          "stop_conditions": [
+            "Stop without changing files if current main is not the packet base, the lane does not reduce to ready-for-claude for this packet, the packet digest or branch binding cannot be verified, or another valid Phase 49Q lane/PR exists.",
+            "Stop and post a protocol-valid implementer.blocked or implementer.escalated event if any required merged evidence, citation target, or exact sibling SHA is unavailable or contradictory.",
+            "Stop and escalate if the decision would require estate-semantic changes, a Tier-2 cross-repository contract, sibling-repository edits, external infrastructure access, secrets, or additional file paths.",
+            "Stop and escalate if D.1(i)'s accepted state or the legal relationship between gate #8, D.1(ii), full D.1, and D.2 cannot be proven from merged authority.",
+            "Stop rather than inventing provider operational facts or silently weakening any ADR-049 §9.1 or Phase 49P P-1 through P-14 obligation.",
+            "Stop if the PR head moves unexpectedly, the working tree contains unrelated changes, tests fail for a production defect, or the complete diff exceeds the authorized four-file scope.",
+            "Never merge, never self-audit, and never present the draft or PR as an effective operator decision before operator:eileen separately authorizes merge."
+          ],
+          "may_open_pr": true,
+          "merge_forbidden": true,
+          "expected_next_actor": "auditor",
+          "packet_kind": "initial",
+          "patch_cycle": 0
+        }
+      }
+    },
+    {
+      "id": 5116657882,
+      "user": "eileen1337",
+      "created_at": "2026-07-29T10:42:09Z",
+      "updated_at": "2026-07-29T10:42:09Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49q-task-packet-001",
+          "lane_id": "lane-phase-49q",
+          "sequence": 2,
+          "actor_role": "coordinator",
+          "github_actor": "eileen1337",
+          "event_type": "coordinator.task_packet_posted",
+          "prior_state": "ready-for-coordinator",
+          "requested_state": "ready-for-claude",
+          "base_sha": "77030a93ec2dddef5a96a7a7e047a009043252d5",
+          "reason": "Posted the bounded Phase 49Q Tier-1 initial packet: one operator-decision ADR plus three minimal current-state/supersession annotations, with Phase 50A authorization but no implementation, production admission, sibling edits, semantic changes, or merge authority.",
+          "occurred_at": "2026-07-29T10:42:00Z",
+          "refs": {
+            "task_packet_comment_id": 5116653927,
+            "task_packet_digest": "sha256:8620dd2175e493bf3b789d176bc0d96520253b1015a76650cab8ede699defd9f"
+          }
+        }
+      }
+    },
+    {
+      "id": 5116662497,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-29T10:42:35Z",
+      "updated_at": "2026-07-29T10:42:35Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    },
+    {
+      "id": 5116829971,
+      "user": "eileen1337",
+      "created_at": "2026-07-29T10:58:58Z",
+      "updated_at": "2026-07-29T10:58:58Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49q-implementer-lease-001",
+          "lane_id": "lane-phase-49q",
+          "sequence": 3,
+          "actor_role": "implementer",
+          "github_actor": "eileen1337",
+          "event_type": "implementer.lease_acquired",
+          "prior_state": "ready-for-claude",
+          "requested_state": "claude-working",
+          "base_sha": "77030a93ec2dddef5a96a7a7e047a009043252d5",
+          "lease_id": "lease-phase-49q-implementer-001",
+          "lease_expires_at": "2026-07-29T14:55:00Z",
+          "reason": "Implementer lease acquired for the Phase 49Q Tier-1 initial packet (comment 5116653927, digest sha256:8620dd2175e493bf3b789d176bc0d96520253b1015a76650cab8ede699defd9f). Reconstructed lane 120 with the checked-in reducer at base 77030a93ec2dddef5a96a7a7e047a009043252d5: state ready-for-claude, next actor implementer, sequence 2, no active lease, no competing Phase 49Q lane or PR. Work is docs-only within the packet's four allowed Markdown paths; no merge, no self-audit.",
+          "occurred_at": "2026-07-29T11:00:00Z",
+          "refs": {
+            "task_packet_comment_id": 5116653927,
+            "task_packet_digest": "sha256:8620dd2175e493bf3b789d176bc0d96520253b1015a76650cab8ede699defd9f"
+          }
+        }
+      }
+    },
+    {
+      "id": 5116833355,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-29T10:59:17Z",
+      "updated_at": "2026-07-29T10:59:17Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    },
+    {
+      "id": 5118175394,
+      "user": "eileen1337",
+      "created_at": "2026-07-29T13:08:42Z",
+      "updated_at": "2026-07-29T13:08:42Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49q-implementer-completed-001",
+          "lane_id": "lane-phase-49q",
+          "sequence": 4,
+          "actor_role": "implementer",
+          "github_actor": "eileen1337",
+          "event_type": "implementer.completed",
+          "prior_state": "claude-working",
+          "requested_state": "ready-for-codex",
+          "base_sha": "77030a93ec2dddef5a96a7a7e047a009043252d5",
+          "head_sha": "5807d7d4e6c4802f231d42fe92825269bee1d3a4",
+          "head_branch": "phase-49q-railway-postgresql-acceptance-implementation-authorization",
+          "lease_id": "lease-phase-49q-implementer-001",
+          "reason": "Phase 49Q Tier-1 initial packet implemented docs-only. PR #121 opened against main; single-parent commit 5807d7d4e6c4802f231d42fe92825269bee1d3a4 directly on base 77030a93ec2dddef5a96a7a7e047a009043252d5. Exactly the four allowed paths changed (+1178/-0), one new file: ADR-049Q; the three existing documents receive only end-of-file later-status/supersession annotations that preserve every original claim verbatim and shift no cited line. Checks: npm run build, npm run typecheck, npm run control-plane:validate, npm test (2100 passed), npm run control-plane:test (1025 passed), git diff --check clean. All citations resolve. No provider operation, no sibling edit, no code/SQL/migration/config, no production authorization, no signature, no self-audit, no merge. Next actor: auditor.",
+          "occurred_at": "2026-07-29T13:12:00Z",
+          "refs": {
+            "pr_number": 121,
+            "task_packet_comment_id": 5116653927
+          }
+        }
+      }
+    },
+    {
+      "id": 5118180422,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-29T13:09:10Z",
+      "updated_at": "2026-07-29T13:09:10Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    },
+    {
+      "id": 5120278961,
+      "user": "eileen1337",
+      "created_at": "2026-07-29T15:55:40Z",
+      "updated_at": "2026-07-29T15:55:40Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49q-auditor-lease-001",
+          "lane_id": "lane-phase-49q",
+          "sequence": 5,
+          "actor_role": "auditor",
+          "github_actor": "eileen1337",
+          "event_type": "auditor.lease_acquired",
+          "prior_state": "ready-for-codex",
+          "requested_state": "codex-working",
+          "base_sha": "77030a93ec2dddef5a96a7a7e047a009043252d5",
+          "head_sha": "5807d7d4e6c4802f231d42fe92825269bee1d3a4",
+          "head_branch": "phase-49q-railway-postgresql-acceptance-implementation-authorization",
+          "lease_id": "lease-phase-49q-auditor-001",
+          "lease_expires_at": "2026-07-29T19:50:00Z",
+          "reason": "Record the independent read-only Codex exact-SHA audit supplied by operator:eileen for Phase 49Q PR #121. Live metadata was rechecked before lease acquisition: PR open, unmerged, non-draft, mergeable, exact base/head, one commit, four files, +1178/-0; lane ready-for-codex/auditor at sequence 4 with no lease. This lease authorizes audit transcription only and creates no operator acceptance, readiness decision, or merge authority.",
+          "occurred_at": "2026-07-29T15:50:00Z",
+          "refs": {
+            "pr_number": 121,
+            "implementer_completion_comment_id": 5118175394
+          }
+        }
+      }
+    },
+    {
+      "id": 5120283681,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-29T15:56:07Z",
+      "updated_at": "2026-07-29T15:56:07Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    },
+    {
+      "id": 5120297451,
+      "user": "eileen1337",
+      "created_at": "2026-07-29T15:57:27Z",
+      "updated_at": "2026-07-29T15:57:27Z",
+      "payloads": {
+        "audit": {
+          "schema": "straylight.audit.v1",
+          "lane_id": "lane-phase-49q",
+          "pr_number": 121,
+          "base_branch": "main",
+          "base_sha": "77030a93ec2dddef5a96a7a7e047a009043252d5",
+          "head_branch": "phase-49q-railway-postgresql-acceptance-implementation-authorization",
+          "audited_head_sha": "5807d7d4e6c4802f231d42fe92825269bee1d3a4",
+          "complete_diff_reviewed": true,
+          "changed_files": [
+            "docs/decisions/ADR-049Q-railway-postgresql-canonical-store-host-acceptance-and-implementation-authorization.md",
+            "docs/decisions/ADR-022E-phase-22-deferred-features.md",
+            "docs/decisions/ADR-048B-canonical-store-physical-host-ownership-routing.md",
+            "docs/ADR-022E-SIBLING-GATE-9-10-EVIDENCE-RESULT-INTAKE-COMPLETION-GATE.md"
+          ],
+          "verdict": "ACCEPT",
+          "summary": "Independent Codex exact-SHA audit accepted Phase 49Q with no findings. Exact scope, direct-child ancestry, protocol reconstruction, pure EOF historical annotations, authority boundaries, gate/dependency dispositions, Phase 50A/50B separation, citations, tests, negative checks, and no-leak checks all passed.",
+          "findings": [],
+          "tests": [
+            "npm run build: pass",
+            "npm run typecheck: pass",
+            "npm run control-plane:validate: pass",
+            "npm test: 2100 passed / 74 files",
+            "npm run control-plane:test: 1025 passed / 29 files",
+            "git diff --check: clean"
+          ],
+          "authority_assessment": "The ADR remains proposed and ineffective until operator:eileen authorizes merge. Claude drafting, PR creation, Codex ACCEPT, durable audit recording, eligibility confirmation, and ready-for-merge state do not constitute operator acceptance or signature.",
+          "gate_assessment": "Upon a later operator-authorized merge only: Gate #8 is discharged solely for bounded Railway host selection and opening Phase 50A; D.1(i) remains accepted, D.1(ii) resolves, full D.1 satisfies, and D.2 becomes authorized to start but not complete. Gates #9/#10 remain HELD/PARTIAL_RECORDED and MVP-2 remains OPEN.",
+          "residual_risks": [
+            "Durability remains unproven.",
+            "Backup and restore remain unproven.",
+            "Failover remains unproven.",
+            "Version pinning remains unproven.",
+            "Isolation and tenancy remain unproven.",
+            "Availability and incident recovery remain unproven.",
+            "Cross-host export and restore remain unproven.",
+            "Rollback remains unproven.",
+            "Phase 50A implementation and Phase 50B acceptance remain future operator-gated work."
+          ],
+          "process_deviation": "Claude disclosed a failed subagent dispatch despite the single-agent instruction. Codex found no repository artifact, hidden contribution, provenance ambiguity, scope expansion, or auditability impairment; non-blocking.",
+          "provenance": "Durable transcription of the independent read-only Codex ACCEPT returned to operator:eileen for exact head 5807d7d4e6c4802f231d42fe92825269bee1d3a4. This record is audit eligibility evidence only and is not operator acceptance, signature, readiness, merge authorization, gate disposition, implementation, provider operation, or MVP completion."
+        }
+      }
+    },
+    {
+      "id": 5120300669,
+      "user": "eileen1337",
+      "created_at": "2026-07-29T15:57:45Z",
+      "updated_at": "2026-07-29T15:57:45Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49q-audit-completed-001",
+          "lane_id": "lane-phase-49q",
+          "sequence": 6,
+          "actor_role": "auditor",
+          "github_actor": "eileen1337",
+          "event_type": "auditor.completed",
+          "prior_state": "codex-working",
+          "requested_state": "eligibility-pending",
+          "base_sha": "77030a93ec2dddef5a96a7a7e047a009043252d5",
+          "head_sha": "5807d7d4e6c4802f231d42fe92825269bee1d3a4",
+          "head_branch": "phase-49q-railway-postgresql-acceptance-implementation-authorization",
+          "lease_id": "lease-phase-49q-auditor-001",
+          "audited_sha": "5807d7d4e6c4802f231d42fe92825269bee1d3a4",
+          "verdict": "ACCEPT",
+          "reason": "Independent Codex exact-SHA audit ACCEPT with no findings. Full diff, direct-child ancestry, four-file scope, pure EOF historical preservation, Tier-1 authority boundaries, gate/dependency dispositions, Phase 50A/50B separation, all required tests, citations, negative checks, and no-leak checks passed. The disclosed failed Claude subagent dispatch was assessed as a non-blocking process deviation with no artifact or provenance effect. This records audit eligibility evidence only; it is not operator acceptance, signature, readiness, merge authorization, gate disposition, provider operation, or MVP completion.",
+          "release_lease": true,
+          "refs": {
+            "pr_number": 121,
+            "audit_comment_id": 5120297451,
+            "audit_digest": "sha256:9dad8f99d743f13dbc1598db823a084a57474640833a07e4f89c0ba94c2d5cae"
+          },
+          "occurred_at": "2026-07-29T15:58:00Z"
+        }
+      }
+    },
+    {
+      "id": 5123127823,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-29T20:35:17Z",
+      "updated_at": "2026-07-29T20:35:17Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-f19553253b59bdf2381400fc965662673aabc4ab47b2603f",
+          "lane_id": "lane-phase-49q",
+          "sequence": 6,
+          "actor_role": "system",
+          "github_actor": "github-actions[bot]",
+          "event_type": "system.lease_expired",
+          "prior_state": "codex-working",
+          "reason": "lease lease-phase-49q-auditor-001 expired 2026-07-29T19:50:00Z",
+          "occurred_at": "2026-07-29T20:35:05Z"
+        }
+      }
+    },
+    {
+      "id": 5125012149,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-30T00:50:44Z",
+      "updated_at": "2026-07-30T00:50:44Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-1524a4dbca1d88b8df6984b328735dd28e1c7126fe48f210",
+          "lane_id": "lane-phase-49q",
+          "sequence": 7,
+          "actor_role": "system",
+          "github_actor": "github-actions[bot]",
+          "event_type": "system.requeued",
+          "prior_state": "lease-expired",
+          "reason": "requeue to ready-for-codex",
+          "occurred_at": "2026-07-30T00:50:28Z",
+          "requested_state": "ready-for-codex"
+        }
+      }
+    },
+    {
+      "id": 5129474357,
+      "user": "eileen1337",
+      "created_at": "2026-07-30T10:11:41Z",
+      "updated_at": "2026-07-30T10:11:41Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49q-auditor-recovery-lease-002",
+          "lane_id": "lane-phase-49q",
+          "sequence": 8,
+          "actor_role": "auditor",
+          "github_actor": "eileen1337",
+          "event_type": "auditor.lease_acquired",
+          "prior_state": "ready-for-codex",
+          "requested_state": "codex-working",
+          "base_sha": "77030a93ec2dddef5a96a7a7e047a009043252d5",
+          "head_sha": "5807d7d4e6c4802f231d42fe92825269bee1d3a4",
+          "head_branch": "phase-49q-railway-postgresql-acceptance-implementation-authorization",
+          "lease_id": "lease-phase-49q-auditor-002",
+          "lease_expires_at": "2026-07-30T13:50:00Z",
+          "reason": "Protocol recovery after the watchdog requeued the lane: preserve the already completed independent read-only Codex ACCEPT for the unchanged exact head and allow its durable completion event to be reduced correctly. Live PR metadata was rechecked immediately before this event: PR #121 is open, unmerged, non-draft, mergeable, and still bound to exact head 5807d7d4e6c4802f231d42fe92825269bee1d3a4. This lease authorizes audit-record recovery only; operator merge authority is separately supplied by operator:eileen in the current conversation.",
+          "occurred_at": "2026-07-30T10:10:00Z",
+          "refs": {
+            "pr_number": 121,
+            "audit_comment_id": 5120297451,
+            "audit_digest": "sha256:9dad8f99d743f13dbc1598db823a084a57474640833a07e4f89c0ba94c2d5cae"
+          }
+        }
+      }
+    },
+    {
+      "id": 5129478437,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-30T10:12:04Z",
+      "updated_at": "2026-07-30T10:12:04Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    },
+    {
+      "id": 5129483237,
+      "user": "eileen1337",
+      "created_at": "2026-07-30T10:12:34Z",
+      "updated_at": "2026-07-30T10:12:34Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49q-audit-completed-recovery-002",
+          "lane_id": "lane-phase-49q",
+          "sequence": 9,
+          "actor_role": "auditor",
+          "github_actor": "eileen1337",
+          "event_type": "auditor.completed",
+          "prior_state": "codex-working",
+          "requested_state": "eligibility-pending",
+          "base_sha": "77030a93ec2dddef5a96a7a7e047a009043252d5",
+          "head_sha": "5807d7d4e6c4802f231d42fe92825269bee1d3a4",
+          "head_branch": "phase-49q-railway-postgresql-acceptance-implementation-authorization",
+          "lease_id": "lease-phase-49q-auditor-002",
+          "audited_sha": "5807d7d4e6c4802f231d42fe92825269bee1d3a4",
+          "verdict": "ACCEPT",
+          "reason": "Protocol recovery of the already completed independent Codex exact-SHA ACCEPT recorded in audit comment 5120297451. The PR head remains exactly 5807d7d4e6c4802f231d42fe92825269bee1d3a4 and live metadata remains open, unmerged, non-draft, and mergeable. Codex reported no findings; full diff, ancestry, scope, historical preservation, authority boundaries, gate dispositions, Phase 50A/50B separation, tests, citations, negative checks, and no-leak checks passed. This event releases the recovery lease and requests live-metadata eligibility confirmation; it does not itself merge or create operator authority.",
+          "release_lease": true,
+          "refs": {
+            "pr_number": 121,
+            "audit_comment_id": 5120297451,
+            "audit_digest": "sha256:9dad8f99d743f13dbc1598db823a084a57474640833a07e4f89c0ba94c2d5cae"
+          },
+          "occurred_at": "2026-07-30T10:13:00Z"
+        }
+      }
+    },
+    {
+      "id": 5129526419,
+      "user": "eileen1337",
+      "created_at": "2026-07-30T10:16:01Z",
+      "updated_at": "2026-07-30T10:16:01Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49q-audit-completed-recovery-003",
+          "lane_id": "lane-phase-49q",
+          "sequence": 9,
+          "actor_role": "auditor",
+          "github_actor": "eileen1337",
+          "event_type": "auditor.audit_completed",
+          "prior_state": "codex-working",
+          "requested_state": "eligibility-pending",
+          "base_sha": "77030a93ec2dddef5a96a7a7e047a009043252d5",
+          "head_sha": "5807d7d4e6c4802f231d42fe92825269bee1d3a4",
+          "head_branch": "phase-49q-railway-postgresql-acceptance-implementation-authorization",
+          "lease_id": "lease-phase-49q-auditor-002",
+          "audited_sha": "5807d7d4e6c4802f231d42fe92825269bee1d3a4",
+          "verdict": "ACCEPT",
+          "reason": "Protocol recovery of the already completed independent Codex exact-SHA ACCEPT recorded in audit comment 5120297451. The exact PR head remains unchanged and live metadata remains open, unmerged, non-draft, and mergeable. Codex reported no findings; full diff, ancestry, scope, historical preservation, authority boundaries, gate dispositions, Phase 50A/50B separation, tests, citations, negative checks, and no-leak checks passed. This releases the recovery lease and requests live-metadata eligibility confirmation; it does not itself merge or create operator authority.",
+          "release_lease": true,
+          "refs": {
+            "pr_number": 121,
+            "audit_comment_id": 5120297451,
+            "audit_digest": "sha256:9dad8f99d743f13dbc1598db823a084a57474640833a07e4f89c0ba94c2d5cae"
+          },
+          "occurred_at": "2026-07-30T10:14:00Z"
+        }
+      }
+    },
+    {
+      "id": 5129551591,
+      "user": "eileen1337",
+      "created_at": "2026-07-30T10:18:35Z",
+      "updated_at": "2026-07-30T10:18:35Z",
+      "payloads": {}
+    },
+    {
+      "id": 5131529643,
+      "user": "eileen1337",
+      "created_at": "2026-07-30T13:36:47Z",
+      "updated_at": "2026-07-30T13:36:47Z",
+      "payloads": {
+        "audit": {
+          "schema": "straylight.audit.v1",
+          "lane_id": "lane-phase-49q",
+          "pr_number": 121,
+          "base_branch": "main",
+          "base_sha": "77030a93ec2dddef5a96a7a7e047a009043252d5",
+          "head_branch": "phase-49q-railway-postgresql-acceptance-implementation-authorization",
+          "audited_head_sha": "5807d7d4e6c4802f231d42fe92825269bee1d3a4",
+          "complete_diff_reviewed": true,
+          "changed_files": [
+            "docs/decisions/ADR-049Q-railway-postgresql-canonical-store-host-acceptance-and-implementation-authorization.md",
+            "docs/decisions/ADR-022E-phase-22-deferred-features.md",
+            "docs/decisions/ADR-048B-canonical-store-physical-host-ownership-routing.md",
+            "docs/ADR-022E-SIBLING-GATE-9-10-EVIDENCE-RESULT-INTAKE-COMPLETION-GATE.md"
+          ],
+          "verdict": "ACCEPT",
+          "validation_summary": "Independent Codex exact-SHA audit ACCEPT with no findings. The complete base-to-head diff, direct-child ancestry, exact four-file scope, pure EOF historical preservation, Tier-1 authority boundaries, gate and dependency dispositions, Phase 50A/50B separation, required tests, citations, negative checks, and no-leak checks passed. The disclosed failed Claude subagent dispatch was non-blocking and had no repository artifact, provenance, scope, or auditability effect. Durability, backup/restore, failover, version pinning, isolation/tenancy, availability/recovery, cross-host export/restore, rollback, Phase 50A implementation, and Phase 50B acceptance remain unproven future obligations. This audit is eligibility evidence only and is not operator acceptance, signature, merge authorization, provider operation, gate closure beyond the bounded ADR effect on merge, or MVP-2 completion.",
+          "audit_committed_in_pr": false,
+          "next_actor": "system"
+        }
+      }
+    },
+    {
+      "id": 5131533589,
+      "user": "eileen1337",
+      "created_at": "2026-07-30T13:37:08Z",
+      "updated_at": "2026-07-30T13:37:08Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49q-audit-completed-recovery-004",
+          "lane_id": "lane-phase-49q",
+          "sequence": 9,
+          "actor_role": "auditor",
+          "github_actor": "eileen1337",
+          "event_type": "auditor.audit_completed",
+          "prior_state": "codex-working",
+          "requested_state": "eligibility-pending",
+          "base_sha": "77030a93ec2dddef5a96a7a7e047a009043252d5",
+          "head_sha": "5807d7d4e6c4802f231d42fe92825269bee1d3a4",
+          "head_branch": "phase-49q-railway-postgresql-acceptance-implementation-authorization",
+          "lease_id": "lease-phase-49q-auditor-002",
+          "audited_sha": "5807d7d4e6c4802f231d42fe92825269bee1d3a4",
+          "verdict": "ACCEPT",
+          "reason": "Protocol recovery using a structurally valid audit record for the already completed independent Codex exact-SHA ACCEPT. The PR remains open, unmerged, non-draft, mergeable, and unchanged at the audited head. This event releases the recovery lease and requests durable live-metadata eligibility confirmation; it does not itself merge, sign the ADR, or create operator authority.",
+          "release_lease": true,
+          "refs": {
+            "pr_number": 121,
+            "audit_comment_id": 5131529643,
+            "audit_digest": "sha256:3b06c076591f67653abd6eaf5f4bf9b74d720aab7f0b2963f9cc1547b3a36335"
+          },
+          "occurred_at": "2026-07-30T13:37:00Z"
+        }
+      }
+    },
+    {
+      "id": 5131534841,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-30T13:37:15Z",
+      "updated_at": "2026-07-30T13:37:15Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    },
+    {
+      "id": 5131539234,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-30T13:37:39Z",
+      "updated_at": "2026-07-30T13:37:39Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-867b432240932a9af4b96a7eb960e54ed6f0c80c11906809",
+          "lane_id": "lane-phase-49q",
+          "sequence": 10,
+          "actor_role": "system",
+          "github_actor": "github-actions[bot]",
+          "event_type": "system.eligibility_confirmed",
+          "prior_state": "eligibility-pending",
+          "occurred_at": "2026-07-30T13:37:35Z",
+          "pr_metadata": {
+            "fetch_ok": true,
+            "repository": "0xHoneyJar/loa-straylight",
+            "pr_number": 121,
+            "state": "open",
+            "draft": false,
+            "merged": false,
+            "base_branch": "main",
+            "base_sha": "77030a93ec2dddef5a96a7a7e047a009043252d5",
+            "head_branch": "phase-49q-railway-postgresql-acceptance-implementation-authorization",
+            "head_sha": "5807d7d4e6c4802f231d42fe92825269bee1d3a4"
+          }
+        }
+      }
+    },
+    {
+      "id": 5131540412,
+      "user": "eileen1337",
+      "created_at": "2026-07-30T13:37:46Z",
+      "updated_at": "2026-07-30T13:37:46Z",
+      "payloads": {}
+    },
+    {
+      "id": 5131540739,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-30T13:37:48Z",
+      "updated_at": "2026-07-30T13:37:48Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    },
+    {
+      "id": 5131558860,
+      "user": "eileen1337",
+      "created_at": "2026-07-30T13:39:20Z",
+      "updated_at": "2026-07-30T13:39:20Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49q-operator-merged-001",
+          "lane_id": "lane-phase-49q",
+          "sequence": 11,
+          "actor_role": "operator",
+          "github_actor": "eileen1337",
+          "event_type": "operator.merged",
+          "prior_state": "ready-for-merge",
+          "requested_state": "merged",
+          "base_sha": "77030a93ec2dddef5a96a7a7e047a009043252d5",
+          "head_sha": "5807d7d4e6c4802f231d42fe92825269bee1d3a4",
+          "reason": "operator:eileen accepted and authorized the exact-SHA merge of Phase 49Q PR #121. GitHub merged the audited head into main at merge commit 70d40058096455c6406d644183ac757a317ce159. This activates the bounded ADR decision: Railway PostgreSQL is accepted as the reversible MVP-2 implementation host and Phase 50A is authorized to start under a later exact packet. It does not authorize production use, close MVP-2, satisfy gates #9/#10, prove provider properties, or complete Phase 50A/50B.",
+          "refs": {
+            "pr_number": 121
+          },
+          "occurred_at": "2026-07-30T13:39:00Z"
+        }
+      }
+    },
+    {
+      "id": 5131565021,
+      "user": "eileen1337",
+      "created_at": "2026-07-30T13:39:50Z",
+      "updated_at": "2026-07-30T13:39:50Z",
+      "payloads": {}
+    },
+    {
+      "id": 5131565448,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-30T13:39:52Z",
+      "updated_at": "2026-07-30T13:39:52Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    }
+  ]
+}

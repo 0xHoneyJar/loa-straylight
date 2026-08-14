@@ -365,12 +365,21 @@ describe("G2 — policy-gate.mjs is the single type-strict workflow policy autho
     const src = readFileSync(GATE, "utf8");
     const imports = [...src.matchAll(/from "([^"]+)"/g)].map((m) => m[1] ?? "");
     expect(imports.length).toBeGreaterThan(0);
-    expect(imports.every((s) =>
-      s.startsWith("node:") || s === "../lib/validate.mjs" || s === "../lib/strict-json.mjs",
-    )).toBe(true);
-    expect(src).toMatch(/validatePolicy/);
+    expect(imports.every((s) => s.startsWith("node:") || s === "../lib/policy-source.mjs")).toBe(true);
+    // Reading and validating are delegated to the ONE loader that decides
+    // which validator a policy file must satisfy (acceptPolicy for the
+    // committed policy, validatePolicy for an explicit override); the gate
+    // itself only distinguishes the literal boolean values of `enabled`.
+    expect(src).toMatch(/loadProtocolPolicy/);
     expect(src).toMatch(/policy\.enabled === true/);
     expect(src).toMatch(/policy\.enabled === false/);
+    const loader = readFileSync(".straylight/lib/policy-source.mjs", "utf8");
+    const loaderImports = [...loader.matchAll(/from "([^"]+)"/g)].map((m) => m[1] ?? "");
+    expect(loaderImports.every((s) =>
+      s.startsWith("node:") || s === "./strict-json.mjs" || s === "./validate.mjs",
+    )).toBe(true);
+    expect(loader).toMatch(/acceptPolicy/);
+    expect(loader).toMatch(/validatePolicy/);
   });
 
   it("REDUCER, WATCHDOG, BOOTSTRAP (and merge guard) all consult the gate; none uses jq -r '.enabled' as authority", () => {

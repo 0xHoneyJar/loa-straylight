@@ -30,7 +30,7 @@ import {
 } from "./_fixtures.js";
 
 const policy = makePolicy();
-const ctx = { now: NOW };
+const ctx = { event_observed_at: NOW };
 
 // The published timestamp pattern, read from the schema it is normative in.
 function schemaTimestampPattern(): RegExp {

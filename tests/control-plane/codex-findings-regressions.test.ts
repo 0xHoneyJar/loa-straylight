@@ -39,7 +39,7 @@ import {
 } from "./_fixtures.js";
 
 const policy = makePolicy();
-const ctx = { now: NOW };
+const ctx = { event_observed_at: NOW };
 
 function genesisBody() {
   return `# Lane\n\n${renderPayload(MARKERS.lane, makeLane())}`;
@@ -513,7 +513,7 @@ describe("C7 — fractional-second lease expiry compares as instants, not string
     const out = reduce(lane, makeEvent({
       sequence: 4, actor_role: "system", github_actor: "github-actions[bot]",
       event_type: "system.lease_expired", prior_state: "claude-working",
-    }), policy, { now: "2026-07-16T16:00:00Z" });
+    }), policy, { event_observed_at: "2026-07-16T16:00:00Z" });
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.refusal).toBe("lease-not-expired");
   });
@@ -527,7 +527,7 @@ describe("C7 — fractional-second lease expiry compares as instants, not string
       event_type: "implementer.completed", prior_state: "claude-working",
       lease_id: "lease-claude-1", head_sha: HEAD_SHA, head_branch: WORKING_BRANCH,
       refs: { pr_number: 120 },
-    }), policy, { now: at, event_observed_at: at, comment_author: "claude-login" });
+    }), policy, { event_observed_at: at, comment_author: "claude-login" });
     expect(complete("2026-07-16T16:00:00.250Z").ok).toBe(true);
     const late = complete("2026-07-16T16:00:01.250Z");
     expect(late.ok).toBe(false);

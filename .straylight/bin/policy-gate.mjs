@@ -29,16 +29,20 @@
 // ENABLED policy. A contradictory policy is ambiguous, and ambiguity fails
 // closed: duplicate keys (top-level or nested) exit 2.
 //
+// ACCEPTANCE AUTHORITY: reading and validating both go through
+// loadProtocolPolicy, so the committed policy must additionally satisfy the
+// accepted-epoch digest lock (acceptPolicy). An edited historical epoch
+// therefore disables the whole control plane at the gate — exit 2, never
+// "enabled" — instead of quietly re-governing replay.
+//
 // Usage:
 //   node .straylight/bin/policy-gate.mjs [--policy <policy.json>]
 //
 // stdout: a single JSON result { ok, enabled?, refusal?, detail? }.
 
-import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseStrict } from "../lib/strict-json.mjs";
-import { validatePolicy } from "../lib/validate.mjs";
+import { loadProtocolPolicy } from "../lib/policy-source.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -52,28 +56,19 @@ function emit(result, code) {
   process.exit(code);
 }
 
-let policyText;
-try {
-  const policyPath = arg("--policy") ?? resolve(here, "..", "automation-policy.json");
-  policyText = readFileSync(policyPath, "utf8");
-} catch (e) {
-  emit({ ok: false, refusal: "policy-unreadable", detail: String(e?.message ?? e) }, 2);
+// Strict parse (rejects malformed JSON AND any duplicate object key anywhere —
+// a duplicate `enabled`, false-then-true or true-then-false, is a contradictory
+// kill switch and must never be accepted) plus validation, with the full
+// accepted-epoch lock applied when the file being read is the protocol's own
+// committed policy.
+const loaded = loadProtocolPolicy({
+  committedPath: resolve(here, "..", "automation-policy.json"),
+  overridePath: arg("--policy"),
+});
+if (!loaded.ok) {
+  emit({ ok: false, refusal: loaded.refusal, detail: loaded.detail }, 2);
 }
-
-// Strict parse: rejects malformed JSON AND any duplicate object key anywhere
-// (a duplicate `enabled` — false-then-true or true-then-false — is a
-// contradictory kill switch and must never be accepted; JSON.parse would
-// silently keep whichever occurrence came last).
-const parsed = parseStrict(policyText);
-if (!parsed.ok) {
-  emit({ ok: false, refusal: "policy-unreadable", detail: `strict JSON parse failed: ${parsed.reason}` }, 2);
-}
-const policy = parsed.value;
-
-const pv = validatePolicy(policy ?? null);
-if (!pv.ok) {
-  emit({ ok: false, refusal: "policy-invalid", detail: pv.errors.join("; ") }, 2);
-}
+const policy = loaded.value;
 if (policy.enabled === true) {
   emit({ ok: true, enabled: true }, 0);
 }
