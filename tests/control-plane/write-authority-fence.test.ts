@@ -106,6 +106,8 @@ import {
   MAIN_SHA,
   authorityResponses,
   planAuthority,
+  workflowDirectoryResponse,
+  workflowFileResponse,
 } from "./_fixtures.js";
 
 const REPO = "0xHoneyJar/loa-straylight";
@@ -113,6 +115,7 @@ const NONCE = "12345-1";
 const EXECUTOR = ".straylight/bin/execute-write-plan.mjs";
 const POLICY_GATE = ".straylight/bin/policy-gate.mjs";
 const QUIESCENCE_CLI = "scripts/verify-frozen-quiescence.mjs";
+const LIVE_QUIESCENCE_LIB = ".straylight/lib/live-quiescence.mjs";
 const WORKFLOW_DIR = ".github/workflows";
 
 // The four states of the cutover procedure, as commits. Synthetic 40-hex: what
@@ -265,7 +268,24 @@ type GhOpts = {
   defaultBranch?: string;
   /** workflow file name (not path) → its run page stream. Missing means zero runs. */
   runs?: Record<string, string>;
+  /**
+   * commit SHA → the workflow files committed AT that SHA. The write-capable set
+   * is derived from these bytes fetched at `?ref=<sha>`, never from the local
+   * checkout, so the mock has to serve a workflow TREE and not just a policy.
+   * Defaults to this repository's real workflow files at every requested SHA.
+   */
+  workflowsAt?: Record<string, Array<{ name: string; text: string }>>;
 };
+
+/**
+ * This repository's real workflow files, read once. The default tree the mock
+ * serves: H2-T9 asserts the derivation reproduces the actual write-capable set,
+ * which is only meaningful if the bytes are the actual bytes.
+ */
+const REAL_WORKFLOW_FILES = readdirSync(WORKFLOW_DIR)
+  .filter((f) => f.endsWith(".yml") || f.endsWith(".yaml"))
+  .sort()
+  .map((name) => ({ name, text: readFileSync(join(WORKFLOW_DIR, name), "utf8") }));
 
 /**
  * ONE mock serving both read-only consumers: the executor's per-operation
@@ -292,8 +312,21 @@ function makeGh(root: string, opts: GhOpts = {}) {
   if (opts.nextMainSha !== undefined) {
     writeFileSync(join(dir, "next-ref.json"), authorityResponses({ main_sha: opts.nextMainSha }).ref);
   }
-  for (const [sha, text] of Object.entries(opts.policies ?? { [SHA_A]: COMMITTED_POLICY_TEXT })) {
+  const policies = opts.policies ?? { [SHA_A]: COMMITTED_POLICY_TEXT };
+  for (const [sha, text] of Object.entries(policies)) {
     writeFileSync(join(dir, `contents-${sha}.json`), authorityResponses({ policy_text: text }).contents);
+  }
+  // The workflow tree at every SHA that has a policy (plus any explicit
+  // override), so a read at `?ref=<sha>` finds a listing wherever a policy
+  // exists — the two are properties of the same commit.
+  const trees: Record<string, Array<{ name: string; text: string }>> = {};
+  for (const sha of Object.keys(policies)) trees[sha] = REAL_WORKFLOW_FILES;
+  for (const [sha, files] of Object.entries(opts.workflowsAt ?? {})) trees[sha] = files;
+  for (const [sha, files] of Object.entries(trees)) {
+    writeFileSync(join(dir, `workflows-dir-${sha}.json`), workflowDirectoryResponse(files));
+    for (const file of files) {
+      writeFileSync(join(dir, `workflow-${sha}-${file.name}.json`), workflowFileResponse(file.name, file.text));
+    }
   }
   for (const [file, pages] of Object.entries(opts.runs ?? {})) {
     writeFileSync(join(dir, `runs-${file}.json`), pages);
@@ -313,6 +346,26 @@ if [ "$2" != "-X" ]; then
         cat "$DIR/next-ref.json"
       else
         cat "$DIR/read-ref.json"
+      fi
+      ;;
+    */contents/.github/workflows/*)
+      SHA=\${TARGET##*ref=}
+      REST=\${TARGET#*/contents/.github/workflows/}
+      WF=\${REST%%\\?*}
+      if [ -f "$DIR/workflow-$SHA-$WF.json" ]; then
+        cat "$DIR/workflow-$SHA-$WF.json"
+      else
+        printf 'no workflow fixture %s at %s\\n' "$WF" "$SHA" >&2
+        exit 1
+      fi
+      ;;
+    */contents/.github/workflows*)
+      SHA=\${TARGET##*ref=}
+      if [ -f "$DIR/workflows-dir-$SHA.json" ]; then
+        cat "$DIR/workflows-dir-$SHA.json"
+      else
+        printf 'no workflow tree fixture at %s\\n' "$SHA" >&2
+        exit 1
       fi
       ;;
     */contents/*)
@@ -1193,7 +1246,8 @@ describe("H2-T7 … H2-T10 — verify-frozen-quiescence, read-only against a moc
     expect(r.out.frozen_main_sha).toBe(SHA_B);
     expect(r.out.active_write_runs).toEqual([]);
     expect(r.out.checked_at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
-    // The recorded set is the one DERIVED from this repository's own workflows.
+    // The recorded set is the one DERIVED from this repository's own workflows —
+    // fetched from the FROZEN COMMIT, not read off the local checkout.
     expect(r.out.write_capable_workflows).toEqual([
       ".github/workflows/straylight-bootstrap.yml",
       ".github/workflows/straylight-merge-guard.yml",
@@ -1207,6 +1261,12 @@ describe("H2-T7 … H2-T10 — verify-frozen-quiescence, read-only against a moc
     const runReads = gh.reads().filter((l) => l.includes("/actions/workflows/"));
     expect(runReads).toHaveLength(8);
     expect(gh.reads().filter((l) => l.endsWith("/git/ref/heads/main"))).toHaveLength(3);
+    // The workflow universe came from the frozen commit's tree: the directory
+    // listing and EVERY file were read at `?ref=<frozen sha>`.
+    const treeReads = gh.reads().filter((l) => l.includes("/contents/.github/workflows"));
+    expect(treeReads).toHaveLength(1 + REAL_WORKFLOW_FILES.length);
+    for (const line of treeReads) expect(line).toContain(`?ref=${SHA_B}`);
+    expect(treeReads.filter((l) => l.includes(`/contents/${WORKFLOW_DIR}?ref=`))).toHaveLength(1);
 
     // --out writes the same document to a file instead of stdout.
     const outPath = join(root, "quiescence.json");
@@ -1267,7 +1327,8 @@ describe("H2-T7 … H2-T10 — verify-frozen-quiescence, read-only against a moc
     const r1 = runQuiescence(between.dir, ["--repo", REPO, "--frozen-main-sha", SHA_B]);
     expect(r1.status).toBe(2);
     expect(r1.out.reason).toBe("main-moved");
-    expect(r1.out.detail).toContain(`main moved to ${SHA_D} during verification`);
+    expect(r1.out.detail).toContain("between the two run scans");
+    expect(r1.out.detail).toContain(`current main is ${SHA_D}, not the frozen ${SHA_B}`);
     expect(between.writes()).toEqual([]);
 
     // swapAfterRefReads=2: both scans complete and the FINAL identity check,
@@ -1346,13 +1407,22 @@ describe("H2-T7 … H2-T10 — verify-frozen-quiescence, read-only against a moc
     const code = src.split("\n").map((l) => (l.trim().startsWith("//") ? "" : l)).join("\n");
     expect(code).toMatch(/const argv = paginate \? \["api", "--paginate", path\] : \["api", path\];/);
     expect(code).not.toMatch(/--method|-X\b|"POST"|"PATCH"|"PUT"|"DELETE"/);
-    // "cancel" DOES appear — in the refusal that tells the operator not to. What
-    // must not appear is a cancellation being issued.
     expect(code).not.toMatch(/\brun\s+cancel\b|\/runs\/[^"'\s]*\/cancel|gh pr |gh issue /);
-    expect(code).toMatch(/do NOT cancel them/);
     expect(src).toMatch(/NEVER cancels a run/);
     // Importing must not fetch.
     expect(code).toMatch(/if \(invokedDirectly\(\)\) main\(\);/);
+    // The proof itself lives in the shared library, and so does the refusal that
+    // tells the operator not to cancel what it found. "cancel" DOES appear there
+    // — in that sentence. What must not appear anywhere is a cancellation being
+    // ISSUED, and the library cannot issue one: it has no transport of its own.
+    const lib = readFileSync(LIVE_QUIESCENCE_LIB, "utf8");
+    const libCode = lib.split("\n").map((l) => (l.trim().startsWith("//") ? "" : l)).join("\n");
+    expect(libCode).toMatch(/do NOT cancel them/);
+    expect(libCode).not.toMatch(/--method|-X\b|"POST"|"PATCH"|"PUT"|"DELETE"/);
+    expect(libCode).not.toMatch(/\brun\s+cancel\b|\/runs\/[^"'\s]*\/cancel|gh pr |gh issue /);
+    // Every path it asks for is built by write-authority's read-path builders,
+    // and the only verb it ever passes to the injected transport is a read.
+    expect(libCode).not.toMatch(/execFileSync|spawnSync|fetch\(/);
   });
 });
 
@@ -1511,5 +1581,13 @@ describe("the residual window is documented, not claimed away", () => {
     expect(authority).not.toMatch(/new Date|Date\.now|process\.env|execFileSync|spawnSync|fetch\(/);
     expect((authority.match(/readFileSync\(/g) ?? [])).toHaveLength(1);
     expect(authority).toMatch(/readFileSync\(resolve\(filePath\), "utf8"\)\.trim\(\)/);
+
+    // live-quiescence.mjs performs the LIVE proof, yet owns no I/O: the transport
+    // and the clock are injected by the CLI. That is what lets the same bounded
+    // algorithm serve the verifier and the frontier capture without either one
+    // being able to substitute a document for a look at the world.
+    const live = readFileSync(LIVE_QUIESCENCE_LIB, "utf8");
+    expect(live).not.toMatch(/readFileSync|new Date|Date\.now|process\.env|execFileSync|spawnSync|fetch\(/);
+    expect(live).toMatch(/export function proveFrozenQuiescence\(\{ repository, frozen_main_sha, read, now,/);
   });
 });

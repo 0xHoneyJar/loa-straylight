@@ -45,6 +45,10 @@ export declare function writeCapableWorkflows(
 /** Only the literal terminal Actions status is terminal. */
 export declare function runIsActive(status: unknown): boolean;
 
+/**
+ * `scanned` counts UNIQUE validated run ids. A run id repeated across pages is a
+ * refusal (`run-pages-duplicate`), never a silent deduplication.
+ */
 export declare function parseWorkflowRunPages(
   text: unknown,
   opts: { workflow_path: string }

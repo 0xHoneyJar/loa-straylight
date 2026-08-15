@@ -10,6 +10,7 @@ export declare const AUTHORITY_KEYS: readonly ["source_main_sha", "policy_digest
 export declare const EXPECTED_DEFAULT_BRANCH: "main";
 export declare const MAIN_REF: "refs/heads/main";
 export declare const COMMITTED_POLICY_REPO_PATH: ".straylight/automation-policy.json";
+export declare const WORKFLOW_DIR_REPO_PATH: ".github/workflows";
 
 export interface WriteAuthority {
   /** Full immutable 40-hex commit SHA; never a branch name. */
@@ -61,6 +62,16 @@ export declare function repositoryMetadataReadPath(repository: unknown): ReadPat
 export declare function mainRefReadPath(repository: unknown): ReadPathResult;
 /** GET repos/{owner}/{repo}/contents/.straylight/automation-policy.json?ref=<sha> */
 export declare function committedPolicyReadPath(repository: unknown, main_sha: unknown): ReadPathResult;
+/** GET repos/{owner}/{repo}/contents/.github/workflows?ref=<sha> */
+export declare function workflowDirectoryReadPath(repository: unknown, commit_sha: unknown): ReadPathResult;
+/** GET repos/{owner}/{repo}/contents/.github/workflows/<file>?ref=<sha> */
+export declare function workflowFileReadPath(
+  repository: unknown,
+  commit_sha: unknown,
+  workflow_path: unknown
+): ReadPathResult;
+/** GET repos/{owner}/{repo}/actions/workflows/<file>/runs?per_page=100 (no ref: runs are not a property of a commit) */
+export declare function workflowRunsReadPath(repository: unknown, workflow_path: unknown): ReadPathResult;
 
 export declare function readRepositoryDefaultBranch(
   value: unknown,
@@ -75,4 +86,21 @@ export declare function readMainRefSha(
 export declare function decodeCommittedFile(
   value: unknown,
   opts: { expected_path: string }
+): { ok: true; text: string; bytes: Buffer } | { ok: false; reason: string; detail: string };
+
+/**
+ * The `.github/workflows` DIRECTORY listing at an exact commit (a JSON array).
+ * Fails closed on truncation, non-file entries, out-of-directory paths,
+ * unaddressable YAML names, missing blob ids, and duplicate paths. Non-YAML
+ * entries are skipped. Entries are returned sorted by path.
+ */
+export declare function readWorkflowDirectory(
+  value: unknown,
+  opts?: { expected_dir?: string }
+): { ok: true; entries: Array<{ path: string; sha: string }> } | { ok: false; reason: string; detail: string };
+
+/** One workflow's committed bytes, bound to the blob id the frozen tree listed. */
+export declare function decodeCommittedWorkflowFile(
+  value: unknown,
+  opts: { expected_path: string; expected_sha: string }
 ): { ok: true; text: string; bytes: Buffer } | { ok: false; reason: string; detail: string };

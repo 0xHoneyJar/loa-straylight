@@ -215,13 +215,15 @@ export function authorityStillCurrent({ authority, current_main_sha, current_pol
 }
 
 // ---------------------------------------------------------------------------
-// The three read-only endpoints, constructed HERE.
+// The read-only endpoints, constructed HERE.
 //
 // Same discipline as the write-plan kind registry: the executor expresses no
 // path, method, host, or URL of its own. It asks this module for a path and
 // issues a GET. Nothing caller-supplied reaches a path except a repository that
 // matched the shape below (and, at the executor, the write-plan repository
-// allowlist) and a SHA that already matched MAIN_SHA_RE.
+// allowlist), a SHA that already matched MAIN_SHA_RE, and a workflow path that
+// already matched WORKFLOW_FILE_PATH_RE. Every path is fixed apart from those
+// validated components: no caller supplies a host, a ref, or a path fragment.
 // ---------------------------------------------------------------------------
 
 const REPOSITORY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -257,6 +259,70 @@ export function committedPolicyReadPath(repository, main_sha) {
     return pathRefusal("commit SHA is not 40 lowercase hex");
   }
   return { ok: true, path: `${prefix}/contents/${COMMITTED_POLICY_REPO_PATH}?ref=${main_sha}` };
+}
+
+// ---------------------------------------------------------------------------
+// The workflow tree AT AN EXACT COMMIT (Codex quiescence-provenance, MEDIUM).
+//
+// The write-capable workflow set is derived by scanning workflow bytes. Which
+// bytes is the whole question. Reading them from the local checkout binds the
+// derivation to whatever tree the process happens to be running in — a feature
+// branch, a synthetic directory, a fabricated `.github/workflows` planted by the
+// caller — so `frozen_main_sha` named a revision the workflow set did not come
+// from. These paths make the frozen commit the source: `?ref=<40-hex>` on both
+// the directory listing and every file inside it, so the set is a fact about
+// that commit and nothing else can supply it.
+// ---------------------------------------------------------------------------
+
+export const WORKFLOW_DIR_REPO_PATH = ".github/workflows";
+
+// A workflow file as GitHub reports it and as the repository stores it. Declared
+// here rather than imported from frozen-quiescence.mjs for the same reason
+// MAIN_SHA_RE is declared there as FROZEN_MAIN_SHA_RE: neither module may depend
+// on the other. A test pins the two source strings together.
+const WORKFLOW_FILE_PATH_RE = /^\.github\/workflows\/[A-Za-z0-9._-]+\.ya?ml$/;
+
+// GitHub's contents API returns at most 1000 entries for a directory and
+// TRUNCATES SILENTLY past that. A truncated listing cannot prove it enumerated
+// every workflow, and an unenumerated workflow is an unscanned write path.
+const CONTENTS_DIRECTORY_LIMIT = 1000;
+
+// GET repos/{owner}/{repo}/contents/.github/workflows?ref=<sha> — the workflow
+// directory as it exists at that exact commit.
+export function workflowDirectoryReadPath(repository, commit_sha) {
+  const prefix = repoPrefix(repository);
+  if (prefix === null) return pathRefusal("repository is not <owner>/<name>");
+  if (typeof commit_sha !== "string" || !MAIN_SHA_RE.test(commit_sha)) {
+    return pathRefusal("commit SHA is not 40 lowercase hex");
+  }
+  return { ok: true, path: `${prefix}/contents/${WORKFLOW_DIR_REPO_PATH}?ref=${commit_sha}` };
+}
+
+// GET repos/{owner}/{repo}/contents/.github/workflows/<file>?ref=<sha> — one
+// workflow's bytes at that exact commit. The path must be one this module's own
+// shape accepts, so a listing entry cannot walk out of the workflow directory.
+export function workflowFileReadPath(repository, commit_sha, workflow_path) {
+  const prefix = repoPrefix(repository);
+  if (prefix === null) return pathRefusal("repository is not <owner>/<name>");
+  if (typeof commit_sha !== "string" || !MAIN_SHA_RE.test(commit_sha)) {
+    return pathRefusal("commit SHA is not 40 lowercase hex");
+  }
+  if (typeof workflow_path !== "string" || !WORKFLOW_FILE_PATH_RE.test(workflow_path)) {
+    return pathRefusal(`workflow path ${JSON.stringify(workflow_path ?? null)} is not ${WORKFLOW_DIR_REPO_PATH}/<file>.yml`);
+  }
+  return { ok: true, path: `${prefix}/contents/${workflow_path}?ref=${commit_sha}` };
+}
+
+// GET repos/{owner}/{repo}/actions/workflows/<file>/runs — run history is a
+// property of the repository, not of a commit, so this path carries no ref.
+export function workflowRunsReadPath(repository, workflow_path) {
+  const prefix = repoPrefix(repository);
+  if (prefix === null) return pathRefusal("repository is not <owner>/<name>");
+  if (typeof workflow_path !== "string" || !WORKFLOW_FILE_PATH_RE.test(workflow_path)) {
+    return pathRefusal(`workflow path ${JSON.stringify(workflow_path ?? null)} is not ${WORKFLOW_DIR_REPO_PATH}/<file>.yml`);
+  }
+  const file = workflow_path.slice(WORKFLOW_DIR_REPO_PATH.length + 1);
+  return { ok: true, path: `${prefix}/actions/workflows/${file}/runs?per_page=100` };
 }
 
 // ---------------------------------------------------------------------------
@@ -374,4 +440,92 @@ export function decodeCommittedFile(value, { expected_path }) {
     };
   }
   return { ok: true, text: bytes.toString("utf8"), bytes };
+}
+
+// GET repos/{owner}/{repo}/contents/.github/workflows?ref=<sha> — a DIRECTORY
+// listing, so the response is a JSON array rather than an object.
+//
+// Fails closed on everything that would make the enumeration incomplete or
+// ambiguous, because an unenumerated workflow is an unscanned write path:
+// a non-array response, a listing at the API's truncation limit, an entry that
+// is not a plain file (a subdirectory could hide files this enumeration would
+// never see), a path outside the workflow directory, a name that ends in .yml
+// but that this module's shape does not accept, a missing blob sha, or the same
+// path twice. Non-YAML entries are not workflows and are skipped.
+//
+// Returns { ok: true, entries: [{ path, sha }] } sorted by path. The blob sha
+// travels with each entry so the later per-file read can be bound to the exact
+// object the frozen tree listed.
+export function readWorkflowDirectory(value, { expected_dir = WORKFLOW_DIR_REPO_PATH } = {}) {
+  const refuse = (detail) => ({ ok: false, reason: "workflow-directory-unreadable", detail });
+  if (!Array.isArray(value)) {
+    return refuse(`${expected_dir}: response is not a JSON array — a directory listing was expected`);
+  }
+  if (value.length >= CONTENTS_DIRECTORY_LIMIT) {
+    return {
+      ok: false,
+      reason: "workflow-directory-truncated",
+      detail: `${expected_dir}: ${value.length} entries meets the contents API's ${CONTENTS_DIRECTORY_LIMIT}-entry ` +
+        "limit, past which listings truncate silently; the enumeration cannot be proven complete",
+    };
+  }
+  const entries = [];
+  const seen = new Set();
+  for (const [i, entry] of value.entries()) {
+    const at = `${expected_dir}[${i}]`;
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return refuse(`${at}: not an object`);
+    if (entry.type !== "file") {
+      return refuse(
+        `${at}: type ${JSON.stringify(entry.type ?? null)} is not "file" — only plain files are enumerable, and a ` +
+          "non-file entry could hide workflow bytes this listing would never report",
+      );
+    }
+    if (typeof entry.path !== "string" || !entry.path.startsWith(`${expected_dir}/`) ||
+        entry.path.slice(expected_dir.length + 1).includes("/")) {
+      return refuse(`${at}: path ${JSON.stringify(entry.path ?? null)} is not a direct child of ${expected_dir}`);
+    }
+    const yaml = entry.path.endsWith(".yml") || entry.path.endsWith(".yaml");
+    if (yaml && !WORKFLOW_FILE_PATH_RE.test(entry.path)) {
+      return refuse(
+        `${at}: path ${JSON.stringify(entry.path)} is a YAML workflow whose name this protocol cannot address ` +
+          "safely; refusing rather than omitting it from the derivation",
+      );
+    }
+    if (!yaml) continue;
+    // Git object ids share the 40-hex shape MAIN_SHA_RE describes.
+    if (typeof entry.sha !== "string" || !MAIN_SHA_RE.test(entry.sha)) {
+      return refuse(`${at}: sha ${JSON.stringify(entry.sha ?? null)} is not a 40-hex blob id`);
+    }
+    if (seen.has(entry.path)) return refuse(`${at}: ${entry.path} is listed twice`);
+    seen.add(entry.path);
+    entries.push({ path: entry.path, sha: entry.sha });
+  }
+  entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  return { ok: true, entries };
+}
+
+// One workflow's committed bytes, bound to the blob the frozen tree listed.
+// `expected_sha` is REQUIRED: without it the response could be any revision's
+// copy of that path, and "the bytes at the frozen commit" would be an assumption
+// rather than a check.
+export function decodeCommittedWorkflowFile(value, { expected_path, expected_sha }) {
+  if (typeof expected_sha !== "string" || !MAIN_SHA_RE.test(expected_sha)) {
+    return {
+      ok: false,
+      reason: "committed-file-unreadable",
+      detail: `${expected_path}: no 40-hex blob sha to bind the response to`,
+    };
+  }
+  const decoded = decodeCommittedFile(value, { expected_path });
+  if (!decoded.ok) return decoded;
+  const sha = value.sha;
+  if (typeof sha !== "string" || sha !== expected_sha) {
+    return {
+      ok: false,
+      reason: "committed-file-unreadable",
+      detail: `${expected_path}: response blob sha ${JSON.stringify(sha ?? null)} is not the ${expected_sha} the ` +
+        "frozen tree listed — these are not the bytes committed at that revision",
+    };
+  }
+  return decoded;
 }

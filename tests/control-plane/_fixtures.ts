@@ -1,6 +1,7 @@
 // Shared fixtures for the control-plane test suite.
 // Everything here mirrors the published v1 contracts in .straylight/schemas/.
 
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { payloadDigest } from "../../.straylight/lib/canonical.mjs";
 import { nextActorFor } from "../../.straylight/lib/state-machine.mjs";
@@ -369,4 +370,57 @@ export function authorityResponses(
       content: (content.match(/.{1,60}/g) ?? []).join("\n") + "\n",
     }),
   };
+}
+
+// ---------------------------------------------------------------------------
+// THE WORKFLOW TREE AT AN EXACT COMMIT (Codex quiescence-provenance)
+//
+// The write-capable workflow set is derived from the workflow bytes committed at
+// the frozen revision, fetched from GitHub — never from the local checkout. These
+// build the two response shapes that derivation reads: the `?ref=<sha>` directory
+// listing, and each file inside it. The blob id is a REAL git blob id so the
+// listing entry and the file response agree the way GitHub's do (the protocol
+// binds one to the other, and a fixture that faked the id would not exercise it).
+// ---------------------------------------------------------------------------
+
+export function gitBlobSha(text: string): string {
+  const bytes = Buffer.from(text, "utf8");
+  return createHash("sha1")
+    .update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`, "utf8"), bytes]))
+    .digest("hex");
+}
+
+/** GET .../contents/.github/workflows?ref=<sha> — a JSON ARRAY of entries. */
+export function workflowDirectoryResponse(
+  files: Array<{ name: string; text: string }>,
+  extraEntries: Record<string, any>[] = [],
+): string {
+  return JSON.stringify([
+    ...files.map((f) => ({
+      type: "file",
+      name: f.name,
+      path: `.github/workflows/${f.name}`,
+      sha: gitBlobSha(f.text),
+      size: Buffer.byteLength(f.text, "utf8"),
+    })),
+    ...extraEntries,
+  ]);
+}
+
+/** GET .../contents/.github/workflows/<name>?ref=<sha> — one workflow's bytes. */
+export function workflowFileResponse(
+  name: string,
+  text: string,
+  overrides: Record<string, any> = {},
+): string {
+  const content = Buffer.from(text, "utf8").toString("base64");
+  return JSON.stringify({
+    type: "file",
+    path: `.github/workflows/${name}`,
+    sha: gitBlobSha(text),
+    encoding: "base64",
+    size: Buffer.byteLength(text, "utf8"),
+    content: (content.match(/.{1,60}/g) ?? []).join("\n") + "\n",
+    ...overrides,
+  });
 }

@@ -195,8 +195,19 @@ export function runIsActive(status) {
  * or redirected request cannot report another workflow's quiescence as this
  * one's.
  *
- * Returns { ok: true, scanned, active } where active is [{ workflow, run_id,
- * status, created_at }] sorted by run id, or a refusal.
+ * DUPLICATE RUN IDS ARE A REFUSAL, NOT A DEDUPLICATION. Pagination that repeats
+ * a page — a shifting cursor, a retried request, a proxy replaying a response —
+ * makes the collected count exceed the number of runs actually seen. Counting
+ * each ENTRY would then let a repeated completed run pay for an omitted active
+ * one: two copies of run #1 satisfy `total_count: 2` while the queued run #2 is
+ * never read, and the scan reports quiescence over a history it never saw. So
+ * the scan tracks the ids it has already accepted, refuses the moment one comes
+ * back, and counts UNIQUE ids toward completeness. Silently deduplicating would
+ * fix the arithmetic and keep the omission.
+ *
+ * Returns { ok: true, scanned, active } where `scanned` is the number of unique
+ * validated run ids and active is [{ workflow, run_id, status, created_at }]
+ * sorted by run id, or a refusal.
  */
 export function parseWorkflowRunPages(text, { workflow_path }) {
   if (typeof workflow_path !== "string" || !WORKFLOW_PATH_RE.test(workflow_path)) {
@@ -206,7 +217,7 @@ export function parseWorkflowRunPages(text, { workflow_path }) {
   if (!stream.ok) return bad("run-pages-unusable", `${workflow_path}: ${stream.reason} (${stream.detail ?? ""})`);
 
   const active = [];
-  let scanned = 0;
+  const seen = new Map();
   let minTotal = null;
   for (const [pageIndex, page] of stream.pages.entries()) {
     const at = `${workflow_path} page ${pageIndex + 1}`;
@@ -235,7 +246,22 @@ export function parseWorkflowRunPages(text, { workflow_path }) {
       if (parseIsoInstant(run.created_at) === null) {
         return bad("run-pages-unusable", `${at}: run ${run.id} created_at ${JSON.stringify(run.created_at)} is not a UTC instant`);
       }
-      scanned += 1;
+      const previous = seen.get(run.id);
+      if (previous !== undefined) {
+        const disagrees = previous.status !== run.status || previous.created_at !== run.created_at;
+        return bad(
+          "run-pages-duplicate",
+          `${at}: run ${run.id} was already collected from ${previous.at}` +
+            (disagrees
+              ? ` and the two entries disagree (status ${JSON.stringify(previous.status)}/${JSON.stringify(run.status)}, ` +
+                `created_at ${JSON.stringify(previous.created_at)}/${JSON.stringify(run.created_at)}) — the run's state is ambiguous`
+              : "") +
+            " — repeated pages make the collected count exceed the runs actually seen, which would let a duplicated " +
+            "completed run pay for an omitted active one; refusing rather than deduplicating a scan whose pagination " +
+            "is not trustworthy",
+        );
+      }
+      seen.set(run.id, { at, status: run.status, created_at: run.created_at });
       if (runIsActive(run.status)) {
         active.push({
           workflow: workflow_path,
@@ -247,14 +273,17 @@ export function parseWorkflowRunPages(text, { workflow_path }) {
     }
   }
   // Pages LOST during pagination would hide active runs, so a collection
-  // smaller than the smallest total the API itself reported is refused. Runs
-  // CREATED during pagination are a different problem and are not solved here:
-  // the CLI scans twice and the cutover re-verifies (see the header).
+  // smaller than the smallest total the API itself reported is refused. The
+  // comparison uses UNIQUE ids, so a repeated page cannot inflate the count past
+  // the bound (and in fact refuses above, before reaching here). Runs CREATED
+  // during pagination are a different problem and are not solved here: the CLI
+  // scans twice and the cutover re-verifies (see the header).
+  const scanned = seen.size;
   if (minTotal !== null && scanned < minTotal) {
     return bad(
       "run-pages-incomplete",
-      `${workflow_path}: collected ${scanned} run(s) but the API reported at least ${minTotal} — pagination lost ` +
-        "pages; refusing rather than reporting quiescence over a partial history",
+      `${workflow_path}: collected ${scanned} unique run(s) but the API reported at least ${minTotal} — pagination ` +
+        "lost pages; refusing rather than reporting quiescence over a partial history",
     );
   }
   active.sort((a, b) => a.run_id - b.run_id);
