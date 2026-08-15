@@ -100,10 +100,23 @@ const frozen = (p: any): any => {
   p.enabled = false;
   return p;
 };
+// The frozen main the evidence is bound to (Codex H-02). Synthetic, and named
+// separately in the context: the append is authorized against a revision the
+// OPERATOR types, never one inferred from whatever the capture happened to see.
+const FIXTURE_FROZEN_SHA = "3f1c8b7a24d59e06b1a4c7d8e9f0123456789abc";
 const FIXTURE_FRONTIER = Object.freeze({
   schema: "straylight.durable-event-frontier.v1",
   repository: "0xHoneyJar/loa-straylight",
+  frozen_main_sha: FIXTURE_FROZEN_SHA,
   captured_at: "2026-07-15T00:00:00Z",
+  quiescence_checked_at: "2026-07-14T23:00:00Z",
+  write_capable_workflows: [
+    ".github/workflows/straylight-bootstrap.yml",
+    ".github/workflows/straylight-merge-guard.yml",
+    ".github/workflows/straylight-reducer.yml",
+    ".github/workflows/straylight-watchdog.yml",
+  ],
+  active_write_runs: [],
   lanes: [{
     issue_number: 1,
     lane_id: "lane-fixture",
@@ -113,7 +126,11 @@ const FIXTURE_FRONTIER = Object.freeze({
   }],
   max_event_created_at: "2026-07-14T00:00:00Z",
 });
-const CTX = Object.freeze({ repository: "0xHoneyJar/loa-straylight", frontier: FIXTURE_FRONTIER });
+const CTX = Object.freeze({
+  repository: "0xHoneyJar/loa-straylight",
+  expected_frozen_main_sha: FIXTURE_FROZEN_SHA,
+  frontier: FIXTURE_FRONTIER,
+});
 
 // =============================================================================
 // The evidence the migration proof rests on.
@@ -254,7 +271,15 @@ describe("B3 — appending a new epoch is allowed", () => {
       // The verdict carries the evidence it rested on, not a claim about it.
       expect(out.frontier).toEqual({
         repository: "0xHoneyJar/loa-straylight",
+        frozen_main_sha: FIXTURE_FROZEN_SHA,
         captured_at: "2026-07-15T00:00:00Z",
+        quiescence_checked_at: "2026-07-14T23:00:00Z",
+        write_capable_workflows: [
+          ".github/workflows/straylight-bootstrap.yml",
+          ".github/workflows/straylight-merge-guard.yml",
+          ".github/workflows/straylight-reducer.yml",
+          ".github/workflows/straylight-watchdog.yml",
+        ],
         lanes: 1,
         events: 1,
         max_event_created_at: "2026-07-14T00:00:00Z",
@@ -405,13 +430,23 @@ describe("B8 — an edit that the runtime lock cannot see is still refused here"
     expect(code).not.toMatch(/readFileSync|new Date|Date\.now|process\.env/);
     expect(code).not.toMatch(/execFileSync|spawn|fetch\(|https?:\/\//);
     const imports = [...code.matchAll(/from "([^"]+)"/g)].map((m) => m[1]);
-    expect(imports.sort()).toEqual(["./canonical.mjs", "./durable-frontier.mjs", "./validate.mjs"]);
-    // ...and the frontier library it leans on is pure by the same standard.
+    expect(imports.sort()).toEqual([
+      "./canonical.mjs", "./durable-frontier.mjs", "./frozen-quiescence.mjs", "./validate.mjs",
+    ]);
+    // ...and the libraries it leans on are pure by the same standard. The
+    // quiescence library is included deliberately: its evidence describes live
+    // workflow runs, so the temptation to have IT do the looking is real. The
+    // looking belongs to scripts/verify-frozen-quiescence.mjs; the library only
+    // judges what the operator brings back.
+    for (const lib of [".straylight/lib/durable-frontier.mjs", ".straylight/lib/frozen-quiescence.mjs"]) {
+      const libSrc = readFileSync(lib, "utf8");
+      const libCode = libSrc.split("\n").map((l) => (l.trim().startsWith("//") ? "" : l)).join("\n");
+      expect(libCode, lib).not.toMatch(/readFileSync|new Date|Date\.now|process\.env|execFileSync|fetch\(/);
+    }
     const frontierSrc = readFileSync(".straylight/lib/durable-frontier.mjs", "utf8");
     const frontierCode = frontierSrc.split("\n").map((l) => (l.trim().startsWith("//") ? "" : l)).join("\n");
-    expect(frontierCode).not.toMatch(/readFileSync|new Date|Date\.now|process\.env|execFileSync|fetch\(/);
     expect([...frontierCode.matchAll(/from "([^"]+)"/g)].map((m) => m[1]).sort())
-      .toEqual(["./lane-target.mjs", "./validate.mjs"]);
+      .toEqual(["./frozen-quiescence.mjs", "./lane-target.mjs", "./validate.mjs"]);
   });
 
   it("J8: with the runtime lock silent (unlocked epochs), the edit is caught anyway", () => {

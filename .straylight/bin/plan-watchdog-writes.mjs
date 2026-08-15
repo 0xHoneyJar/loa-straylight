@@ -5,7 +5,8 @@
 //     --collection-a <dirA> --collection-b <dirB> \
 //     --ledger-a <fileA> --ledger-b <fileB> \
 //     --request-root <dir> --repository <owner/repo> \
-//     --nonce <run-id>-<attempt> --now <iso> [--policy <file>]
+//     --nonce <run-id>-<attempt> --now <iso> \
+//     --source-main-sha-file <file> [--policy <file>]
 //
 // Trusts NOTHING derived earlier: both collections are independently
 // re-verified from raw bytes (ledger reparse, digest re-verification,
@@ -28,6 +29,7 @@ import { readFileSync, writeFileSync, realpathSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadProtocolPolicy } from "../lib/policy-source.mjs";
+import { resolveSourceMainSha } from "../lib/write-authority.mjs";
 import { planWatchdogWrites } from "../lib/watchdog-plan.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -53,6 +55,13 @@ const now = arg("--now");
 for (const [name, v] of [["--collection-a", dirA], ["--collection-b", dirB], ["--ledger-a", ledgerA], ["--ledger-b", ledgerB], ["--request-root", requestRoot], ["--repository", repository], ["--nonce", nonce], ["--now", now]]) {
   if (v === null) fail("usage", `${name} is required`);
 }
+// The commit this sweep's checkout ran at (H-02) — half of the plan's
+// write-authority binding; the planner builds the other half from the policy.
+const resolvedSourceSha = resolveSourceMainSha({
+  literal: arg("--source-main-sha"),
+  filePath: arg("--source-main-sha-file"),
+});
+if (!resolvedSourceSha.ok) fail(resolvedSourceSha.reason, resolvedSourceSha.detail);
 
 function containedReader(dir) {
   let realDir;
@@ -115,6 +124,7 @@ const result = planWatchdogWrites({
   repository,
   policy: loadPolicy(),
   now,
+  source_main_sha: resolvedSourceSha.sha,
 });
 if (!result.ok) fail(result.reason, result.detail);
 

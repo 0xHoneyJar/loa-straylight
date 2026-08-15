@@ -12,16 +12,19 @@
 //
 // TWO PHASES, exactly (the exit-code contract is authoritative):
 //
-// VALIDATION/PREFLIGHT — everything before the first request attempt:
+// VALIDATION/PREFLIGHT — everything before the first MUTATION attempt:
 //   securely open + strict-validate the complete plan; securely open,
 //   read-once, hash, parse, and RETAIN every body; validate every
 //   operation, dependency, target, ordering, and fixed endpoint contract
-//   (lib/write-plan.mjs). Any failure here exits 2. Exit 2 therefore
-//   GUARANTEES: execution never began, no `gh` process was launched, zero
-//   GitHub write attempts occurred.
+//   (lib/write-plan.mjs); then re-establish CURRENT write authority from
+//   GitHub read-only (below). Any failure here exits 2. Exit 2 therefore
+//   GUARANTEES: execution never began and ZERO GitHub WRITE attempts
+//   occurred. It does NOT claim no `gh` process ran — the authority probes
+//   are `gh api` GETs, and stating otherwise would be false.
 //
-// EXECUTION — begins immediately before processing the first validated
-//   operation. After execution begins, every non-warning failure exits 4:
+// EXECUTION — begins immediately before the first mutation is attempted
+//   (not before the authority probes that precede it). After execution
+//   begins, every non-warning failure exits 4:
 //   failure to launch `gh` (spawn error, ENOENT), stdin/transport failure,
 //   a non-zero `gh` result for a fatal operation, and any unexpected
 //   executor exception during operation execution — INCLUDING a launch
@@ -37,7 +40,55 @@
 //   A `gh` API non-zero RESULT remains warning-only exclusively for the
 //   hard-coded derived-label add/remove kinds (write-plan.mjs registry) —
 //   logged, execution continues, and the run still exits 0: labels are
-//   projections that reconverge on the next run (C9).
+//   projections that reconverge on the next run (C9). Authority refusals
+//   are NEVER warning-only: a label is still a durable GitHub write.
+//
+// WRITE-TIME AUTHORITY REVALIDATION (Codex H-02):
+//
+//   A run can be planned before a freeze is merged and reach this executor
+//   after. The plan's own claim that it was valid earlier proves nothing
+//   about now, and this executor used to load no policy at all — so a
+//   committed `enabled: false` was a PLANNING fence, never a durable-write
+//   fence. It is now both.
+//
+//   Immediately before EVERY mutation — not once per plan — this executor
+//   re-establishes current committed authority from GitHub, READ-ONLY, and
+//   independently of the local checkout (the checkout is exactly what the
+//   stale run already believes):
+//
+//     1. GET repos/{repo}                → default branch is still `main`
+//     2. GET .../git/ref/heads/main      → the exact current commit
+//     3. GET .../contents/<policy>?ref=<that commit>
+//                                        → the policy AS COMMITTED there,
+//                                          strict-parsed and accepted with
+//                                          the FULL accepted-epoch lock
+//                                          (lib/policy-source.mjs)
+//
+//   Then lib/write-authority.mjs requires, in order: current main SHA ===
+//   plan.authority.source_main_sha; an independently computed canonical
+//   digest of that committed policy === plan.authority.policy_digest; and
+//   `policy.enabled === true` (literal boolean). Any mismatch refuses
+//   BEFORE the mutation — exit 2 with zero writes if no mutation has yet
+//   been attempted, exit 4 mid-plan.
+//
+//   The reads use the SAME launcher posture as a mutation (shell: false,
+//   fixed argv, minimal env) with argv ["api", <path>] — no -X, so gh's
+//   default GET is the only method these calls can perform. Paths are
+//   constructed by lib/write-authority.mjs; this executor expresses no
+//   path, host, or URL of its own, exactly as plans express none.
+//
+//   RESIDUAL TOCTOU — stated plainly. GitHub offers no compare-and-write on
+//   issue comments or labels: there is no `If-Match` and no conditional
+//   POST. So a window remains between read 3 returning and the mutation
+//   landing, bounded by two API round trips. This is NOT an atomic
+//   compare-and-write, and nothing here should be read as claiming one. A
+//   freeze merged INSIDE that window can still be followed by one durable
+//   write from an in-flight operation. What is now impossible is the H-02
+//   case: a plan continuing to write minutes or hours after a freeze became
+//   the committed authority. Reducing the window further would require an
+//   API primitive GitHub does not offer; the frozen-write quiescence gate
+//   (scripts/verify-frozen-quiescence.mjs) exists precisely because a
+//   freeze plus this check is still not a proof that nothing is in flight.
 //
 // SECURITY POSTURE:
 //   - the plan file is CONTAINED: its parent directory must realpath to
@@ -67,9 +118,11 @@
 //
 // Exit codes: 0 = plan fully executed (fatal ops all succeeded; any
 // warning-only API failures logged and reconverging next run).
-// 2 = validation refusal; ZERO writes were issued. 4 = execution began
-// and a non-warning failure occurred; earlier operations may have
-// executed; the job fails loudly.
+// 2 = preflight refusal, INCLUDING an authority refusal before the first
+// mutation; ZERO writes were issued (read-only probes may have run).
+// 4 = execution began and a non-warning failure occurred — including an
+// authority refusal mid-plan; earlier operations may have executed; the
+// job fails loudly.
 
 import { openSync, fstatSync, readFileSync, closeSync, realpathSync, constants } from "node:fs";
 import { createHash } from "node:crypto";
@@ -77,6 +130,12 @@ import { spawnSync } from "node:child_process";
 import { join, dirname, basename } from "node:path";
 import { parseStrict } from "../lib/strict-json.mjs";
 import { validatePlan, validateOperationBody } from "../lib/write-plan.mjs";
+import { acceptCommittedPolicyText } from "../lib/policy-source.mjs";
+import {
+  authorityStillCurrent, readRepositoryDefaultBranch, readMainRefSha, decodeCommittedFile,
+  repositoryMetadataReadPath, mainRefReadPath, committedPolicyReadPath,
+  COMMITTED_POLICY_REPO_PATH,
+} from "../lib/write-authority.mjs";
 
 function arg(name) {
   const i = process.argv.indexOf(name);
@@ -190,11 +249,8 @@ for (const op of operations) {
   op.retained_bytes = bytes; // the exact validated bytes; the path is never reopened
 }
 
-// =============================================================================
-// EXECUTION PHASE — begins now. No condition below may exit 2.
-// =============================================================================
-
-// Minimal child environment: exactly PATH, HOME, GH_TOKEN.
+// Minimal child environment: exactly PATH, HOME, GH_TOKEN. Shared by the
+// read-only authority probes and by every mutation.
 const childEnv = {};
 for (const key of ["PATH", "HOME", "GH_TOKEN"]) {
   if (typeof process.env[key] === "string") childEnv[key] = process.env[key];
@@ -203,8 +259,92 @@ for (const key of ["PATH", "HOME", "GH_TOKEN"]) {
 const results = [];
 const succeededOps = new Set();
 
+// Flipped immediately before the first MUTATION is attempted. It is the sole
+// discriminator between the two phases: everything before it is preflight
+// (exit 2 permitted, zero writes issued), everything after is execution (no
+// condition may exit 2).
+let executionBegan = false;
+
 function failExecution(refusal, detail) {
   emit({ ok: false, phase: "execution", refusal, detail, results }, 4);
+}
+
+// =============================================================================
+// WRITE-TIME AUTHORITY REVALIDATION — read-only; still preflight until the
+// first mutation is attempted. See the header for the full contract.
+// =============================================================================
+
+// ONE read-only GET. Fixed argv ["api", <path>] — with no -X, gh's default
+// method is the only method this function can perform, so a bug here cannot
+// become a mutation. Same posture as a write: shell false, minimal env, no
+// command-string construction, no interpolation.
+function ghGet(path) {
+  const res = spawnSync("gh", ["api", path], { shell: false, env: childEnv, encoding: "utf8" });
+  if (res.error) {
+    return { ok: false, detail: `gh launch failed: ${String(res.error?.message ?? res.error)}` };
+  }
+  if (typeof res.status !== "number") {
+    return { ok: false, detail: `gh terminated without an exit status (signal ${res.signal ?? "unknown"})` };
+  }
+  if (res.status !== 0) {
+    return { ok: false, detail: `gh exited ${res.status}: ${String(res.stderr ?? "").slice(0, 300)}` };
+  }
+  const parsed = parseStrict(String(res.stdout ?? ""));
+  if (!parsed.ok) return { ok: false, detail: `response is not strict JSON: ${parsed.reason}` };
+  return { ok: true, value: parsed.value };
+}
+
+// Establish what the committed authority IS RIGHT NOW, from GitHub alone. The
+// local checkout is deliberately not consulted: it is the stale run's own
+// belief, so agreeing with it would prove nothing. Every step fails closed —
+// a response the protocol cannot read is not evidence that authority holds.
+function establishCurrentAuthority() {
+  const metaPath = repositoryMetadataReadPath(repository);
+  if (!metaPath.ok) return { ok: false, refusal: metaPath.reason, detail: metaPath.detail };
+  const meta = ghGet(metaPath.path);
+  if (!meta.ok) return { ok: false, refusal: "authority-read-failed", detail: `repository metadata: ${meta.detail}` };
+  const branch = readRepositoryDefaultBranch(meta.value, { repository });
+  if (!branch.ok) return { ok: false, refusal: branch.reason, detail: branch.detail };
+
+  const refPath = mainRefReadPath(repository);
+  if (!refPath.ok) return { ok: false, refusal: refPath.reason, detail: refPath.detail };
+  const ref = ghGet(refPath.path);
+  if (!ref.ok) return { ok: false, refusal: "authority-read-failed", detail: `main ref: ${ref.detail}` };
+  const head = readMainRefSha(ref.value);
+  if (!head.ok) return { ok: false, refusal: head.reason, detail: head.detail };
+
+  // The policy AS COMMITTED AT THAT EXACT COMMIT — not the branch tip, not the
+  // working tree. Accepted through the protocol's one accepting loader, so the
+  // full accepted-epoch digest lock applies to these bytes too.
+  const policyPath = committedPolicyReadPath(repository, head.sha);
+  if (!policyPath.ok) return { ok: false, refusal: policyPath.reason, detail: policyPath.detail };
+  const contents = ghGet(policyPath.path);
+  if (!contents.ok) return { ok: false, refusal: "authority-read-failed", detail: `committed policy: ${contents.detail}` };
+  const file = decodeCommittedFile(contents.value, { expected_path: COMMITTED_POLICY_REPO_PATH });
+  if (!file.ok) return { ok: false, refusal: file.reason, detail: file.detail };
+  const accepted = acceptCommittedPolicyText(file.text, { source: `${COMMITTED_POLICY_REPO_PATH}@${head.sha}` });
+  if (!accepted.ok) return { ok: false, refusal: accepted.refusal, detail: accepted.detail };
+
+  return { ok: true, main_sha: head.sha, policy: accepted.value };
+}
+
+// The gate EVERY mutation passes through. Routed to the phase this executor is
+// actually in: a refusal before the first mutation is a preflight refusal with
+// zero writes issued (exit 2); once a mutation has been attempted, nothing may
+// exit 2 (exit 4), because earlier operations may already have landed.
+function requireCurrentAuthority(op) {
+  const deny = (refusal, detail) => {
+    if (executionBegan) failExecution(refusal, `${op.op_id}: ${detail}`);
+    refuse(refusal, `${op.op_id}: ${detail}`);
+  };
+  const current = establishCurrentAuthority();
+  if (!current.ok) deny(current.refusal, current.detail);
+  const still = authorityStillCurrent({
+    authority: validated.authority,
+    current_main_sha: current.main_sha,
+    current_policy: current.policy,
+  });
+  if (!still.ok) deny(still.refusal, still.detail);
 }
 
 try {
@@ -221,6 +361,18 @@ try {
     const argv = op.body_required
       ? ["api", "-X", op.method, op.path, "--input", "-"]
       : ["api", "-X", op.method, op.path];
+
+    // WRITE-TIME AUTHORITY (H-02) — the last thing that happens before the
+    // mutation. Re-established per operation and never cached across them: a
+    // freeze merged between operation 1 and operation 2 must stop operation 2,
+    // and "we checked at the top of the plan" is exactly the reasoning H-02
+    // was filed against.
+    requireCurrentAuthority(op);
+
+    // EXECUTION BEGINS HERE. Authority has just been proven current and the
+    // next syscall is the durable write itself, so from this line on nothing
+    // may exit 2 — an earlier operation may already have landed.
+    executionBegan = true;
     const res = spawnSync("gh", argv, {
       shell: false,
       input: op.body_required ? op.retained_bytes : undefined,
@@ -254,7 +406,13 @@ try {
     process.stderr.write(`::warning::${op.op_id} (${op.kind}) failed (gh exit ${res.status}); derived labels reconverge on the next run\n`);
   }
 } catch (e) {
-  // Any unexpected executor exception during operation execution.
+  // An unexpected executor exception. If the first mutation was never
+  // attempted this is still preflight — no durable write exists, so it must
+  // refuse as such rather than report a phase it never entered. Once execution
+  // has begun, exit 4 stands: earlier operations may already have landed.
+  if (!executionBegan) {
+    refuse("preflight-exception", String(e?.message ?? e));
+  }
   failExecution("execution-exception", String(e?.message ?? e));
 }
 

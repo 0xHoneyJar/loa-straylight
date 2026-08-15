@@ -49,8 +49,7 @@ import type {
 } from "../../.straylight/lib/watchdog.mjs";
 import {
   makeLane, makeEvent, makeTaskPacket, makeAuditRecord, makePolicy,
-  payloadDigest, REPO, NOW, BASE_SHA, HEAD_SHA, WORKING_BRANCH,
-} from "./_fixtures.js";
+  payloadDigest, REPO, NOW, BASE_SHA, HEAD_SHA, WORKING_BRANCH, MAIN_SHA,} from "./_fixtures.js";
 
 const REDUCER_PLANNER = ".straylight/bin/plan-reducer-writes.mjs";
 const MERGE_GUARD_PLANNER = ".straylight/bin/plan-merge-guard-write.mjs";
@@ -194,7 +193,7 @@ function runMergeGuard(g1: string, g2: string) {
   const probe = run(REDUCER_PLANNER, [
     "--stage", "a", "--probe", "--slot-mode", "any-pr", "--with-checks", "--claim-root", claimRoot,
     "--gather-1", g1, "--gather-2", g2, "--issue-number", "41",
-    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
   ]);
   if (probe.status !== 0) return { ...probe, requestRoot };
   fabricateReadLedger(claimRoot, g1, g2);
@@ -203,7 +202,7 @@ function runMergeGuard(g1: string, g2: string) {
     "--request-root", requestRoot,
     "--claim", join(claimRoot, "claim.json"),
     "--read-ledger", join(claimRoot, "read-ledger.jsonl"),
-    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
   ]);
   return { ...r, requestRoot };
 }

@@ -111,6 +111,25 @@ jobs:
         with:
           node-version: "22"
 
+      # WRITE-AUTHORITY REVISION (Codex H-02). The exact commit this run's
+      # protocol code, policy gate, and reconstruction all come from (the
+      # checkout above is pinned to main). Every write plan this job produces
+      # carries it, and the executor re-reads current main and the policy
+      # committed AT that commit from GitHub before EVERY mutation — so a plan
+      # authored here can no longer write after main has moved, and in
+      # particular cannot write after a freeze has been merged.
+      #
+      # Derived MECHANICALLY from the checkout into a FILE the planners read and
+      # validate themselves; bash never substitutes the value into a planner
+      # argument (J3).
+      - name: Record planning revision (H-02 write authority)
+        id: revision
+        run: |
+          set -euo pipefail
+          SHA_DIR=$(mktemp -d)
+          git rev-parse HEAD > "${SHA_DIR}/source-main-sha"
+          echo "sha_file=${SHA_DIR}/source-main-sha" >> "$GITHUB_OUTPUT"
+
       # Kill switch (ADR-050 §4): while automation is disabled the reducer
       # takes NO action — it posts no result and syncs no labels, so the
       # published projection is FROZEN exactly as it was.
@@ -196,6 +215,7 @@ jobs:
           set +e
           node .straylight/bin/plan-reducer-writes.mjs --stage a --probe \
             --claim-root "${CLAIM_ROOT}" \
+            --source-main-sha-file "${{ steps.revision.outputs.sha_file }}" \
             --gather-1 "${{ steps.gather_a.outputs.g1 }}" \
             --gather-2 "${{ steps.gather_a.outputs.g2 }}" \
             --issue-number "${ISSUE_NUMBER}" \
@@ -251,6 +271,7 @@ jobs:
           echo "request_root=${REQUEST_ROOT}" >> "$GITHUB_OUTPUT"
           set +e
           node .straylight/bin/plan-reducer-writes.mjs --stage a \
+            --source-main-sha-file "${{ steps.revision.outputs.sha_file }}" \
             --gather-1 "${{ steps.gather_a.outputs.g1 }}" \
             --gather-2 "${{ steps.gather_a.outputs.g2 }}" \
             --issue-number "${ISSUE_NUMBER}" \
@@ -350,6 +371,7 @@ jobs:
           echo "request_root=${REQUEST_ROOT}" >> "$GITHUB_OUTPUT"
           set +e
           node .straylight/bin/plan-reducer-writes.mjs --stage b \
+            --source-main-sha-file "${{ steps.revision.outputs.sha_file }}" \
             --gather-1 "${{ steps.gather_b.outputs.g1 }}" \
             --gather-2 "${{ steps.gather_b.outputs.g2 }}" \
             --issue-number "${ISSUE_NUMBER}" \

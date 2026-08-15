@@ -42,7 +42,7 @@ import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { scan } from "../../.straylight/lib/watchdog.mjs";
-import { makeLane, makePolicy, NOW } from "./_fixtures.js";
+import { makeLane, makePolicy, NOW, MAIN_SHA } from "./_fixtures.js";
 
 const LANE_SCAN = ".straylight/bin/lane-scan.mjs";
 const BOOTSTRAP = ".github/workflows/straylight-bootstrap.yml";
@@ -311,7 +311,7 @@ describe("I2 — a malformed / unreadable marker-bearing lane is visible, never 
         "--labels", join(dir, "labels.json"),
         "--base-sha", "009c4afe34f3f7151db4239fe1c69898833440bb",
         "--request-root", dir, "--repository", "0xHoneyJar/loa-straylight",
-        "--nonce", "12345-1",
+        "--nonce", "12345-1", "--source-main-sha", MAIN_SHA,
       ], { encoding: "utf8" });
     } catch (e: any) {
       status = e.status ?? -1;

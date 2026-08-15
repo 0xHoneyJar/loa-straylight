@@ -1,8 +1,11 @@
 // Shared fixtures for the control-plane test suite.
 // Everything here mirrors the published v1 contracts in .straylight/schemas/.
 
+import { readFileSync } from "node:fs";
 import { payloadDigest } from "../../.straylight/lib/canonical.mjs";
 import { nextActorFor } from "../../.straylight/lib/state-machine.mjs";
+import { parseStrict } from "../../.straylight/lib/strict-json.mjs";
+import { policyAuthorityDigest } from "../../.straylight/lib/write-authority.mjs";
 
 export const BASE_SHA = "009c4afe34f3f7151db4239fe1c69898833440bb";
 export const HEAD_SHA = "a93e9f3694c3b8e5f7e6839856b9f347998a49ad";
@@ -295,4 +298,75 @@ export function laneEligibilityPending(overrides: Record<string, any> = {}) {
     verdict: "ACCEPT",
     ...overrides,
   });
+}
+
+// ---------------------------------------------------------------------------
+// H-02 WRITE AUTHORITY (Codex H-02)
+//
+// Every production write plan carries `authority: { source_main_sha,
+// policy_digest }`, and the executor re-establishes both from GitHub before
+// EVERY mutation. Tests therefore need two things: a plan-side authority block,
+// and the three read-only responses that make it current.
+//
+// The policy digest is computed over the REAL COMMITTED POLICY, not over a
+// fixture policy. It has to be: the executor accepts those bytes through
+// `acceptCommittedPolicyText`, which enforces the production accepted-epoch
+// digest locks, and FIXTURE_EPOCH_ID ("epoch-900") can never satisfy them. So
+// the mock's committed-policy response serves the repository's own file and the
+// digest is derived from it — one source of truth, nothing to keep in sync.
+// ---------------------------------------------------------------------------
+
+// A synthetic but well-formed main commit. 40 lowercase hex; a branch name is
+// never acceptable anywhere in the authority path.
+export const MAIN_SHA = "7c9b1f0a4d3e2b5c6a89f0e1d2c3b4a5968778e9";
+
+export const COMMITTED_POLICY_TEXT = readFileSync(
+  new URL("../../.straylight/automation-policy.json", import.meta.url),
+  "utf8",
+);
+
+export const COMMITTED_POLICY_DIGEST = (() => {
+  const parsed = parseStrict(COMMITTED_POLICY_TEXT);
+  if (!parsed.ok) throw new Error(`.straylight/automation-policy.json is not strict JSON: ${parsed.reason}`);
+  return policyAuthorityDigest(parsed.value);
+})();
+
+/** The plan-side authority block. Overrides let a test stale exactly one field. */
+export function planAuthority(overrides: Record<string, any> = {}) {
+  return { source_main_sha: MAIN_SHA, policy_digest: COMMITTED_POLICY_DIGEST, ...overrides };
+}
+
+/**
+ * The three read-only GET responses the executor's authority revalidation
+ * makes, keyed by the exact path it constructs. Serialized as the mock `gh`
+ * would print them.
+ */
+export function authorityResponses(
+  {
+    repository = REPO,
+    main_sha = MAIN_SHA,
+    default_branch = "main",
+    policy_text = COMMITTED_POLICY_TEXT,
+  }: {
+    repository?: string;
+    main_sha?: string;
+    default_branch?: string;
+    policy_text?: string;
+  } = {},
+) {
+  const content = Buffer.from(policy_text, "utf8").toString("base64");
+  return {
+    metadata: JSON.stringify({ full_name: repository, default_branch }),
+    ref: JSON.stringify({ ref: "refs/heads/main", object: { type: "commit", sha: main_sha } }),
+    // GitHub wraps contents base64 at 60 columns; the decoder strips newlines
+    // and then requires the encoding to be canonical, so wrapping here keeps the
+    // fixture faithful to the real response shape.
+    contents: JSON.stringify({
+      type: "file",
+      path: ".straylight/automation-policy.json",
+      encoding: "base64",
+      size: Buffer.byteLength(policy_text, "utf8"),
+      content: (content.match(/.{1,60}/g) ?? []).join("\n") + "\n",
+    }),
+  };
 }

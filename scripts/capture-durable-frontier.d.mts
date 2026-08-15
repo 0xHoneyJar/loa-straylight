@@ -5,6 +5,7 @@
 // access or file writes.
 
 import type { DurableFrontierBuildResult, DurableFrontierLane } from "../.straylight/lib/durable-frontier.d.mts";
+import type { ActiveWriteRun } from "../.straylight/lib/frozen-quiescence.d.mts";
 
 /** A captured lane comment stream, as `parseCommentPages` returns it. */
 export interface CapturedLaneComments {
@@ -23,9 +24,16 @@ export declare function laneFrontierEntry(lane: {
   comments: unknown;
 }): { ok: true; entry: DurableFrontierLane } | { ok: false; reason: string };
 
-/** Assemble a frontier from already-captured lane comment streams. PURE. */
+/**
+ * Assemble a frontier from already-captured lane comment streams and the
+ * frozen-write quiescence evidence the capture ran under. PURE.
+ */
 export declare function frontierFromCapture(input: {
   repository: string;
+  frozen_main_sha: string;
   captured_at: string;
+  quiescence_checked_at: string;
+  write_capable_workflows: string[];
+  active_write_runs: ActiveWriteRun[];
   lanes: CapturedLaneComments[];
 }): DurableFrontierBuildResult;

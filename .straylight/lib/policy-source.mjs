@@ -75,3 +75,30 @@ export function loadProtocolPolicy({ committedPath, overridePath = null }) {
   }
   return { ok: true, value: parsed.value, path, accepted };
 }
+
+// The same accepting decision for bytes that did NOT come from this checkout's
+// filesystem: the committed automation-policy.json as fetched read-only from a
+// named commit (the executor's write-time authority re-check — H-02). Those
+// bytes ARE the protocol's committed policy at that revision, so they take the
+// ACCEPTING branch — structural validation plus the full accepted-epoch digest
+// lock — exactly as the on-disk committed file does. Keeping this decision here
+// rather than in the caller preserves the invariant that one module decides
+// which validator committed policy bytes must satisfy.
+//
+// `source` is a human-readable provenance label for the refusal detail only; it
+// grants nothing. There is deliberately no non-accepting variant: any caller
+// that has committed policy bytes is claiming protocol history.
+export function acceptCommittedPolicyText(text, { source }) {
+  if (typeof text !== "string") {
+    return { ok: false, refusal: "policy-unreadable", detail: `${source}: policy bytes are not text` };
+  }
+  const parsed = parseStrict(text);
+  if (!parsed.ok) {
+    return { ok: false, refusal: "policy-unreadable", detail: `${source}: strict JSON parse failed: ${parsed.reason}` };
+  }
+  const check = acceptPolicy(parsed.value);
+  if (!check.ok) {
+    return { ok: false, refusal: "policy-invalid", detail: `${source}: ${check.errors.join("; ")}` };
+  }
+  return { ok: true, value: parsed.value, source, accepted: true };
+}

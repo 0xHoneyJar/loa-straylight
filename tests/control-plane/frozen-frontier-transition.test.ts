@@ -20,13 +20,25 @@
 //
 //   1. the PREVIOUS committed policy already has enabled === false,
 //   2. the CANDIDATE also has enabled === false,
-//   3. an explicit durable event frontier captured under that freeze, and
-//   4. every appended epoch's governs_from STRICTLY AFTER that frontier.
+//   3. an explicit durable event frontier captured under that freeze, whose
+//      quiescence evidence records NO write-capable run still in flight,
+//   4. the CALLER naming the frozen main SHA the evidence must describe, and
+//   5. every appended epoch's governs_from STRICTLY AFTER that frontier.
 //
 // (1) and (2) together forbid combining the append with the change that first
 // disables automation, so nothing can be written between capturing the evidence
 // and relying on it. Policy evolution becomes a multi-transition operation:
 // freeze → capture → append → re-enable, each merged and audited on its own.
+//
+// (3) and (4) are the H-02 half. "Captured while frozen" used to be prose in a
+// procedure: the document recorded WHEN it was captured but not WHAT it was
+// captured against, and said nothing about whether a run authored while
+// automation was permitted was still executing. Now the frontier names the frozen
+// revision, carries its quiescence evidence, and the operator's command must name
+// the same revision independently — so evidence gathered at another revision, or
+// while the control plane was still moving, is a refusal rather than a document
+// that looks authoritative. Those rules have their own suite
+// (write-authority-fence.test.ts); here they are inputs the H-01 proofs satisfy.
 //
 // WHAT IS AND IS NOT PROVEN HERE. The transition library is pure; it cannot know
 // that GitHub lane discovery was complete. Completeness is provenance, supplied
@@ -85,13 +97,31 @@ const FRONTIER_MAX = "2026-08-13T04:55:42Z";
 const AFTER_FRONTIER = "2026-08-13T04:55:43Z"; // +1s: the earliest legal append
 const BACKDATED = "2026-08-11T18:24:00Z"; // ~10s before comment 5257177236
 
+// THE FROZEN REVISION this suite's evidence is bound to (Codex H-02). Synthetic:
+// the pure guard compares the SHA the OPERATOR named against the one the evidence
+// records, and both are arguments, so no commit in this repository need have it.
+const FROZEN_MAIN_SHA = "0f2a5c8e1b47d93a6058fe1c2d3b4a5968770123";
+const OTHER_FROZEN_SHA = "1111111111111111111111111111111111111111";
+// Quiescence is established BEFORE the capture it licenses.
+const QUIESCENCE_AT = "2026-08-14T11:59:00Z";
+// The closed write-capable set: every workflow that can reach the write executor.
+// Derived mechanically by writeCapableWorkflows() over the repository's own
+// workflow files, which write-authority-fence.test.ts proves equals this list.
+const WRITE_CAPABLE = [
+  ".github/workflows/straylight-bootstrap.yml",
+  ".github/workflows/straylight-merge-guard.yml",
+  ".github/workflows/straylight-reducer.yml",
+  ".github/workflows/straylight-watchdog.yml",
+];
+
 // ONE lock over this suite's own evidence: the canonical digest of the frontier
 // DERIVED from the three committed lane fixtures. It binds every value the
 // frontier is made of — issue numbers, lane ids, last event ids, authenticated
-// times, event counts — so the fixtures cannot drift underneath these proofs. The
-// lane fixtures' own byte locks live with the golden-history suite that owns
-// them; re-pinning them here would be a second copy to drift.
-const DERIVED_FRONTIER_DIGEST = "sha256:3bd9d4998bd0029a7b5829504f8a0c0147a715df5f6ee12a6888e4b41deead34";
+// times, event counts, and since H-02 the frozen revision and quiescence evidence
+// it is bound to — so the fixtures cannot drift underneath these proofs. The lane
+// fixtures' own byte locks live with the golden-history suite that owns them;
+// re-pinning them here would be a second copy to drift.
+const DERIVED_FRONTIER_DIGEST = "sha256:e5b7e2d9f41868301db0b2ae4aa3e152407451aa8ec4a1a5dad47d7b9057fbd0";
 
 // -----------------------------------------------------------------------------
 // Evidence readers
@@ -121,14 +151,40 @@ function capturedLanes(): Array<{ issue_number: number; lane_id: string; comment
 // THE frontier reader. The derived-evidence lock is verified BEFORE the value is
 // handed out, so no proof below can rest on evidence that drifted.
 function realFrontier(): any {
-  const built = frontierFromCapture({ repository: REPO, captured_at: CAPTURED_AT, lanes: capturedLanes() });
+  const built = frontierFromCapture({
+    repository: REPO,
+    frozen_main_sha: FROZEN_MAIN_SHA,
+    captured_at: CAPTURED_AT,
+    quiescence_checked_at: QUIESCENCE_AT,
+    write_capable_workflows: WRITE_CAPABLE,
+    active_write_runs: [],
+    lanes: capturedLanes(),
+  });
   expect(built.ok, built.ok ? "" : (built as any).errors?.join("; ")).toBe(true);
   const frontier = (built as any).frontier;
   expect(payloadDigest(frontier), "the derived durable event frontier changed").toBe(DERIVED_FRONTIER_DIGEST);
   return frontier;
 }
 
-const ctx = (frontier: any = realFrontier(), repository: string = REPO) => ({ repository, frontier });
+// A frontier recording a write-capable run still in flight. Assembled by hand
+// because frontierFromCapture self-validates and would refuse to produce one —
+// which is the property the mutation harness below proves is load-bearing.
+function frontierWithActiveRun(): any {
+  const f = realFrontier();
+  f.active_write_runs = [{
+    workflow: ".github/workflows/straylight-reducer.yml",
+    run_id: 42424242,
+    status: "in_progress",
+    created_at: "2026-08-14T11:58:00Z",
+  }];
+  return f;
+}
+
+const ctx = (
+  frontier: any = realFrontier(),
+  repository: string = REPO,
+  expected_frozen_main_sha: string = FROZEN_MAIN_SHA,
+) => ({ repository, expected_frozen_main_sha, frontier });
 const errorsOf = (r: ReturnType<typeof validatePolicyTransition>) => (r.ok ? [] : r.errors).join("; ");
 
 // -----------------------------------------------------------------------------
@@ -229,7 +285,7 @@ function runCheck(
   sl: string,
   previous: any,
   candidate: any,
-  evidence: { repository?: string; frontier?: any } | null = null,
+  evidence: { repository?: string; expected_frozen_main_sha?: string; frontier?: any } | null = null,
 ): { status: number; out: any } {
   const dir = mkdtempSync(join(tmpdir(), "cp-frontier-args-"));
   const write = (name: string, value: any) => {
@@ -240,6 +296,9 @@ function runCheck(
   const args = ["--previous", write("prev.json", previous), "--candidate", write("cand.json", candidate)];
   if (evidence?.frontier !== undefined) args.push("--frontier", write("frontier.json", evidence.frontier));
   if (evidence?.repository !== undefined) args.push("--repository", evidence.repository);
+  if (evidence?.expected_frozen_main_sha !== undefined) {
+    args.push("--expect-frozen-main-sha", evidence.expected_frozen_main_sha);
+  }
   try {
     const stdout = execFileSync("node", [join(sl, "bin", "policy-transition-check.mjs"), ...args], {
       encoding: "utf8",
@@ -259,6 +318,11 @@ describe("the durable event frontier, derived from the committed lane evidence",
     const f = realFrontier();
     expect(f.schema).toBe(FRONTIER_SCHEMA);
     expect(f.repository).toBe(REPO);
+    // ...and it says which revision it describes, and that nothing was in flight.
+    expect(f.frozen_main_sha).toBe(FROZEN_MAIN_SHA);
+    expect(f.quiescence_checked_at).toBe(QUIESCENCE_AT);
+    expect(f.write_capable_workflows).toEqual(WRITE_CAPABLE);
+    expect(f.active_write_runs).toEqual([]);
     expect(f.lanes.map((l: any) => l.issue_number)).toEqual([118, 120, 122]);
     expect(f.lanes.map((l: any) => l.lane_id)).toEqual(["lane-phase-49p", "lane-phase-49q", "lane-phase-50a"]);
     expect(f.lanes.map((l: any) => l.event_count)).toEqual([14, 14, 124]);
@@ -347,6 +411,119 @@ describe("the durable event frontier, derived from the committed lane evidence",
     if (!broken.ok) expect(broken.reason).toMatch(/payload unreadable/);
   });
 
+  // ---------------------------------------------------------------------------
+  // Codex (low): EQUAL created_at needs a deterministic tie-breaker
+  //
+  // GitHub's comment created_at has one-second resolution, so two events on one
+  // lane can share it exactly. Time alone therefore does not totally order the
+  // candidates, and "keep the first one seen" made last_event_comment_id a
+  // function of ENUMERATION ORDER: two captures of identical history could
+  // disagree on the recorded id while agreeing on the bound. The greater comment
+  // id now breaks the tie.
+  //
+  // This is an IDENTITY fix, not a new authority rule. Time remains the primary
+  // key; both tied candidates carry the same time, so no epoch boundary moves.
+  // ---------------------------------------------------------------------------
+
+  const eventComment = (id: number, created_at: string) => ({
+    id,
+    user: "eileen1337",
+    created_at,
+    updated_at: created_at,
+    body: "<!-- straylight:event:v1 -->\n```json\n" +
+      JSON.stringify({ schema: "straylight.event.v1", seq: id }) + "\n```",
+  });
+
+  const entryFor = (comments: any[]) => {
+    const built = laneFrontierEntry({ issue_number: 999, lane_id: "lane-synthetic", comments });
+    expect(built.ok, built.ok ? "" : (built as any).reason).toBe(true);
+    return (built as any).entry;
+  };
+
+  it("Codex low: equal created_at is broken deterministically by the greater comment id", () => {
+    const tied = [
+      eventComment(5257177236, "2026-08-13T04:55:42Z"),
+      eventComment(5257220713, "2026-08-13T04:55:42Z"), // same second, greater id
+    ];
+    const entry = entryFor(tied);
+    expect(entry.last_event_created_at).toBe("2026-08-13T04:55:42Z");
+    expect(entry.last_event_comment_id).toBe(5257220713);
+    expect(entry.event_count).toBe(2);
+    // Reversed enumeration produces the SAME entry — that is the whole point.
+    expect(entryFor([...tied].reverse())).toEqual(entry);
+  });
+
+  it("Codex low: the entry is identical across EVERY enumeration order", () => {
+    // Three events, two of them tied, one earlier — all 6 permutations.
+    const comments = [
+      eventComment(11, "2026-08-13T04:55:41Z"),
+      eventComment(22, "2026-08-13T04:55:42Z"),
+      eventComment(33, "2026-08-13T04:55:42Z"),
+    ];
+    const permutations = (xs: any[]): any[][] =>
+      xs.length <= 1 ? [xs] : xs.flatMap((x, i) =>
+        permutations([...xs.slice(0, i), ...xs.slice(i + 1)]).map((rest) => [x, ...rest]));
+    const all = permutations(comments);
+    expect(all).toHaveLength(6);
+    const expected = {
+      issue_number: 999,
+      lane_id: "lane-synthetic",
+      last_event_comment_id: 33,
+      last_event_created_at: "2026-08-13T04:55:42Z",
+      event_count: 3,
+    };
+    for (const order of all) {
+      expect(entryFor(order), order.map((c: any) => c.id).join(",")).toEqual(expected);
+    }
+  });
+
+  it("Codex low: TIME remains the primary key — a later event wins with a SMALLER id", () => {
+    // Ids are monotonic per REPOSITORY, not per lane, so a later event on this
+    // lane can legitimately carry a smaller id than an earlier one only if the
+    // history was constructed adversarially. Either way the bound follows time.
+    const entry = entryFor([
+      eventComment(900, "2026-08-13T04:55:42Z"),
+      eventComment(100, "2026-08-13T05:00:00Z"), // later second, smaller id
+    ]);
+    expect(entry.last_event_created_at).toBe("2026-08-13T05:00:00Z");
+    expect(entry.last_event_comment_id).toBe(100);
+    // ...and the tie-breaker never promotes a smaller id at an EARLIER time.
+    const earlier = entryFor([
+      eventComment(100, "2026-08-13T05:00:00Z"),
+      eventComment(900, "2026-08-13T04:55:42Z"),
+    ]);
+    expect(earlier).toEqual(entry);
+  });
+
+  it("Codex low: equivalent SPELLINGS of one tied instant still order by id", () => {
+    // Sub-second spellings compare as instants, so ".000Z" ties with bare "Z"
+    // rather than sorting after it.
+    const entry = entryFor([
+      eventComment(7, "2026-08-13T04:55:42.000Z"),
+      eventComment(6, "2026-08-13T04:55:42Z"),
+    ]);
+    expect(entry.last_event_comment_id).toBe(7);
+    expect(entry.last_event_created_at).toBe("2026-08-13T04:55:42.000Z");
+    // A genuinely later sub-second instant is later, not a tie.
+    const strictlyLater = entryFor([
+      eventComment(7, "2026-08-13T04:55:42.000Z"),
+      eventComment(6, "2026-08-13T04:55:42.500Z"),
+    ]);
+    expect(strictlyLater.last_event_comment_id).toBe(6);
+    expect(strictlyLater.last_event_created_at).toBe("2026-08-13T04:55:42.500Z");
+  });
+
+  it("Codex low: the derived global maximum is unchanged by the tie-breaker", () => {
+    // The frontier's authority is the TIME bound. Two lanes whose entries differ
+    // only in which tied id they recorded produce the same max_event_created_at.
+    const shared = "2026-08-13T04:55:42Z";
+    const a = entryFor([eventComment(10, shared), eventComment(20, shared)]);
+    const b = entryFor([eventComment(20, shared), eventComment(10, shared)]);
+    expect(a.last_event_created_at).toBe(b.last_event_created_at);
+    expect(a.last_event_comment_id).toBe(b.last_event_comment_id);
+    expect(a.last_event_created_at).toBe(shared);
+  });
+
   it("T12: a malformed, ambiguous, or incoherent frontier is refused", () => {
     const cases: Array<[string, (f: any) => any, RegExp]> = [
       ["not an object", () => "frontier", /not an object/],
@@ -374,6 +551,43 @@ describe("the durable event frontier, derived from the committed lane evidence",
         return f;
       }, /bounds nothing/],
       ["captured before the latest event", (f) => { f.captured_at = "2026-08-01T00:00:00Z"; return f; }, /precedes the latest observed event/],
+      // H-02: the frozen-revision binding and the quiescence evidence are part of
+      // what makes a frontier well-formed, not commentary alongside it.
+      ["missing frozen_main_sha", (f) => { delete f.frozen_main_sha; return f; }, /frontier\.frozen_main_sha: missing/],
+      ["frozen_main_sha is a branch name", (f) => { f.frozen_main_sha = "main"; return f; }, /frontier\.frozen_main_sha.*full 40-hex commit SHA/],
+      ["frozen_main_sha abbreviated", (f) => { f.frozen_main_sha = FROZEN_MAIN_SHA.slice(0, 7); return f; }, /frontier\.frozen_main_sha/],
+      ["frozen_main_sha uppercased", (f) => { f.frozen_main_sha = FROZEN_MAIN_SHA.toUpperCase(); return f; }, /frontier\.frozen_main_sha/],
+      ["missing quiescence_checked_at", (f) => { delete f.quiescence_checked_at; return f; }, /frontier\.quiescence_checked_at: missing/],
+      ["quiescence checked AFTER the capture", (f) => { f.quiescence_checked_at = "2026-08-14T12:00:01Z"; return f; },
+        /quiescence must be established BEFORE the capture it licenses/],
+      ["empty write-capable set", (f) => { f.write_capable_workflows = []; return f; }, /non-empty array of the write-capable workflow paths/],
+      ["write-capable set unsorted", (f) => { f.write_capable_workflows = [...WRITE_CAPABLE].reverse(); return f; },
+        /does not sort strictly after/],
+      ["write-capable set duplicated", (f) => { f.write_capable_workflows = [WRITE_CAPABLE[0], WRITE_CAPABLE[0]]; return f; },
+        /does not sort strictly after/],
+      ["a write-capable entry is not a workflow path", (f) => { f.write_capable_workflows = ["reducer"]; return f; },
+        /expected \.github\/workflows\/<file>\.yml/],
+      ["missing active_write_runs", (f) => { delete f.active_write_runs; return f; }, /frontier\.active_write_runs: missing/],
+      // THE admissibility rule: a run still in flight is a valid observation and a
+      // refusal to proceed, never a document to append against.
+      ["a write-capable run still in flight", () => frontierWithActiveRun(),
+        /1 write-capable run\(s\) were still in flight \(\.github\/workflows\/straylight-reducer\.yml#42424242\).*not quiescent/s],
+      ["...and the refusal says not to cancel it", () => frontierWithActiveRun(), /do not cancel them/],
+      ["a COMPLETED run recorded as active", (f) => {
+        const active = frontierWithActiveRun();
+        active.active_write_runs[0].status = "completed";
+        return active;
+      }, /is the terminal status — a completed run is not an active write-capable run/],
+      ["active runs out of id order", (f) => {
+        const active = frontierWithActiveRun();
+        active.active_write_runs.push({ ...active.active_write_runs[0], run_id: 1 });
+        return active;
+      }, /does not sort strictly after/],
+      ["an unknown key inside an active run", (f) => {
+        const active = frontierWithActiveRun();
+        active.active_write_runs[0].note = "x";
+        return active;
+      }, /active_write_runs\[0\]\.note: unknown key/],
     ];
     for (const [label, mutate, pattern] of cases) {
       const v = validateDurableFrontier(mutate(realFrontier()));
@@ -480,6 +694,48 @@ describe("v2 → v2 APPEND: the frozen frontier cutover", () => {
     expect(errorsOf(extra)).toMatch(/context\.reviewed_by: unknown key/);
   });
 
+  it("H2-T11: the caller must NAME the frozen revision, and the evidence must agree", () => {
+    const previous = policyOver([unlocked("epoch-901")], false);
+    const candidate = policyOver([unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER })], false);
+
+    // Unnamed: an append authorized against a SHA the operator never typed is an
+    // append authorized against whatever the capture happened to see.
+    const unnamed = validatePolicyTransition(previous, candidate, { repository: REPO, frontier: realFrontier() } as any);
+    expect(unnamed.ok).toBe(false);
+    expect(errorsOf(unnamed)).toMatch(/context\.expected_frozen_main_sha: undefined/);
+    expect(errorsOf(unnamed)).toMatch(/never a branch name/);
+
+    // A branch name is not a revision: it names wherever the branch points now.
+    const branch = validatePolicyTransition(previous, candidate, ctx(realFrontier(), REPO, "main"));
+    expect(branch.ok).toBe(false);
+    expect(errorsOf(branch)).toMatch(/context\.expected_frozen_main_sha: "main"/);
+
+    // Named, well-formed, and NOT the revision the evidence describes.
+    const mismatch = validatePolicyTransition(previous, candidate, ctx(realFrontier(), REPO, OTHER_FROZEN_SHA));
+    expect(mismatch.ok).toBe(false);
+    expect(errorsOf(mismatch)).toMatch(
+      new RegExp(`context\\.expected_frozen_main_sha: ${OTHER_FROZEN_SHA} does not match frontier\\.frozen_main_sha "${FROZEN_MAIN_SHA}"`),
+    );
+    expect(errorsOf(mismatch)).toMatch(/captured against a different revision/);
+
+    // Agreeing is what licenses it.
+    const agreed = validatePolicyTransition(previous, candidate, ctx());
+    expect(agreed.ok, errorsOf(agreed)).toBe(true);
+  });
+
+  it("H2-T7/H2-T8: evidence recording a write-capable run in flight cannot authorize an append", () => {
+    const out = validatePolicyTransition(
+      policyOver([unlocked("epoch-901")], false),
+      policyOver([unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER })], false),
+      ctx(frontierWithActiveRun()),
+    );
+    expect(out.ok).toBe(false);
+    expect(errorsOf(out)).toMatch(/context\.frontier\.active_write_runs: 1 write-capable run\(s\) were still in flight/);
+    // Every other part of the evidence is sound: the freeze, the repository, the
+    // named revision, and a prospective boundary. Only quiescence is missing.
+    expect(errorsOf(out)).not.toMatch(/ALREADY FROZEN|not strictly after|expected_frozen_main_sha/);
+  });
+
   it("the repository binding is a PROVENANCE boundary, and the library says so", () => {
     // Honest limit, recorded as a test so it cannot quietly be overclaimed: a
     // policy file carries no repository identity, so the pure library cannot know
@@ -529,7 +785,10 @@ describe("v2 → v2 APPEND: the frozen frontier cutover", () => {
       expect(after.appended).toEqual(["epoch-902"]);
       expect(after.frontier).toEqual({
         repository: REPO,
+        frozen_main_sha: FROZEN_MAIN_SHA,
         captured_at: CAPTURED_AT,
+        quiescence_checked_at: QUIESCENCE_AT,
+        write_capable_workflows: WRITE_CAPABLE,
         lanes: 3,
         events: 152,
         max_event_created_at: FRONTIER_MAX,
@@ -776,7 +1035,8 @@ describe("the 48-hour lease change as a four-transition procedure (simulation)",
     expect(bc.out.kind).toBe("v2-append");
     expect(bc.out.appended).toEqual(["epoch-002"]);
     expect(bc.out.frontier).toMatchObject({
-      repository: REPO, lanes: 3, events: 152,
+      repository: REPO, frozen_main_sha: FROZEN_MAIN_SHA, lanes: 3, events: 152,
+      quiescence_checked_at: QUIESCENCE_AT, write_capable_workflows: WRITE_CAPABLE,
       max_event_created_at: FRONTIER_MAX, appended_governs_from: AFTER_FRONTIER,
     });
     expect(bc.out.candidate_current_admission.lease_duration_minutes).toBe(2880);
@@ -885,8 +1145,8 @@ describe("H-01 mutation harness — each part of the cutover is proven necessary
     mutations: Mutation[];
     previous: () => any;
     candidate: () => any;
-    /** Whether the operator supplies real frontier evidence with this attempt. */
-    evidence: "real-frontier" | "none";
+    /** What the operator supplies as transition evidence with this attempt. */
+    evidence: "real-frontier" | "none" | "wrong-frozen-sha" | "run-in-flight";
     realRefusal: RegExp;
   }> = [
     {
@@ -925,10 +1185,42 @@ describe("H-01 mutation harness — each part of the cutover is proven necessary
       evidence: "none", // no evidence at all: exactly the pre-patch H-01 shape
       realRefusal: /ALREADY FROZEN|required for an admission append/,
     },
+    // M4 and M5 are the H-02 half of the cutover: without them the evidence stops
+    // being bound to a revision and stops requiring the plane to have come to rest.
+    {
+      label: "M4 — stop comparing the named frozen revision to the evidence",
+      mutations: [{
+        file: "lib/policy-transition.mjs",
+        from: "        context.expected_frozen_main_sha !== bound.frozen_main_sha",
+        to: "        false",
+      }],
+      previous,
+      candidate: () => prospectiveCandidate(false),
+      evidence: "wrong-frozen-sha",
+      realRefusal: /does not match frontier\.frozen_main_sha/,
+    },
+    {
+      label: "M5 — stop refusing evidence that records a write-capable run in flight",
+      mutations: [{
+        file: "lib/frozen-quiescence.mjs",
+        from: "    if (runs.length > 0) {",
+        to: "    if (false) {",
+      }],
+      previous,
+      candidate: () => prospectiveCandidate(false),
+      evidence: "run-in-flight",
+      realRefusal: /write-capable run\(s\) were still in flight/,
+    },
   ];
 
-  const evidenceFor = (m: { evidence: "real-frontier" | "none" }) =>
-    m.evidence === "real-frontier" ? ctx() : null;
+  const evidenceFor = (m: { evidence: "real-frontier" | "none" | "wrong-frozen-sha" | "run-in-flight" }) => {
+    switch (m.evidence) {
+      case "none": return null;
+      case "wrong-frozen-sha": return ctx(realFrontier(), REPO, OTHER_FROZEN_SHA);
+      case "run-in-flight": return ctx(frontierWithActiveRun());
+      default: return ctx();
+    }
+  };
 
   it("the unmutated staged build refuses every one of these candidates", () => {
     const sl = stageStraylight();
@@ -975,7 +1267,10 @@ describe("the frontier capture utility", () => {
 
   it("performs GET operations only — no write verb, no mutation endpoint", () => {
     const c = code();
-    expect(c).toMatch(/execFileSync\("gh", \["api", "--paginate", path\]/);
+    // Two GET shapes and no third: paginated page streams, and single documents
+    // (the main ref, read WITHOUT --paginate so the parser sees one document).
+    expect(c).toMatch(/const argv = paginate \? \["api", "--paginate", path\] : \["api", path\];/);
+    expect(c).toMatch(/execFileSync\("gh", argv, \{/);
     expect(c).not.toMatch(/--method|-X\b|-f\b|"POST"|"PATCH"|"PUT"|"DELETE"/);
     expect(c).not.toMatch(/gh pr |gh issue |gh label|--add-label|--remove-label|--merge/);
   });
@@ -1001,8 +1296,18 @@ describe("the frontier capture utility", () => {
 
   it("emits deterministic JSON: lanes sorted by issue number", () => {
     const shuffled = [...capturedLanes()].reverse();
-    const built = frontierFromCapture({ repository: REPO, captured_at: CAPTURED_AT, lanes: shuffled });
-    expect(built.ok).toBe(true);
+    const built = frontierFromCapture({
+      repository: REPO,
+      frozen_main_sha: FROZEN_MAIN_SHA,
+      captured_at: CAPTURED_AT,
+      quiescence_checked_at: QUIESCENCE_AT,
+      // Unsorted on the way in: the assembler sorts, so the recorded evidence is
+      // byte-identical whichever order the scan happened to produce.
+      write_capable_workflows: [...WRITE_CAPABLE].reverse(),
+      active_write_runs: [],
+      lanes: shuffled,
+    });
+    expect(built.ok, built.ok ? "" : (built as any).errors?.join("; ")).toBe(true);
     if (built.ok) {
       expect(built.frontier.lanes.map((l: any) => l.issue_number)).toEqual([118, 120, 122]);
       expect(payloadDigest(built.frontier)).toBe(DERIVED_FRONTIER_DIGEST);

@@ -9,6 +9,12 @@
 //     appearance anywhere is an unknown-field refusal. Best-effort
 //     semantics derive EXCLUSIVELY from the hard-coded operation-kind
 //     registry below; nothing in a plan can widen them.
+//   - the REQUIRED write-authority binding (`authority`): the exact commit
+//     the plan was produced at and the canonical digest of the accepted
+//     policy that governed the planning. Shape rules live in
+//     lib/write-authority.mjs; the executor re-establishes both from
+//     GitHub before every mutation, because a plan that was authorized
+//     earlier is not a plan that is authorized now (Codex H-02).
 //   - the operation-kind allowlist with fixed method/path templates —
 //     a plan carries NO method, path, URL, host, or endpoint anywhere;
 //     the executor constructs the request path from the validated fields
@@ -33,6 +39,7 @@ import { parseStrict } from "./strict-json.mjs";
 import { MARKERS, extractPayload, hasMarker } from "./markers.mjs";
 import { validateEvent, validateLane } from "./validate.mjs";
 import { STATES, ROLES } from "./state-machine.mjs";
+import { authorityShapeErrors } from "./write-authority.mjs";
 
 export const WRITE_PLAN_SCHEMA = "straylight.write-plan.v1";
 
@@ -252,7 +259,12 @@ export function checkConstructedPath(path) {
   return null;
 }
 
-const PLAN_KEYS = Object.freeze(["schema", "plan_id", "nonce", "repository", "operations"]);
+// `authority` is REQUIRED on every plan (Codex H-02): the exact commit the
+// plan was produced at plus the canonical digest of the accepted policy that
+// governed the planning. There is no optional and no legacy plan shape — a
+// plan with no authority binding cannot be executed, because the executor
+// would have nothing to re-establish at write time. See lib/write-authority.mjs.
+const PLAN_KEYS = Object.freeze(["schema", "plan_id", "nonce", "repository", "authority", "operations"]);
 
 // Validate the parsed plan document against the closed schema, the fixed
 // repository/nonce expectations, and every structural rule. Returns
@@ -289,6 +301,9 @@ export function validatePlan(plan, { repository, nonce } = {}) {
       (typeof plan.nonce === "string" && !plan.plan_id.startsWith(`${plan.nonce}-`))) {
     errors.push(err("plan-id-invalid", "plan_id must be '<nonce>-<planner-name>[-<stage>]'"));
   }
+  // The write-authority binding, structurally. Whether it is STILL current is
+  // a question only the executor can ask, and it asks GitHub, not the plan.
+  for (const e of authorityShapeErrors(plan.authority)) errors.push(err(e.code, e.detail));
   if (!Array.isArray(plan.operations)) {
     errors.push(err("operations-invalid", "operations is not an array"));
     return { ok: false, errors };
@@ -460,7 +475,9 @@ export function validatePlan(plan, { repository, nonce } = {}) {
   });
 
   if (errors.length > 0) return { ok: false, errors };
-  return { ok: true, operations: prepared };
+  // The validated authority travels with the validated operations so the
+  // executor never re-reads it out of the raw plan document.
+  return { ok: true, authority: plan.authority, operations: prepared };
 }
 
 // ---------------------------------------------------------------------------

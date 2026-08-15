@@ -57,6 +57,25 @@ jobs:
         with:
           node-version: "22"
 
+      # WRITE-AUTHORITY REVISION (Codex H-02). The exact commit this run's
+      # protocol code, policy gate, and reconstruction all come from (the
+      # checkout above is pinned to main). The write plan this job produces
+      # carries it, and the executor re-reads current main and the policy
+      # committed AT that commit from GitHub before EVERY mutation — so a plan
+      # authored here can no longer write after main has moved, and in
+      # particular cannot write after a freeze has been merged.
+      #
+      # Derived MECHANICALLY from the checkout into a FILE the planner reads and
+      # validates itself; bash never substitutes the value into a planner
+      # argument (J3).
+      - name: Record planning revision (H-02 write authority)
+        id: revision
+        run: |
+          set -euo pipefail
+          SHA_DIR=$(mktemp -d)
+          git rev-parse HEAD > "${SHA_DIR}/source-main-sha"
+          echo "sha_file=${SHA_DIR}/source-main-sha" >> "$GITHUB_OUTPUT"
+
       # POLICY AUTHORITY: the canonical executable gate (policy-gate.mjs →
       # validatePolicy) validates the COMPLETE committed policy and decides
       # on LITERAL BOOLEANS — jq raw textual output is never policy
@@ -136,6 +155,7 @@ jobs:
           echo "request_root=${REQUEST_ROOT}" >> "$GITHUB_OUTPUT"
           set +e
           node .straylight/bin/plan-bootstrap-write.mjs \
+            --source-main-sha-file "${{ steps.revision.outputs.sha_file }}" \
             --pages-1 /tmp/issue-pages-1.json \
             --pages-2 /tmp/issue-pages-2.json \
             --labels /tmp/label-pages.json \

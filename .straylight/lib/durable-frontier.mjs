@@ -20,17 +20,37 @@
 // An appended epoch must begin strictly AFTER the global maximum of those
 // authenticated times. Then it governs only events that do not yet exist.
 //
+// BOUND TO A FROZEN REVISION (Codex H-02)
+//
+// "Captured while frozen" was, until H-02, prose in a procedure rather than a
+// field in the evidence. The document said WHEN it was captured but not WHAT it
+// was captured against, so a frontier gathered before the freeze landed — or
+// while a workflow run authored under `enabled: true` was still in flight — was
+// indistinguishable from one gathered after the control plane had actually come
+// to rest. So the frontier now NAMES the frozen revision (`frozen_main_sha`) and
+// carries the quiescence evidence that licensed the capture: when quiescence was
+// verified, the closed set of workflows able to reach the write executor, and the
+// write-capable runs still in flight — which for an admissible frontier is the
+// empty list (lib/frozen-quiescence.mjs). The transition CLI must then name the
+// expected frozen SHA independently and the two must agree, so a frontier
+// captured against a different revision cannot be presented as this one's.
+//
 // WHAT THIS CANNOT PROVE
 //
 // This module is pure. It cannot verify that lane DISCOVERY was complete — that
 // no cp-lane was omitted from `lanes`, and that no event was posted after the
 // capture. Completeness is PROVENANCE, established at authorization time: the
 // capture runs read-only against GitHub while the control plane is already
-// frozen (`enabled: false`), its output is committed as evidence, and the
-// operator's exact-SHA audit is what accepts it. What this module does is make
-// the evidence explicit, self-consistent, and mechanically checkable, so that a
-// missing, malformed, stale, or doctored frontier is a REFUSAL rather than a
-// silent omission.
+// frozen (`enabled: false`) and quiescent, its output is committed as evidence,
+// and the operator's exact-SHA audit is what accepts it. What this module does is
+// make the evidence explicit, self-consistent, and mechanically checkable, so
+// that a missing, malformed, stale, or doctored frontier is a REFUSAL rather than
+// a silent omission.
+//
+// Nor is `captured_at` a transactional snapshot, and the quiescence fields do not
+// make it one: GitHub can create a write-capable run the instant after the last
+// page is read. Two agreeing scans and an unmoved main are strong evidence, and
+// the cutover re-verifies after the capture; none of that is atomicity.
 //
 // The stored `max_event_created_at` is a legibility aid for the operator reading
 // the file. It is NEVER trusted: the maximum is recomputed from the lane entries
@@ -38,10 +58,21 @@
 
 import { parseIsoInstant, REPO_RE } from "./validate.mjs";
 import { LANE_ID_RE } from "./lane-target.mjs";
+import { FRONTIER_EVIDENCE_KEY_MAP, quiescenceEvidenceErrors } from "./frozen-quiescence.mjs";
 
 export const FRONTIER_SCHEMA = "straylight.durable-event-frontier.v1";
 
-const FRONTIER_KEYS = ["schema", "repository", "captured_at", "lanes", "max_event_created_at"];
+const FRONTIER_KEYS = [
+  "schema",
+  "repository",
+  "frozen_main_sha",
+  "captured_at",
+  "quiescence_checked_at",
+  "write_capable_workflows",
+  "active_write_runs",
+  "lanes",
+  "max_event_created_at",
+];
 const LANE_KEYS = ["issue_number", "lane_id", "last_event_comment_id", "last_event_created_at", "event_count"];
 
 function isPlainObject(v) {
@@ -105,6 +136,21 @@ export function validateDurableFrontier(frontier) {
     errors.push(
       `frontier.captured_at: ${JSON.stringify(frontier.captured_at)} — expected a UTC instant ` +
         "YYYY-MM-DDTHH:MM:SS[.mmm]Z",
+    );
+  }
+
+  // The frozen revision this capture was gathered against, and the quiescence
+  // that licensed it. One shared implementation with the standalone quiescence
+  // document, so the two cannot drift about what the evidence must say — and the
+  // "no write-capable run in flight" rule is enforced HERE, at validation, not
+  // only in the tool that gathered it.
+  errors.push(...quiescenceEvidenceErrors(frontier, { at: "frontier", keys: FRONTIER_EVIDENCE_KEY_MAP }));
+  const quiescenceAt = parseIsoInstant(frontier.quiescence_checked_at);
+  if (capturedAt !== null && quiescenceAt !== null && quiescenceAt > capturedAt) {
+    errors.push(
+      `frontier.quiescence_checked_at: ${JSON.stringify(frontier.quiescence_checked_at)} is later than ` +
+        `captured_at ${JSON.stringify(frontier.captured_at)} — quiescence must be established BEFORE the capture ` +
+        "it licenses; evidence gathered afterwards says nothing about the state the capture ran in",
     );
   }
 
@@ -226,7 +272,10 @@ export function validateDurableFrontier(frontier) {
     ok: true,
     value: {
       repository: frontier.repository,
+      frozen_main_sha: frontier.frozen_main_sha,
       captured_at: frontier.captured_at,
+      quiescence_checked_at: frontier.quiescence_checked_at,
+      write_capable_workflows: frontier.write_capable_workflows.slice(),
       lane_count: laneCount,
       event_count: eventCount,
       max_event_created_at: derived.iso,
@@ -236,13 +285,23 @@ export function validateDurableFrontier(frontier) {
 }
 
 /**
- * Assemble a frontier document from captured lane entries, deriving the global
- * maximum mechanically so no caller hand-computes it. Lanes are sorted by issue
- * number for deterministic output. Returns { ok: true, frontier, value } or
- * { ok: false, errors } — the assembled document is validated before it is
- * returned, so a caller cannot emit a frontier this module would refuse.
+ * Assemble a frontier document from captured lane entries and the quiescence
+ * evidence the capture ran under, deriving the global maximum mechanically so no
+ * caller hand-computes it. Lanes are sorted by issue number for deterministic
+ * output. Returns { ok: true, frontier, value } or { ok: false, errors } — the
+ * assembled document is validated before it is returned, so a caller cannot emit
+ * a frontier this module would refuse (including one whose quiescence evidence
+ * records a run still in flight).
  */
-export function buildDurableFrontier({ repository, captured_at, lanes } = {}) {
+export function buildDurableFrontier({
+  repository,
+  frozen_main_sha,
+  captured_at,
+  quiescence_checked_at,
+  write_capable_workflows,
+  active_write_runs,
+  lanes,
+} = {}) {
   const entries = Array.isArray(lanes) ? lanes.slice() : lanes;
   if (Array.isArray(entries) && entries.every((l) => isPlainObject(l) && Number.isInteger(l.issue_number))) {
     entries.sort((a, b) => a.issue_number - b.issue_number);
@@ -251,7 +310,13 @@ export function buildDurableFrontier({ repository, captured_at, lanes } = {}) {
   const frontier = {
     schema: FRONTIER_SCHEMA,
     repository,
+    frozen_main_sha,
     captured_at,
+    quiescence_checked_at,
+    write_capable_workflows: Array.isArray(write_capable_workflows)
+      ? write_capable_workflows.slice().sort()
+      : write_capable_workflows,
+    active_write_runs,
     lanes: entries,
     max_event_created_at: derived.iso,
   };

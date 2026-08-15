@@ -53,22 +53,48 @@
 // The normative version is .straylight/README.md § "Admission policy history";
 // the rules are in .straylight/lib/policy-transition.mjs.
 //
-//   1. Merge a LIVE-ONLY transition setting `enabled: false`, and confirm the
-//      freeze is the committed state on main.
-//   2. Capture the durable event frontier read-only, under that freeze:
-//      `node scripts/capture-durable-frontier.mjs --out /tmp/frontier.json`.
-//   3. APPEND the new epoch to `admission_history` in automation-policy.json,
+//   1. Merge a LIVE-ONLY transition setting `enabled: false`. Record the exact
+//      merge commit as FROZEN_SHA and confirm it is the committed head of main.
+//      A merged freeze stops NEW work from being planned; it does not by itself
+//      stop a run that started earlier (see step 2, and § "What a freeze does
+//      and does not stop" in .straylight/README.md).
+//   2. VERIFY QUIESCENCE at that revision, read-only:
+//      `node scripts/verify-frozen-quiescence.mjs --repo <owner/name>
+//         --frozen-main-sha $FROZEN_SHA --out /tmp/quiescence.json`
+//      It refuses while any run of any write-capable workflow is in a
+//      non-terminal state, and names the run ids. WAIT for them; do NOT cancel
+//      them — cancelling a run mid-plan is its own hazard.
+//   3. CAPTURE the durable event frontier read-only, bound to that revision and
+//      that evidence:
+//      `node scripts/capture-durable-frontier.mjs --repo <owner/name>
+//         --frozen-main-sha $FROZEN_SHA --quiescence /tmp/quiescence.json
+//         --out /tmp/frontier.json`
+//      It refuses if main is not still exactly FROZEN_SHA, before AND after the
+//      lane reads.
+//   4. RE-VERIFY quiescence (step 2 again) after the capture. Neither tool is a
+//      transactional snapshot: a run created between the scan and the capture is
+//      only visible to a later scan. If it now refuses, or main has moved, go
+//      back to step 1 — do not reuse the captured frontier.
+//   5. APPEND the new epoch to `admission_history` in automation-policy.json,
 //      with a `governs_from` strictly after the previous epoch's AND strictly
 //      after the frontier's `max_event_created_at`. Keep `enabled: false`.
-//   4. APPEND its lock entry below (its digest is `payloadDigest(epoch)`).
-//   5. Update the top-level projection to deep-equal the new final epoch.
+//      APPEND its lock entry below (its digest is `payloadDigest(epoch)`), and
+//      update the top-level projection to deep-equal the new final epoch.
 //   6. Run `node .straylight/bin/policy-transition-check.mjs` against the
-//      previous committed policy, WITH `--frontier` and `--repository`: the
-//      whole previous history must remain a canonical prefix of the new one,
-//      and the new boundary must clear the frontier. One epoch per transition.
-//   7. Audit at an exact SHA, then merge the append WHILE STILL FROZEN. Any
-//      lane event posted since step 2 makes the evidence stale — recapture.
+//      previous committed policy, WITH `--frontier`, `--repository`, and
+//      `--expect-frozen-main-sha $FROZEN_SHA`: the whole previous history must
+//      remain a canonical prefix of the new one, the evidence must be the
+//      evidence for THIS freeze, and the new boundary must clear the frontier.
+//      One epoch per transition.
+//   7. Audit at an exact SHA, then merge the append WHILE STILL FROZEN. Any lane
+//      event posted since step 3, any movement of main other than this merge, or
+//      any new write-capable run makes the evidence stale — restart from step 1.
 //   8. Merge a SEPARATE live-only transition restoring `enabled: true`.
+//
+// The order is what carries the weight: freeze BEFORE evidence, evidence BEFORE
+// the append, and the append merged BEFORE automation resumes. Each step is
+// mechanically checkable, and every tool in it refuses rather than proceeding on
+// a revision it was not pointed at.
 //
 // Never edit an existing entry to "fix" a digest mismatch. A mismatch means the
 // policy no longer says what was accepted; the answer is to restore the policy,

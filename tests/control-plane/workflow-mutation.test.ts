@@ -682,10 +682,10 @@ const KNOWN_WORKFLOWS: ReadonlySet<string> = new Set([WF_BOOTSTRAP, WF_MERGE_GUA
 // contract exists to force.
 // ---------------------------------------------------------------------------
 const WORKFLOW_FINGERPRINTS: Readonly<Record<string, string>> = {
-  [WF_BOOTSTRAP]: "c006d08b51ff220b96abcc6c4743192df2e409cb2906ff9f258c0585037e6faf",
-  [WF_MERGE_GUARD]: "b53c59fd2849cfbf543c3ba8cea9cf78b5f08ccc738c0da5caeb65f26e8123e9",
-  [WF_REDUCER]: "a488331cea787bf3329e5bf3789f3d4a3960798b8d8c502903df9a2c609d1f55",
-  [WF_WATCHDOG]: "1e171b40863149d207bb102162fcdab8233e90e913d115e5dd5fcd90ed966c10",
+  [WF_BOOTSTRAP]: "73da3a4ef39af361bce4c9a130aade3543bbbe17ad599c46a133d58b79442f46",
+  [WF_MERGE_GUARD]: "82bef87c03d167c6902633c188d0cd9514301c5f1ec25f5773ba10d687aad457",
+  [WF_REDUCER]: "40653af25735febfa4c2800abdcc08f00f7c3506a6b6a4a4f2896af331bf9f7d",
+  [WF_WATCHDOG]: "d2ea3c5b60b1ae895c5f51503506e923674b57f344f374ea8472d2b07237dbb2",
 };
 
 // Enforcement surfaces take RAW BYTES (round 21): hashing a decoded

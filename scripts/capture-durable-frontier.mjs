@@ -15,9 +15,21 @@
 // consumes as `--frontier`.
 //
 // PROCEDURE. Capture only AFTER a live-only transition setting `enabled: false`
-// is the committed state. The transition guard enforces that ordering; capturing
-// while automation can still write would produce evidence that is stale the
-// moment it is written.
+// is the committed state AND frozen-write quiescence has been verified at that
+// exact revision (scripts/verify-frozen-quiescence.mjs). The transition guard
+// enforces the freeze ordering; capturing while automation can still write, or
+// while a run authored under `enabled: true` is still in flight, would produce
+// evidence that is stale the moment it is written.
+//
+// BOUND TO THE FROZEN REVISION (Codex H-02). --frozen-main-sha and --quiescence
+// are REQUIRED. The frozen SHA is named explicitly — never resolved here — and
+// must equal both the quiescence evidence's frozen_main_sha and the live main ref
+// before AND after the lane reads. So a frontier can no longer be captured while
+// main is moving, and the document itself records which revision it describes
+// rather than leaving that in a procedure someone remembers to follow. The
+// quiescence document is re-validated here (its own validator refuses one that
+// records any write-capable run still in flight), and the four evidence fields
+// travel into the frontier for the transition guard to check again.
 //
 // AUTHENTICATED TIME ONLY. Every time in the output is a GitHub-recorded
 // `created_at`. Actor-supplied `occurred_at` inside an event payload is not
@@ -54,18 +66,22 @@
 //
 // Usage:
 //   node scripts/capture-durable-frontier.mjs \
+//     --frozen-main-sha <40-hex> --quiescence <file> \
 //     [--repo 0xHoneyJar/loa-straylight] [--out <path>]
 //
 // Writes deterministic JSON (lanes sorted by issue number) to stdout, or to
 // --out. Read-only: GET only. Nothing is posted, edited, labelled, or merged.
 
 import { execFileSync } from "node:child_process";
-import { writeFileSync, realpathSync } from "node:fs";
+import { readFileSync, writeFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { MARKERS, extractPayload } from "../.straylight/lib/markers.mjs";
-import { parseIssuePages, parseCommentPages } from "../.straylight/lib/evidence.mjs";
+import { parseIssuePages, parseCommentPages, parseSingleDocument } from "../.straylight/lib/evidence.mjs";
 import { scanLanes } from "../.straylight/lib/lane-target.mjs";
 import { buildDurableFrontier } from "../.straylight/lib/durable-frontier.mjs";
+import { validateFrozenQuiescence } from "../.straylight/lib/frozen-quiescence.mjs";
+import { parseStrict } from "../.straylight/lib/strict-json.mjs";
+import { MAIN_SHA_RE, mainRefReadPath, readMainRefSha } from "../.straylight/lib/write-authority.mjs";
 import { parseIsoInstant } from "../.straylight/lib/validate.mjs";
 
 const EVENT_MARKER_RE = /<!--\s*straylight:event:v1\s*-->/g;
@@ -114,7 +130,19 @@ export function laneFrontierEntry({ issue_number, lane_id, comments }) {
     count += 1;
     // The LATEST authenticated time wins, not the last in enumeration order:
     // the frontier is a bound on time, and enumeration order is not a promise.
-    if (lastMillis === null || millis > lastMillis) {
+    //
+    // TIES (Codex low). GitHub's created_at has one-second resolution, so two
+    // events on one lane can share it exactly. Time alone therefore does not
+    // totally order the candidates, and "keep the first seen" made the recorded
+    // last_event_comment_id a function of ENUMERATION ORDER — two captures of
+    // identical history could disagree on the id while agreeing on the bound.
+    // The greater comment id breaks the tie: comment ids are monotonically
+    // increasing per repository, so among events sharing a second the greatest
+    // id is the one GitHub accepted last. This changes no authority — the epoch
+    // boundary is still governed by TIME (last_event_created_at and the derived
+    // max), and both tied candidates carry the same time — it only makes the
+    // recorded identity deterministic.
+    if (lastMillis === null || millis > lastMillis || (millis === lastMillis && c.id > lastId)) {
       lastMillis = millis;
       lastCreatedAt = c.created_at;
       lastId = c.id;
@@ -133,10 +161,19 @@ export function laneFrontierEntry({ issue_number, lane_id, comments }) {
 }
 
 /**
- * Assemble the frontier from already-captured lane comment streams.
+ * Assemble the frontier from already-captured lane comment streams and the
+ * quiescence evidence the capture ran under.
  * PURE. Returns the buildDurableFrontier result, or { ok: false, errors }.
  */
-export function frontierFromCapture({ repository, captured_at, lanes }) {
+export function frontierFromCapture({
+  repository,
+  frozen_main_sha,
+  captured_at,
+  quiescence_checked_at,
+  write_capable_workflows,
+  active_write_runs,
+  lanes,
+}) {
   if (!Array.isArray(lanes)) return { ok: false, errors: ["lanes: not an array"] };
   const entries = [];
   const errors = [];
@@ -146,14 +183,25 @@ export function frontierFromCapture({ repository, captured_at, lanes }) {
     else entries.push(built.entry);
   }
   if (errors.length > 0) return { ok: false, errors };
-  return buildDurableFrontier({ repository, captured_at, lanes: entries });
+  return buildDurableFrontier({
+    repository,
+    frozen_main_sha,
+    captured_at,
+    quiescence_checked_at,
+    write_capable_workflows,
+    active_write_runs,
+    lanes: entries,
+  });
 }
 
-// Raw `gh api --paginate` stdout, handed to the evidence parsers UNPARSED: they
-// own page-stream splitting, exact-URL binding, and duplicate detection.
-function ghText(path) {
+// Raw `gh api` stdout, handed to the evidence parsers UNPARSED: they own
+// page-stream splitting, exact-URL binding, and duplicate detection. Single
+// documents (the main ref) are fetched WITHOUT --paginate so the parser sees one
+// document rather than a one-page stream.
+function ghText(path, { paginate = true } = {}) {
+  const argv = paginate ? ["api", "--paginate", path] : ["api", path];
   try {
-    return execFileSync("gh", ["api", "--paginate", path], {
+    return execFileSync("gh", argv, {
       encoding: "utf8",
       maxBuffer: 256 * 1024 * 1024,
     });
@@ -168,9 +216,75 @@ function enumerateIssues(repo, query, label) {
   return parsed.issues;
 }
 
+// The exact commit main points at right now, via the read paths the protocol
+// constructs for itself (write-authority.mjs). Read-only.
+function currentMainSha(repo) {
+  const parsed = parseSingleDocument(ghText(mainRefPath(repo), { paginate: false }));
+  if (!parsed.ok) die(`main ref unreadable: ${parsed.reason} (${parsed.detail ?? ""})`);
+  const read = readMainRefSha(parsed.value);
+  if (!read.ok) die(`main ref unreadable: ${read.reason} — ${read.detail}`);
+  return read.sha;
+}
+
+function mainRefPath(repo) {
+  const built = mainRefReadPath(repo);
+  if (!built.ok) die(`${built.reason}: ${built.detail}`);
+  return built.path;
+}
+
 function main() {
   const repo = arg("--repo", "0xHoneyJar/loa-straylight");
   const outPath = arg("--out");
+
+  // THE FROZEN REVISION, named explicitly (H-02). Never resolved here: a tool
+  // that picked its own revision would capture against whatever main happened to
+  // be, which is exactly the ambiguity the binding exists to remove.
+  const frozenMainSha = arg("--frozen-main-sha");
+  if (frozenMainSha === null) {
+    die("--frozen-main-sha <40-hex> is required — name the frozen revision this capture describes");
+  }
+  if (!MAIN_SHA_RE.test(frozenMainSha)) {
+    die("--frozen-main-sha must be a full 40-hex commit SHA (never a branch name)");
+  }
+
+  // The quiescence evidence that licenses this capture. Re-validated here rather
+  // than trusted: its own validator refuses a document recording any
+  // write-capable run still in flight.
+  const quiescencePath = arg("--quiescence");
+  if (quiescencePath === null) {
+    die(
+      "--quiescence <file> is required — the output of scripts/verify-frozen-quiescence.mjs, proving no " +
+        "write-capable run was in flight at the frozen revision",
+    );
+  }
+  let quiescenceText;
+  try {
+    quiescenceText = readFileSync(quiescencePath, "utf8");
+  } catch (e) {
+    die(`--quiescence unreadable: ${String(e?.message ?? e)}`);
+  }
+  const quiescenceParsed = parseStrict(quiescenceText);
+  if (!quiescenceParsed.ok) die(`--quiescence: strict JSON parse failed: ${quiescenceParsed.reason}`);
+  const quiescence = validateFrozenQuiescence(quiescenceParsed.value);
+  if (!quiescence.ok) die(`--quiescence refused by its own validator: ${JSON.stringify(quiescence.errors, null, 2)}`);
+  if (quiescence.value.repository !== repo) {
+    die(`--quiescence describes ${quiescence.value.repository}, not ${repo}`);
+  }
+  if (quiescence.value.frozen_main_sha !== frozenMainSha) {
+    die(
+      `--quiescence was gathered at main ${quiescence.value.frozen_main_sha} but --frozen-main-sha is ` +
+        `${frozenMainSha}; the evidence describes a different revision`,
+    );
+  }
+
+  // Main must BE the frozen revision before the lane reads begin...
+  const mainBefore = currentMainSha(repo);
+  if (mainBefore !== frozenMainSha) {
+    die(
+      `current main is ${mainBefore}, not the frozen ${frozenMainSha} — the freeze this capture claims to run ` +
+        "under is not the committed state; re-verify quiescence at the current revision and recapture",
+    );
+  }
 
   // Dual enumeration, unioned by issue number. A number appearing in both must
   // present the same body: two different bodies for one issue is ambiguity about
@@ -221,10 +335,29 @@ function main() {
     return { issue_number: lane.number, lane_id: lane.lane_id, comments: parsed.comments };
   });
 
+  // ...and must STILL be the frozen revision after them. A merge landing between
+  // the enumeration and the last lane read would mean the reads spanned two
+  // different repository states, one of which may not have been frozen at all.
+  const mainAfter = currentMainSha(repo);
+  if (mainAfter !== frozenMainSha) {
+    die(
+      `main moved from ${frozenMainSha} to ${mainAfter} during the capture — the lane reads span two repository ` +
+        "states; re-verify quiescence at the new revision and recapture",
+    );
+  }
+
   // The capture instant is recorded AFTER every read completes, so it never
   // claims to cover a moment the reads had not yet reached.
   const captured_at = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
-  const built = frontierFromCapture({ repository: repo, captured_at, lanes });
+  const built = frontierFromCapture({
+    repository: repo,
+    frozen_main_sha: frozenMainSha,
+    captured_at,
+    quiescence_checked_at: quiescence.value.checked_at,
+    write_capable_workflows: quiescence.value.write_capable_workflows,
+    active_write_runs: quiescence.value.active_write_runs,
+    lanes,
+  });
   if (!built.ok) die(`frontier refused by its own validator: ${JSON.stringify(built.errors, null, 2)}`);
 
   const text = JSON.stringify(built.frontier, null, 2) + "\n";
@@ -236,7 +369,8 @@ function main() {
   }
   process.stderr.write(
     `frontier: ${built.value.event_count} protocol event(s) across ${built.value.lane_count} lane(s); ` +
-      `latest authenticated event ${built.value.max_event_created_at} (captured ${captured_at})\n`,
+      `latest authenticated event ${built.value.max_event_created_at} (captured ${captured_at} against frozen ` +
+      `main ${frozenMainSha}, quiescent at ${quiescence.value.checked_at})\n`,
   );
 }
 

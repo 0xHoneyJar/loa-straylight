@@ -51,8 +51,11 @@
 //
 //   1. the PREVIOUS committed policy already has enabled === false, and
 //   2. the CANDIDATE also has enabled === false, and
-//   3. an explicit durable event frontier captured under that freeze, and
-//   4. every appended epoch's governs_from STRICTLY AFTER that frontier.
+//   3. an explicit durable event frontier captured under that freeze, whose
+//      quiescence evidence records NO write-capable run in flight, and
+//   4. the caller NAMES the frozen main SHA it believes the evidence describes,
+//      and the frontier agrees, and
+//   5. every appended epoch's governs_from STRICTLY AFTER that frontier.
 //
 // (1) and (2) together mean an append can never be combined with the change that
 // first disables automation: the freeze must ALREADY be merged and in effect
@@ -60,6 +63,15 @@
 // the evidence and relying on it. Policy evolution is therefore deliberately a
 // multi-transition operation — freeze, capture, append, re-enable — each merged
 // and audited on its own. Historical authority is worth more than saving a PR.
+//
+// (3) and (4) are the Codex H-02 half. "Captured under the freeze" used to be
+// prose in a procedure: the evidence recorded WHEN it was captured but not WHAT it
+// was captured against, and said nothing about whether a workflow run authored
+// while automation was permitted was still executing. Now the frontier names the
+// frozen revision and carries its quiescence evidence, the frontier validator
+// refuses a frontier whose `active_write_runs` is non-empty, and the CALLER must
+// state the frozen SHA independently — so presenting a frontier captured against
+// some other revision is a refusal rather than a matter of noticing.
 //
 // The kill switch stays LIVE operational policy. It is not epoched, and freezing
 // is itself a live-only transition that needs no evidence.
@@ -97,6 +109,7 @@
 import { canonicalize } from "./canonical.mjs";
 import { validatePolicy, ADMISSION_FIELDS, ACTOR_ROLES, admissionHistoryErrors, parseIsoInstant } from "./validate.mjs";
 import { validateDurableFrontier } from "./durable-frontier.mjs";
+import { FROZEN_MAIN_SHA_RE } from "./frozen-quiescence.mjs";
 
 export const POLICY_SCHEMA_V1 = "straylight.automation-policy.v1";
 export const POLICY_SCHEMA_V2 = "straylight.automation-policy.v2";
@@ -203,11 +216,12 @@ function v2AppendErrors(previous, candidate) {
   return errors;
 }
 
-// The closed shape of the transition-evidence argument. Naming the repository
-// separately from the frontier file is deliberate: the operator's command has to
-// assert which repository this append is for, so a frontier captured somewhere
-// else cannot be presented as this repository's history.
-const CONTEXT_KEYS = ["repository", "frontier"];
+// The closed shape of the transition-evidence argument. Naming the repository and
+// the frozen revision separately from the frontier file is deliberate: the
+// operator's command has to assert which repository AND which frozen commit this
+// append is for, so evidence captured somewhere else — or against a revision that
+// is no longer the freeze under review — cannot be presented as this one's.
+const CONTEXT_KEYS = ["repository", "frontier", "expected_frozen_main_sha"];
 
 // v2 -> v2 APPEND: the frozen frontier cutover gate. Additional to the prefix
 // check, and reached only when the candidate's history is LONGER than the
@@ -249,9 +263,10 @@ function appendGateErrors(previous, candidate, context, prevLen) {
   // frontier, so a caller that omits it gets a refusal rather than a default.
   if (context === null || context === undefined) {
     errors.push(
-      "context: required for an admission append — pass { repository, frontier } where frontier is a durable " +
-        "event frontier captured read-only while enabled: false (scripts/capture-durable-frontier.mjs). " +
-        "Appending without evidence of where history ended cannot be authorized.",
+      "context: required for an admission append — pass { repository, expected_frozen_main_sha, frontier } where " +
+        "frontier is a durable event frontier captured read-only while enabled: false and quiescent " +
+        "(scripts/verify-frozen-quiescence.mjs then scripts/capture-durable-frontier.mjs). Appending without " +
+        "evidence of where history ended, and of the frozen revision it ended at, cannot be authorized.",
     );
     return { errors, bound: null };
   }
@@ -273,6 +288,16 @@ function appendGateErrors(previous, candidate, context, prevLen) {
         "independently of the evidence file",
     );
   }
+  // 4. The frozen revision, asserted by the CALLER. A full immutable SHA, never a
+  // branch name: "main" would name whatever main happens to be at check time,
+  // which is precisely the moving target the binding exists to pin down.
+  if (typeof context.expected_frozen_main_sha !== "string" || !FROZEN_MAIN_SHA_RE.test(context.expected_frozen_main_sha)) {
+    errors.push(
+      `context.expected_frozen_main_sha: ${JSON.stringify(context.expected_frozen_main_sha)} — name the full ` +
+        "40-hex commit SHA of the frozen main this append is authorized against (never a branch name). The " +
+        "frontier must have been captured against exactly that revision.",
+    );
+  }
 
   let bound = null;
   if (context.frontier !== undefined) {
@@ -287,10 +312,21 @@ function appendGateErrors(previous, candidate, context, prevLen) {
             `frontier.repository ${JSON.stringify(bound.repository)} — the evidence describes a different repository`,
         );
       }
+      if (
+        typeof context.expected_frozen_main_sha === "string" &&
+        FROZEN_MAIN_SHA_RE.test(context.expected_frozen_main_sha) &&
+        context.expected_frozen_main_sha !== bound.frozen_main_sha
+      ) {
+        errors.push(
+          `context.expected_frozen_main_sha: ${context.expected_frozen_main_sha} does not match ` +
+            `frontier.frozen_main_sha ${JSON.stringify(bound.frozen_main_sha)} — the evidence was captured against ` +
+            "a different revision than the freeze this append claims to be authorized under, so it cannot bound it",
+        );
+      }
     }
   }
 
-  // 4. Strict prospectivity. Checked for EVERY appended epoch, not just the
+  // 5. Strict prospectivity. Checked for EVERY appended epoch, not just the
   // first: the invariant is that no appended epoch governs an event that already
   // exists. (validatePolicy separately requires boundaries to ascend strictly,
   // so with a sound history the first is the binding one.)
@@ -318,10 +354,10 @@ function appendGateErrors(previous, candidate, context, prevLen) {
 //
 //   previous   the policy as committed before the change (v1 or v2)
 //   candidate  the proposed policy (must be v2)
-//   context    transition evidence: { repository, frontier }. REQUIRED when the
-//              candidate appends an admission epoch; ignored otherwise (the
-//              result reports frontier: null so the output shows it was not
-//              consulted).
+//   context    transition evidence: { repository, expected_frozen_main_sha,
+//              frontier }. REQUIRED when the candidate appends an admission
+//              epoch; ignored otherwise (the result reports frontier: null so the
+//              output shows it was not consulted).
 //
 // Returns { ok: true, kind, previous_epochs, candidate_epochs, appended,
 // frontier } or { ok: false, errors }. Pure: reads nothing outside its arguments
@@ -394,7 +430,10 @@ export function validatePolicyTransition(previous, candidate, context = null) {
         ? null
         : {
             repository: bound.repository,
+            frozen_main_sha: bound.frozen_main_sha,
             captured_at: bound.captured_at,
+            quiescence_checked_at: bound.quiescence_checked_at,
+            write_capable_workflows: bound.write_capable_workflows,
             lanes: bound.lane_count,
             events: bound.event_count,
             max_event_created_at: bound.max_event_created_at,

@@ -23,11 +23,14 @@
 // disabled, and evidence of where the durable event stream ended:
 //   node .straylight/bin/policy-transition-check.mjs \
 //     --previous /tmp/prev.json --candidate .straylight/automation-policy.json \
-//     --frontier /tmp/frontier.json --repository 0xHoneyJar/loa-straylight
+//     --frontier /tmp/frontier.json --repository 0xHoneyJar/loa-straylight \
+//     --expect-frozen-main-sha <40-hex>
 // Capture the frontier read-only with scripts/capture-durable-frontier.mjs while
-// automation is frozen. --repository is required with --frontier and must match
-// the evidence: naming it separately is what stops a frontier captured elsewhere
-// from standing in for this repository's history.
+// automation is frozen AND quiescent (scripts/verify-frozen-quiescence.mjs).
+// --repository and --expect-frozen-main-sha are both required with --frontier and
+// both must match the evidence: naming them separately is what stops a frontier
+// captured elsewhere, or against a different revision, from standing in for this
+// repository's history at this freeze (Codex H-02).
 //
 // Both policy paths are REQUIRED and neither defaults: the previous policy has to
 // be named explicitly, because "the policy as committed before this change" is a
@@ -84,6 +87,7 @@ const candidate = load("candidate", candidatePath);
 // library refuses an append that has none, and that refusal is the point.
 const frontierPath = arg("--frontier");
 const repository = arg("--repository");
+const expectedFrozenMainSha = arg("--expect-frozen-main-sha");
 if (frontierPath !== null && repository === null) {
   emit(
     {
@@ -94,7 +98,29 @@ if (frontierPath !== null && repository === null) {
     2,
   );
 }
-const context = frontierPath === null ? null : { repository, frontier: load("frontier", frontierPath) };
+// The frozen revision is named by the OPERATOR'S COMMAND, not read out of the
+// evidence: an append authorized against a SHA the operator never typed is an
+// append authorized against whatever the capture happened to see.
+if (frontierPath !== null && expectedFrozenMainSha === null) {
+  emit(
+    {
+      ok: false,
+      refusal: "usage",
+      detail:
+        "--expect-frozen-main-sha <40-hex> is required with --frontier: the append must name the frozen main " +
+        "commit it is authorized against, and the frontier must have been captured against exactly that revision",
+    },
+    2,
+  );
+}
+const context =
+  frontierPath === null
+    ? null
+    : {
+        repository,
+        expected_frozen_main_sha: expectedFrozenMainSha,
+        frontier: load("frontier", frontierPath),
+      };
 
 const verdict = validatePolicyTransition(previous, candidate, context);
 if (!verdict.ok) {

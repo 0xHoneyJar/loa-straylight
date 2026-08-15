@@ -5,6 +5,7 @@
 //     --pages-1 <issue-pages> --pages-2 <issue-pages> \
 //     --labels <label-pages> \
 //     --base-sha <40-hex> --request-root <dir> \
+//     --source-main-sha-file <file> \
 //     --repository <owner/repo> --nonce <run-id>-<attempt> [--policy <file>]
 //
 // Plans AT MOST ONE lane creation (plus the cp-lane label definition if
@@ -26,17 +27,29 @@
 // The genesis lane record embedded in the plan body must satisfy the
 // SAME validator the reducer uses — a genesis this planner authors is
 // re-validated by write-plan.mjs (embedded-genesis check) and again by
-// every future reconstruction. No network I/O; no GitHub writes.
+// every future reconstruction.
+//
+// WRITE-AUTHORITY BINDING (H-02): the plan carries `authority:
+// {source_main_sha, policy_digest}`. --source-main-sha[-file] names the commit
+// this planning ran at; the digest is of the accepted committed policy loaded
+// here. Both are re-established from GitHub by the executor before the lane is
+// created, so a creation planned under `enabled: true` cannot happen after a
+// freeze is merged. No network I/O; no GitHub writes.
 
 import { readFileSync, writeFileSync, realpathSync } from "node:fs";
-import { resolve, join } from "node:path";
+import { resolve, join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { parseIssuePages, parseLabelPages } from "../lib/evidence.mjs";
 import { assertLaneAbsent, scanLanes } from "../lib/lane-target.mjs";
 import { validateLane } from "../lib/validate.mjs";
+import { loadProtocolPolicy } from "../lib/policy-source.mjs";
+import { buildWriteAuthority, resolveSourceMainSha } from "../lib/write-authority.mjs";
 import { renderPayload, MARKERS } from "../lib/markers.mjs";
 import { WRITE_PLAN_SCHEMA } from "../lib/write-plan.mjs";
 import { payloadDigest } from "../lib/canonical.mjs";
+
+const here = dirname(fileURLToPath(import.meta.url));
 
 const LANE_ID = "lane-phase-49p";
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -76,6 +89,32 @@ if (baseShaFile !== null) {
   }
 }
 if (!SHA_RE.test(baseSha)) fail("base-sha-invalid", "base SHA must be 40 lowercase hex");
+
+// The commit THIS PLANNING ran at (H-02) — deliberately a separate argument
+// from --base-sha. The base SHA is lane content (the revision the lane's work
+// branches from, which the operator may pin); the source main SHA is the
+// revision whose committed policy authorized this plan. Conflating them would
+// let a lane's chosen base silently stand in for present write authority.
+const resolvedSourceSha = resolveSourceMainSha({
+  literal: arg("--source-main-sha"),
+  filePath: arg("--source-main-sha-file"),
+});
+if (!resolvedSourceSha.ok) fail(resolvedSourceSha.reason, resolvedSourceSha.detail);
+
+// The bootstrap planner reads the policy for ONE reason: to digest the exact
+// accepted policy that authorized this plan. It consumes no admission field —
+// the genesis lane's corridor is lane content, pinned by its own test. The
+// accepted-epoch digest lock applies because this is the committed file.
+const loadedPolicy = loadProtocolPolicy({
+  committedPath: resolve(here, "..", "automation-policy.json"),
+  overridePath: arg("--policy"),
+});
+if (!loadedPolicy.ok) fail(loadedPolicy.refusal, loadedPolicy.detail);
+const authorityBuilt = buildWriteAuthority({
+  source_main_sha: resolvedSourceSha.sha,
+  policy: loadedPolicy.value,
+});
+if (!authorityBuilt.ok) fail(authorityBuilt.reason, authorityBuilt.detail);
 
 // BOTH enumerations through the shared evidence parser: strict parse, N1
 // uniqueness, N2 binding, PR exclusion, zero-byte-invalid — fail closed.
@@ -235,6 +274,7 @@ const plan = {
   plan_id: `${nonce}-bootstrap`,
   nonce,
   repository,
+  authority: authorityBuilt.authority,
   operations,
 };
 writeFileSync(join(realRoot, "plan.json"), JSON.stringify(plan, null, 2) + "\n");
