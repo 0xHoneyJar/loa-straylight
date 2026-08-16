@@ -1151,8 +1151,9 @@ describe("S — the 48-hour procedure authorized by a frontier the capture prove
     return p;
   }
 
-  /** STATE C: B plus one appended 2880-minute epoch, still frozen. */
-  function stateC(governs_from: string): any {
+  /** STATE C: B plus one appended 2880-minute epoch, still frozen. The epoch
+   * COMMITS the canonical digest of the frontier that authorizes it (M-01). */
+  function stateC(governs_from: string, frontier_digest: string): any {
     const c = stateB();
     const base = structuredClone(c.admission_history[0]);
     c.admission_history.push({
@@ -1166,9 +1167,18 @@ describe("S — the 48-hour procedure authorized by a frontier the capture prove
         attributed_to: "test-fixture",
         reference: "hypothetical successor epoch; NOT committed, NOT locked",
       },
+      transition_evidence: { frontier_digest },
     });
     for (const f of ADMISSION_FIELDS) c[f] = structuredClone(c.admission_history[1][f]);
     return c;
+  }
+
+  /** The digest an appended epoch must commit for a given frontier — derived by
+   * the same validator the transition guard uses, so the two cannot disagree. */
+  function digestOf(frontier: any): string {
+    const v = validateDurableFrontier(frontier);
+    expect(v.ok, v.ok ? "" : (v as any).errors.join("; ")).toBe(true);
+    return (v as any).value.frontier_digest;
   }
 
   /** The real transition CLI, out of a staged tree, over an explicit frontier. */
@@ -1218,7 +1228,7 @@ describe("S — the 48-hour procedure authorized by a frontier the capture prove
     // The append's boundary must be strictly after the frontier the proof reported.
     expect(frontier.max_event_created_at).toBe(MAX_EVENT_AT);
     const afterFrontier = "2026-08-13T04:55:43Z";
-    const candidate = stateC(afterFrontier);
+    const candidate = stateC(afterFrontier, digestOf(frontier));
 
     // A real 48-hour change would append its digest lock in the same reviewed
     // protocol-code diff; the staged tree is where that hypothetical lock lives.
@@ -1247,6 +1257,7 @@ describe("S — the 48-hour procedure authorized by a frontier the capture prove
       lanes: 3,
       events: 6,
       max_event_created_at: MAX_EVENT_AT,
+      frontier_digest: digestOf(frontier),
       appended_governs_from: afterFrontier,
     });
     expect(bc.out.candidate_current_admission.lease_duration_minutes).toBe(2880);
@@ -1263,7 +1274,7 @@ describe("S — the 48-hour procedure authorized by a frontier the capture prove
 
   it("the proved frontier is LOAD-BEARING: at its instant, or from another revision, the append refuses", () => {
     const frontier = provedFrontier();
-    const at = stateC(MAX_EVENT_AT);
+    const at = stateC(MAX_EVENT_AT, digestOf(frontier));
     const digest = admissionEpochDigest(at.admission_history[1]);
     const staged = stageTree([{
       file: ".straylight/lib/admission-locks.mjs",
@@ -1281,7 +1292,7 @@ describe("S — the 48-hour procedure authorized by a frontier the capture prove
 
     // And the operator must name the revision the proof was performed at.
     const afterFrontier = "2026-08-13T04:55:43Z";
-    const good = stateC(afterFrontier);
+    const good = stateC(afterFrontier, digestOf(frontier));
     const staged2 = stageTree([{
       file: ".straylight/lib/admission-locks.mjs",
       from: "  }),\n]);",
@@ -1330,7 +1341,9 @@ describe("S — the 48-hour procedure authorized by a frontier the capture prove
     expect(forged.status, forged.stderr).toBe(0);
 
     const afterFrontier = "2026-08-13T04:55:43Z";
-    const candidate = stateC(afterFrontier);
+    // The epoch commits the FORGED document's digest: the pure gate cannot know
+    // the document is handwritten, which is exactly this test's point.
+    const candidate = stateC(afterFrontier, digestOf(forged.out));
     const locked = stageTree([{
       file: ".straylight/lib/admission-locks.mjs",
       from: "  }),\n]);",

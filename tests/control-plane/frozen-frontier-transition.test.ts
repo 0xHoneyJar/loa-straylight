@@ -217,6 +217,14 @@ function policyOver(epochs: any[], enabled: boolean): any {
   return p;
 }
 
+// M-01: an appended epoch COMMITS the canonical digest of the exact frontier it
+// was authorized against. This suite's default evidence is the derived real
+// frontier, so its digest is the default commitment; a test that supplies a
+// DIFFERENT frontier commits that frontier's own digest instead.
+const commits = (frontier_digest: string = DERIVED_FRONTIER_DIGEST) => ({
+  transition_evidence: { frontier_digest },
+});
+
 function realAppend(governs_from: string, overrides: Record<string, any> = {}): any {
   return {
     epoch_id: "epoch-002",
@@ -229,6 +237,7 @@ function realAppend(governs_from: string, overrides: Record<string, any> = {}): 
       attributed_to: "test-fixture",
       reference: "hypothetical successor epoch; NOT committed, NOT locked",
     },
+    ...commits(),
     ...structuredClone(overrides),
   };
 }
@@ -330,7 +339,12 @@ describe("the durable event frontier, derived from the committed lane evidence",
     expect(f.max_event_created_at).toBe(FRONTIER_MAX);
     const v = validateDurableFrontier(f);
     expect(v.ok, v.ok ? "" : v.errors.join("; ")).toBe(true);
-    if (v.ok) expect(v.value.event_count).toBe(152);
+    if (v.ok) {
+      expect(v.value.event_count).toBe(152);
+      // The validator derives the document's identity; it is the same digest the
+      // suite pins, so the commitment and the pin can never disagree (M-01).
+      expect(v.value.frontier_digest).toBe(DERIVED_FRONTIER_DIGEST);
+    }
   });
 
   it("T13: the global maximum is DERIVED from the lane entries, never trusted", () => {
@@ -633,7 +647,7 @@ describe("v2 → v2 LIVE-ONLY: the kill switch needs no evidence", () => {
 describe("v2 → v2 APPEND: the frozen frontier cutover", () => {
   it("T1: an append while the PREVIOUS policy is still enabled is refused, even with valid evidence", () => {
     const previous = policyOver([unlocked("epoch-901")], true);
-    const candidate = policyOver([unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER })], false);
+    const candidate = policyOver([unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER, ...commits() })], false);
     const out = validatePolicyTransition(previous, candidate, ctx());
     expect(out.ok).toBe(false);
     expect(errorsOf(out)).toMatch(/previous\.enabled: true — appending an admission epoch requires the control plane to be ALREADY FROZEN/);
@@ -655,7 +669,7 @@ describe("v2 → v2 APPEND: the frozen frontier cutover", () => {
 
   it("the candidate must stay frozen too — an append that re-enables in the same change is refused", () => {
     const previous = policyOver([unlocked("epoch-901")], false);
-    const candidate = policyOver([unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER })], true);
+    const candidate = policyOver([unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER, ...commits() })], true);
     const out = validatePolicyTransition(previous, candidate, ctx());
     expect(out.ok).toBe(false);
     expect(errorsOf(out)).toMatch(/candidate\.enabled: true — the candidate must keep enabled: false/);
@@ -664,7 +678,7 @@ describe("v2 → v2 APPEND: the frozen frontier cutover", () => {
 
   it("T2: an append with NO frontier evidence is refused", () => {
     const previous = policyOver([unlocked("epoch-901")], false);
-    const candidate = policyOver([unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER })], false);
+    const candidate = policyOver([unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER, ...commits() })], false);
     for (const [label, context] of [
       ["no context at all", undefined],
       ["explicit null context", null],
@@ -679,7 +693,7 @@ describe("v2 → v2 APPEND: the frozen frontier cutover", () => {
 
   it("the evidence must name this repository, and the context shape is closed", () => {
     const previous = policyOver([unlocked("epoch-901")], false);
-    const candidate = policyOver([unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER })], false);
+    const candidate = policyOver([unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER, ...commits() })], false);
 
     const mismatched = validatePolicyTransition(previous, candidate, ctx(realFrontier(), "someone/else"));
     expect(mismatched.ok).toBe(false);
@@ -696,7 +710,7 @@ describe("v2 → v2 APPEND: the frozen frontier cutover", () => {
 
   it("H2-T11: the caller must NAME the frozen revision, and the evidence must agree", () => {
     const previous = policyOver([unlocked("epoch-901")], false);
-    const candidate = policyOver([unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER })], false);
+    const candidate = policyOver([unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER, ...commits() })], false);
 
     // Unnamed: an append authorized against a SHA the operator never typed is an
     // append authorized against whatever the capture happened to see.
@@ -726,7 +740,7 @@ describe("v2 → v2 APPEND: the frozen frontier cutover", () => {
   it("H2-T7/H2-T8: evidence recording a write-capable run in flight cannot authorize an append", () => {
     const out = validatePolicyTransition(
       policyOver([unlocked("epoch-901")], false),
-      policyOver([unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER })], false),
+      policyOver([unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER, ...commits() })], false),
       ctx(frontierWithActiveRun()),
     );
     expect(out.ok).toBe(false);
@@ -743,9 +757,15 @@ describe("v2 → v2 APPEND: the frozen frontier cutover", () => {
     // NAME one and that the evidence agree. A frontier captured in a different
     // repository, presented alongside a consistent --repository, is accepted.
     const previous = policyOver([unlocked("epoch-901")], false);
-    const candidate = policyOver([unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER })], false);
     const elsewhere = realFrontier();
     elsewhere.repository = "someone/else";
+    // The commitment binds the append to THAT document: changing the frontier's
+    // repository changes its canonical digest, so the epoch commits the foreign
+    // frontier's own digest, not the real one's.
+    const candidate = policyOver(
+      [unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER, ...commits(payloadDigest(elsewhere)) })],
+      false,
+    );
     const foreign = validatePolicyTransition(previous, candidate, ctx(elsewhere, "someone/else"));
     expect(foreign.ok, errorsOf(foreign)).toBe(true);
     if (foreign.ok) expect(foreign.frontier!.repository).toBe("someone/else");
@@ -762,7 +782,7 @@ describe("v2 → v2 APPEND: the frozen frontier cutover", () => {
     const attempt = (governs_from: string) =>
       validatePolicyTransition(
         previous,
-        policyOver([unlocked("epoch-901"), unlocked("epoch-902", { governs_from })], false),
+        policyOver([unlocked("epoch-901"), unlocked("epoch-902", { governs_from, ...commits() })], false),
         ctx(),
       );
 
@@ -792,6 +812,7 @@ describe("v2 → v2 APPEND: the frozen frontier cutover", () => {
         lanes: 3,
         events: 152,
         max_event_created_at: FRONTIER_MAX,
+        frontier_digest: DERIVED_FRONTIER_DIGEST,
         appended_governs_from: AFTER_FRONTIER,
       });
     }
@@ -802,8 +823,8 @@ describe("v2 → v2 APPEND: the frozen frontier cutover", () => {
       policyOver([unlocked("epoch-901")], false),
       policyOver([
         unlocked("epoch-901"),
-        unlocked("epoch-902", { governs_from: AFTER_FRONTIER }),
-        unlocked("epoch-903", { governs_from: "2026-08-14T00:00:00Z" }),
+        unlocked("epoch-902", { governs_from: AFTER_FRONTIER, ...commits() }),
+        unlocked("epoch-903", { governs_from: "2026-08-14T00:00:00Z", ...commits() }),
       ], false),
       ctx(),
     );
@@ -816,7 +837,7 @@ describe("v2 → v2 APPEND: the frozen frontier cutover", () => {
     broken.lanes[1].issue_number = 118;
     const out = validatePolicyTransition(
       policyOver([unlocked("epoch-901")], false),
-      policyOver([unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER })], false),
+      policyOver([unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER, ...commits() })], false),
       ctx(broken),
     );
     expect(out.ok).toBe(false);
@@ -827,7 +848,7 @@ describe("v2 → v2 APPEND: the frozen frontier cutover", () => {
 describe("v2 historical mutation is still refused, for reasons that are not the frontier", () => {
   it("editing, deleting, reordering, and replacing accepted epochs stay refused", () => {
     const E901 = unlocked("epoch-901");
-    const E902 = unlocked("epoch-902", { governs_from: AFTER_FRONTIER });
+    const E902 = unlocked("epoch-902", { governs_from: AFTER_FRONTIER, ...commits() });
     const frozenPrev = policyOver([E901, E902], false);
     const cases: Array<[string, any, RegExp]> = [
       ["edit", (() => {
@@ -868,7 +889,7 @@ describe("T6 — a backdated append over comment 5257177236", () => {
   it("the transition is REFUSED, and prospectivity is the ONLY reason", () => {
     const previous = policyOver([unlocked("epoch-901")], false);
     const candidate = policyOver(
-      [unlocked("epoch-901"), unlocked("epoch-902", { governs_from: BACKDATED, lease_duration_minutes: 2880 })],
+      [unlocked("epoch-901"), unlocked("epoch-902", { governs_from: BACKDATED, lease_duration_minutes: 2880, ...commits() })],
       false,
     );
     // Both policies are structurally VALID and the runtime lock is silent: the
@@ -939,7 +960,7 @@ describe("T6 — a backdated append over comment 5257177236", () => {
 // T7 / T8 — a prospective boundary is accepted and changes nothing historical.
 // =============================================================================
 describe("T7/T8 — a boundary after the complete frontier is accepted and inert", () => {
-  const PROSPECTIVE = { governs_from: AFTER_FRONTIER, lease_duration_minutes: 2880 };
+  const PROSPECTIVE = { governs_from: AFTER_FRONTIER, lease_duration_minutes: 2880, ...commits() };
 
   it("T7: the transition guard accepts it", () => {
     const out = validatePolicyTransition(
@@ -1037,10 +1058,24 @@ describe("the 48-hour lease change as a four-transition procedure (simulation)",
     expect(bc.out.frontier).toMatchObject({
       repository: REPO, frozen_main_sha: FROZEN_MAIN_SHA, lanes: 3, events: 152,
       quiescence_checked_at: QUIESCENCE_AT, write_capable_workflows: WRITE_CAPABLE,
-      max_event_created_at: FRONTIER_MAX, appended_governs_from: AFTER_FRONTIER,
+      max_event_created_at: FRONTIER_MAX, frontier_digest: DERIVED_FRONTIER_DIGEST,
+      appended_governs_from: AFTER_FRONTIER,
     });
     expect(bc.out.candidate_current_admission.lease_duration_minutes).toBe(2880);
     expect(bc.out.previous_current_admission.lease_duration_minutes).toBe(240);
+
+    // The SAME reviewed append presented with a forged/stale capture — the Codex
+    // M-01 shape, trimmed so the boundary still looks prospective — is refused on
+    // the digest mismatch even with the hypothetical lock in place: epoch-002
+    // commits the exact frontier it was reviewed against, not "a" frontier.
+    const forged = realFrontier();
+    forged.lanes[2].last_event_created_at = "2026-08-13T02:59:59Z";
+    forged.max_event_created_at = "2026-08-13T02:59:59Z";
+    const bcForged = runCheck(sl, stateB(), stateC(), ctx(forged));
+    expect(bcForged.status).toBe(2);
+    expect(JSON.stringify(bcForged.out.errors)).toMatch(
+      /transition_evidence\.frontier_digest.*does not match the canonical digest of the supplied durable event frontier/,
+    );
 
     // C → D re-enables automation and touches nothing else.
     const cd = runCheck(sl, stateC(), stateD());
@@ -1130,12 +1165,17 @@ describe("H-01 mutation harness — each part of the cutover is proven necessary
   const previous = () => policyOver([unlocked("epoch-901")], false);
   const backdatedCandidate = () =>
     policyOver(
-      [unlocked("epoch-901"), unlocked("epoch-902", { governs_from: BACKDATED, lease_duration_minutes: 2880 })],
+      [unlocked("epoch-901"), unlocked("epoch-902", { governs_from: BACKDATED, lease_duration_minutes: 2880, ...commits() })],
       false,
     );
-  const prospectiveCandidate = (enabled = false) =>
+  // The epoch commits the digest of the frontier the attempt actually supplies,
+  // so the digest equality (requirement 6) is satisfied in every mutant run and
+  // the ONLY thing standing between each candidate and acceptance is the rule
+  // the mutation removes. Requirement 6's own mutant lives with the M-01 suite
+  // (frontier-commitment.test.ts).
+  const prospectiveCandidate = (enabled = false, frontier_digest: string = DERIVED_FRONTIER_DIGEST) =>
     policyOver(
-      [unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER, lease_duration_minutes: 2880 })],
+      [unlocked("epoch-901"), unlocked("epoch-902", { governs_from: AFTER_FRONTIER, lease_duration_minutes: 2880, ...commits(frontier_digest) })],
       enabled,
     );
 
@@ -1207,7 +1247,9 @@ describe("H-01 mutation harness — each part of the cutover is proven necessary
         to: "    if (false) {",
       }],
       previous,
-      candidate: () => prospectiveCandidate(false),
+      // Commits the in-flight frontier's OWN digest: the commitment names these
+      // exact bytes, so quiescence is the only rule this attempt violates.
+      candidate: () => prospectiveCandidate(false, payloadDigest(frontierWithActiveRun())),
       evidence: "run-in-flight",
       realRefusal: /write-capable run\(s\) were still in flight/,
     },

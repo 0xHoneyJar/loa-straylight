@@ -55,7 +55,10 @@
 //      quiescence evidence records NO write-capable run in flight, and
 //   4. the caller NAMES the frozen main SHA it believes the evidence describes,
 //      and the frontier agrees, and
-//   5. every appended epoch's governs_from STRICTLY AFTER that frontier.
+//   5. every appended epoch's governs_from STRICTLY AFTER that frontier, and
+//   6. every appended epoch COMMITS the canonical digest of that exact frontier
+//      document in `transition_evidence.frontier_digest`, and the digest
+//      recomputed here over the supplied frontier equals it.
 //
 // (1) and (2) together mean an append can never be combined with the change that
 // first disables automation: the freeze must ALREADY be merged and in effect
@@ -72,6 +75,32 @@
 // refuses a frontier whose `active_write_runs` is non-empty, and the CALLER must
 // state the frozen SHA independently — so presenting a frontier captured against
 // some other revision is a refusal rather than a matter of noticing.
+//
+// (6) is the Codex M-01 half. (3) and (4) establish that SOME valid frontier for
+// this repository and this frozen revision was supplied; they do not establish
+// that it is the frontier the append was reviewed against. Every other valid
+// frontier for the same repository and the same frozen SHA passes those checks
+// equally well — an earlier capture left in /tmp, an artifact from an abandoned
+// attempt, or a file whose lane entries were trimmed so that a boundary which
+// re-judges recorded events looks prospective. Codex demonstrated exactly that:
+// with the real frontier maximum at 2026-08-13T04:55:42Z, editing the frontier's
+// lane material down to 2026-08-13T02:59:59Z made a 2026-08-13T03:00:00Z boundary
+// pass every check above.
+//
+// So the candidate now COMMITS to one document. The appended epoch carries the
+// frontier's canonical content digest, this guard recomputes that digest over
+// whatever frontier it is handed, and a mismatch is a refusal. There is no
+// override: no CLI flag, no field inside the frontier, no environment variable, no
+// sidecar file, and no fallback when the commitment is absent. The commitment
+// lives in the candidate policy, so it is reviewed at an exact SHA along with the
+// boundary and the values it accompanies; and because the digest covers the whole
+// frontier document, committing it also commits the repository, the frozen
+// revision, the quiescence times, the write-capable set, and every lane bound the
+// capture observed — which is why none of those are duplicated into the epoch.
+//
+// The GENESIS epoch has no frontier to commit to (the migration transcribes v1
+// and moves no decision), so a v1→v2 candidate whose genesis carries
+// transition_evidence is refused rather than accepted as harmless surplus.
 //
 // The kill switch stays LIVE operational policy. It is not epoched, and freezing
 // is itself a live-only transition that needs no evidence.
@@ -142,6 +171,17 @@ function v1ToV2Errors(previous, candidate) {
   if (!isPlainObject(genesis)) {
     errors.push("candidate.admission_history[0]: not an object");
     return errors;
+  }
+  // The genesis epoch is not an append and is bounded by no frontier: it
+  // transcribes v1 and moves no decision, so there is no capture for it to commit
+  // to. Evidence here would be a claim about a document that never authorized
+  // anything — refuse it rather than let genesis look as though it were bounded.
+  if (genesis.transition_evidence !== undefined) {
+    errors.push(
+      "candidate.admission_history[0].transition_evidence: present on the genesis epoch — the v1→v2 migration " +
+        "is bounded by no durable event frontier (it transcribes v1 and moves no admission decision), so it has " +
+        "no capture to commit to. Frontier evidence belongs to APPENDED epochs only.",
+    );
   }
   for (const field of ADMISSION_FIELDS) {
     if (field === "actor_allowlist") continue; // handled below, doc-key aware
@@ -347,6 +387,40 @@ function appendGateErrors(previous, candidate, context, prevLen) {
     });
   }
 
+  // 6. The commitment. Requirements 3 and 4 accept ANY sound frontier for this
+  // repository and revision; this one accepts only THE frontier the candidate
+  // names. Checked for every appended epoch, for the same reason as (5).
+  appended.forEach((epoch, offset) => {
+    const index = prevLen + offset;
+    const label = isPlainObject(epoch) ? String(epoch.epoch_id) : "?";
+    const evidence = isPlainObject(epoch) ? epoch.transition_evidence : undefined;
+    if (evidence === undefined) {
+      errors.push(
+        `candidate.admission_history[${index}] (${label}).transition_evidence: missing — an appended epoch must ` +
+          "COMMIT the canonical digest of the exact durable event frontier it was authorized against, as " +
+          '{ "frontier_digest": "sha256:<64 hex>" }. Without it the append is bounded by whichever sound-looking ' +
+          "frontier file happens to be supplied at check time, and a stale or trimmed capture is indistinguishable " +
+          "from the reviewed one. scripts/capture-durable-frontier.mjs prints the digest to commit.",
+      );
+      return;
+    }
+    // Malformed evidence (not an object, wrong keys, not a canonical digest) is
+    // refused structurally by validatePolicy over the candidate; comparing here
+    // would only restate it.
+    if (!isPlainObject(evidence) || typeof evidence.frontier_digest !== "string") return;
+    if (bound === null) return; // no sound evidence to compare against; already refused
+    if (evidence.frontier_digest !== bound.frontier_digest) {
+      errors.push(
+        `candidate.admission_history[${index}] (${label}).transition_evidence.frontier_digest: ` +
+          `${evidence.frontier_digest} does not match the canonical digest of the supplied durable event ` +
+          `frontier ${bound.frontier_digest} — this is not the evidence the appended epoch commits to. Either a ` +
+          "different capture was supplied (a stale artifact, or one from an abandoned attempt), or the reviewed " +
+          "capture was altered after the commitment was written. Re-run the cutover: freeze, capture, commit the " +
+          "digest the capture prints, and have the append reviewed at an exact SHA.",
+      );
+    }
+  });
+
   return { errors, bound };
 }
 
@@ -437,6 +511,11 @@ export function validatePolicyTransition(previous, candidate, context = null) {
             lanes: bound.lane_count,
             events: bound.event_count,
             max_event_created_at: bound.max_event_created_at,
+            // ONE digest field, not two. Acceptance already proves the appended
+            // epoch's committed digest and the recomputed digest of the supplied
+            // frontier are equal, so reporting them separately would only invite
+            // the reader to compare what the gate has compared.
+            frontier_digest: bound.frontier_digest,
             appended_governs_from: candidate.admission_history[prevLen].governs_from,
           },
   };

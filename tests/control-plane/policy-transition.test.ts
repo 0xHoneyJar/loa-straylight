@@ -131,6 +131,15 @@ const CTX = Object.freeze({
   expected_frozen_main_sha: FIXTURE_FROZEN_SHA,
   frontier: FIXTURE_FRONTIER,
 });
+// An APPENDED epoch must also COMMIT the canonical digest of the exact frontier
+// the append is checked against (Codex M-01). Applied only where an epoch is
+// being appended: epochs sitting in a preserved prefix are compared canonically
+// against the previous policy and carry whatever they carried then. The
+// commitment rules have their own suite (frontier-commitment.test.ts); here it is
+// satisfied minimally so the PREFIX rules are proven in isolation.
+const FIXTURE_FRONTIER_DIGEST = payloadDigest(FIXTURE_FRONTIER);
+const committing = (epoch: any): any =>
+  Object.assign(structuredClone(epoch), { transition_evidence: { frontier_digest: FIXTURE_FRONTIER_DIGEST } });
 
 // =============================================================================
 // The evidence the migration proof rests on.
@@ -261,7 +270,7 @@ describe("B1 — v1 → v2: the genesis epoch transcribes v1 without deciding an
 // =============================================================================
 describe("B3 — appending a new epoch is allowed", () => {
   it("appending one epoch onto an unlocked history is accepted", () => {
-    const out = validatePolicyTransition(frozen(v2With([E900])), frozen(v2With([E900, E901])), CTX);
+    const out = validatePolicyTransition(frozen(v2With([E900])), frozen(v2With([E900, committing(E901)])), CTX);
     expect(out.ok, errorsOf(out)).toBe(true);
     if (out.ok) {
       expect(out.kind).toBe("v2-append");
@@ -283,6 +292,9 @@ describe("B3 — appending a new epoch is allowed", () => {
         lanes: 1,
         events: 1,
         max_event_created_at: "2026-07-14T00:00:00Z",
+        // ...including WHICH frontier, recomputed here and equal to the digest
+        // the appended epoch commits.
+        frontier_digest: FIXTURE_FRONTIER_DIGEST,
         appended_governs_from: "2026-08-01T00:00:00Z",
       });
     }
@@ -334,14 +346,15 @@ describe("B3 — appending a new epoch is allowed", () => {
       governs_from: "2026-09-01T00:00:00Z",
       lease_duration_minutes: 300,
       provenance: { attributed_to: "test-fixture", reference: "hypothetical append with no lock entry" },
+      transition_evidence: { frontier_digest: FIXTURE_FRONTIER_DIGEST },
     }));
     for (const f of ADMISSION_FIELDS) candidate[f] = structuredClone(candidate.admission_history[1][f]);
-    // Frozen on both sides with sound evidence, so the ONLY thing left to refuse
-    // it is the missing lock entry.
+    // Frozen on both sides with sound evidence AND the evidence commitment, so the
+    // ONLY thing left to refuse it is the missing lock entry.
     const out = validatePolicyTransition(frozen(committed()), candidate, CTX);
     expect(out.ok).toBe(false);
     expect(errorsOf(out)).toMatch(/accepted epoch lock\(s\)/);
-    expect(errorsOf(out)).not.toMatch(/ALREADY FROZEN|context\.frontier|strictly after/);
+    expect(errorsOf(out)).not.toMatch(/ALREADY FROZEN|context\.frontier|strictly after|transition_evidence/);
     expect(readFileSync(".straylight/lib/admission-locks.mjs", "utf8")).toMatch(/APPEND its lock entry below/);
   });
 });
@@ -397,11 +410,15 @@ describe("B4–B7 — the accepted prefix is untouchable", () => {
   });
 
   it("B7: inserting an epoch INTO the accepted prefix is refused", () => {
-    const out = validatePolicyTransition(frozen(v2With([E900, E901])), frozen(v2With([E899, E900, E901])), CTX);
+    const out = validatePolicyTransition(
+      frozen(v2With([E900, E901])), frozen(v2With([E899, E900, committing(E901)])), CTX,
+    );
     expect(out.ok).toBe(false);
     expect(errorsOf(out)).toMatch(/preceded by an insertion/);
-    // Length grew, so nothing about it looks like an append except the count.
-    expect(errorsOf(out)).not.toMatch(/may not be deleted/);
+    // Length grew, so nothing about it looks like an append except the count —
+    // and the trailing epoch even commits the evidence, so the insertion is the
+    // only reason left.
+    expect(errorsOf(out)).not.toMatch(/may not be deleted|transition_evidence/);
   });
 
   it("replacing an accepted epoch with a differently-named one is refused", () => {
@@ -445,8 +462,11 @@ describe("B8 — an edit that the runtime lock cannot see is still refused here"
     }
     const frontierSrc = readFileSync(".straylight/lib/durable-frontier.mjs", "utf8");
     const frontierCode = frontierSrc.split("\n").map((l) => (l.trim().startsWith("//") ? "" : l)).join("\n");
+    // canonical.mjs is in the list because the frontier's IDENTITY — the
+    // canonical digest an appended epoch commits — is derived there, by the
+    // protocol's one canonicalizer. It is pure by the same standard as the rest.
     expect([...frontierCode.matchAll(/from "([^"]+)"/g)].map((m) => m[1]).sort())
-      .toEqual(["./frozen-quiescence.mjs", "./lane-target.mjs", "./validate.mjs"]);
+      .toEqual(["./canonical.mjs", "./frozen-quiescence.mjs", "./lane-target.mjs", "./validate.mjs"]);
   });
 
   it("J8: with the runtime lock silent (unlocked epochs), the edit is caught anyway", () => {

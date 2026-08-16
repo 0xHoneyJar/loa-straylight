@@ -32,6 +32,15 @@
 // captured elsewhere, or against a different revision, from standing in for this
 // repository's history at this freeze (Codex H-02).
 //
+// The appended epoch must also COMMIT the canonical digest of the frontier
+// supplied here, in `transition_evidence.frontier_digest` — the value
+// scripts/capture-durable-frontier.mjs prints after a successful capture. This
+// program recomputes that digest over the file passed to --frontier and refuses a
+// mismatch, so a stale or trimmed capture cannot stand in for the reviewed one
+// (Codex M-01). There is deliberately NO flag to supply, weaken, or override the
+// expected digest: the only place it may be stated is the candidate policy, where
+// the exact-SHA review sees it.
+//
 // Both policy paths are REQUIRED and neither defaults: the previous policy has to
 // be named explicitly, because "the policy as committed before this change" is a
 // fact about the repository history that this program cannot infer. It performs

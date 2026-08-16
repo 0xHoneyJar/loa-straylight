@@ -35,22 +35,40 @@
 // expected frozen SHA independently and the two must agree, so a frontier
 // captured against a different revision cannot be presented as this one's.
 //
+// WHICH FRONTIER — THE CANONICAL DIGEST (Codex M-01)
+//
+// A structurally valid frontier says what it observed; on its own it does not say
+// that it is the document the append was reviewed against. Any other valid
+// frontier for the same repository and the same frozen SHA — an earlier capture
+// left in /tmp, an artifact from a previous attempt, a file whose lane entries
+// were edited down — validates exactly as well. So the frontier BYTES are not
+// what an appended epoch carries: the epoch commits their canonical content
+// DIGEST (`transition_evidence.frontier_digest`), and the transition guard
+// recomputes that digest over whatever frontier it is handed and requires exact
+// equality (see .straylight/lib/policy-transition.mjs). The commitment is a
+// small, reviewable string at an exact SHA; the digest is what binds it to one
+// document, and through that document to the repository, the frozen revision,
+// the quiescence proof, and every lane bound the capture observed.
+//
 // WHAT THIS CANNOT PROVE
 //
 // This module is pure. It cannot verify that lane DISCOVERY was complete — that
 // no cp-lane was omitted from `lanes`, and that no event was posted after the
 // capture. Completeness is PROVENANCE, established at authorization time: the
 // capture runs read-only against GitHub while the control plane is already
-// frozen (`enabled: false`) and quiescent, its output is committed as evidence,
-// and the operator's exact-SHA audit is what accepts it. What this module does is
-// make the evidence explicit, self-consistent, and mechanically checkable, so
-// that a missing, malformed, stale, or doctored frontier is a REFUSAL rather than
-// a silent omission.
+// frozen (`enabled: false`) and quiescent, it proves that quiescence itself,
+// before and after the lane reads, and the operator's exact-SHA audit of the
+// epoch that commits this document's digest is what accepts it. What this module
+// does is make the evidence explicit, self-consistent, and mechanically
+// checkable, so that a missing, malformed, stale, or doctored frontier is a
+// REFUSAL rather than a silent omission.
 //
-// Nor is `captured_at` a transactional snapshot, and the quiescence fields do not
-// make it one: GitHub can create a write-capable run the instant after the last
-// page is read. Two agreeing scans and an unmoved main are strong evidence, and
-// the cutover re-verifies after the capture; none of that is atomicity.
+// There is no public anchor, no signature, and no notary here, and the digest
+// commitment does not make one: it distinguishes documents, it does not vouch for
+// them. Nor is `captured_at` a transactional snapshot, and the quiescence fields
+// do not make it one: GitHub can create a write-capable run the instant after the
+// last page is read. Two agreeing proofs bracketing the reads and an unmoved main
+// are strong evidence; none of that is atomicity.
 //
 // The stored `max_event_created_at` is a legibility aid for the operator reading
 // the file. It is NEVER trusted: the maximum is recomputed from the lane entries
@@ -59,6 +77,7 @@
 import { parseIsoInstant, REPO_RE } from "./validate.mjs";
 import { LANE_ID_RE } from "./lane-target.mjs";
 import { FRONTIER_EVIDENCE_KEY_MAP, quiescenceEvidenceErrors } from "./frozen-quiescence.mjs";
+import { payloadDigest } from "./canonical.mjs";
 
 export const FRONTIER_SCHEMA = "straylight.durable-event-frontier.v1";
 
@@ -116,8 +135,14 @@ function deriveMax(lanes) {
  * Validate a supplied frontier and report its derived bound.
  *
  * Returns { ok: true, value: { repository, captured_at, lane_count,
- * event_count, max_event_created_at, max_millis } } or { ok: false, errors }.
- * Pure: no files, no clock, no network.
+ * event_count, max_event_created_at, max_millis, frontier_digest } } or
+ * { ok: false, errors }. Pure: no files, no clock, no network.
+ *
+ * `frontier_digest` is the canonical content digest of the WHOLE supplied
+ * document (payloadDigest, .straylight/lib/canonical.mjs) — the frontier's
+ * identity, derived here rather than stored in the file, so the capture that
+ * reports it and the transition guard that requires it cannot disagree about
+ * what "this frontier" means.
  */
 export function validateDurableFrontier(frontier) {
   if (!isPlainObject(frontier)) return { ok: false, errors: ["frontier: not an object"] };
@@ -280,6 +305,7 @@ export function validateDurableFrontier(frontier) {
       event_count: eventCount,
       max_event_created_at: derived.iso,
       max_millis: derived.millis,
+      frontier_digest: payloadDigest(frontier),
     },
   };
 }

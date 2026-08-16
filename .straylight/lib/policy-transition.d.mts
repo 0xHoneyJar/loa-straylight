@@ -41,6 +41,11 @@ export type PolicyTransitionResult =
         lanes: number;
         events: number;
         max_event_created_at: string;
+        /**
+         * Canonical digest of the frontier relied on, equal to the appended
+         * epoch's committed `transition_evidence.frontier_digest` (Codex M-01).
+         */
+        frontier_digest: string;
         appended_governs_from: string;
       } | null;
     }
@@ -53,7 +58,8 @@ export type PolicyTransitionResult =
  * frontier cutover — enabled: false on BOTH sides, exactly one new epoch, a
  * caller-named frozen main SHA the evidence agrees with, and a valid durable
  * event frontier (quiescent, with no write-capable run in flight) whose global
- * maximum the new boundary is strictly after. Independent of the runtime
+ * maximum the new boundary is strictly after and whose canonical digest the
+ * appended epoch commits in `transition_evidence.frontier_digest`. Independent of the runtime
  * accepted-epoch lock: it takes the previous
  * policy as input and never consults the lock table. Pure — the evidence is an
  * explicit argument, never fetched.

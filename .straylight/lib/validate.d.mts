@@ -54,6 +54,11 @@ export declare const ADMISSION_FIELDS: readonly [
 ];
 /** The closed actor-role set; any other allowlist key is a policy error. */
 export declare const ACTOR_ROLES: readonly string[];
+/**
+ * A canonical payload digest, `sha256:<64 lowercase hex>`. The shape of an
+ * appended epoch's `transition_evidence.frontier_digest`.
+ */
+export declare const FRONTIER_DIGEST_RE: RegExp;
 export declare function validatePrMetadata(v: unknown): ValidationResult;
 /**
  * Strict UTC calendar instant → epoch millis, or null if impossible/malformed.

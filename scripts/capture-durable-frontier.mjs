@@ -85,13 +85,25 @@
 // not write lane events during a cutover; if one is posted anyway, this evidence
 // is stale — recapture, and move the candidate boundary if necessary.
 //
+// THE OUTPUT IS IDENTIFIED BY ITS DIGEST (Codex M-01)
+//
+// A valid frontier does not say that it is the frontier an append was reviewed
+// against; any other valid capture of the same repository at the same frozen
+// revision looks just as sound. So after a successful capture this tool PRINTS the
+// document's canonical content digest, and the appended admission epoch commits
+// that value as `transition_evidence.frontier_digest`. The digest is not written
+// into the document: a self-digest is recomputable by whoever edits the document,
+// and would make the file's identity a field of itself. --out continues to write
+// the frontier JSON and nothing else.
+//
 // Usage:
 //   node scripts/capture-durable-frontier.mjs \
 //     --frozen-main-sha <40-hex> \
 //     [--quiescence <file>] [--repo 0xHoneyJar/loa-straylight] [--out <path>]
 //
 // Writes deterministic JSON (lanes sorted by issue number) to stdout, or to
-// --out. Read-only: GET only. Nothing is posted, edited, labelled, or merged.
+// --out. The capture summary and the `frontier_digest:` line to commit go to
+// stderr. Read-only: GET only. Nothing is posted, edited, labelled, or merged.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync, realpathSync } from "node:fs";
@@ -423,6 +435,19 @@ function main() {
     `frontier: ${built.value.event_count} protocol event(s) across ${built.value.lane_count} lane(s); ` +
       `latest authenticated event ${built.value.max_event_created_at} (captured ${captured_at} against frozen ` +
       `main ${frozenMainSha}, quiescence proved here at ${second.value.checked_at})\n`,
+  );
+  // THE COMMITMENT (Codex M-01). This document's canonical content digest, which
+  // the appended admission epoch must carry as
+  // `transition_evidence.frontier_digest`. It is REPORTED, never written into the
+  // frontier: a digest stored inside the document it digests is a self-assertion
+  // anyone editing the document can recompute in the same edit, and it would make
+  // the file's own identity depend on a field of itself. The digest earns its
+  // force from living in the candidate policy, where the exact-SHA review of the
+  // append sees it, while the transition check recomputes it from these bytes.
+  process.stderr.write(
+    `frontier_digest: ${built.value.frontier_digest}\n` +
+      "  commit this in the appended epoch as transition_evidence.frontier_digest; " +
+      ".straylight/bin/policy-transition-check.mjs recomputes it over --frontier and refuses a mismatch\n",
   );
 }
 

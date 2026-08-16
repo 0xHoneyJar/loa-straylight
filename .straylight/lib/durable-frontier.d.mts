@@ -42,6 +42,12 @@ export interface DurableFrontierBound {
   /** Derived global maximum authenticated event time. */
   max_event_created_at: string;
   max_millis: number;
+  /**
+   * Canonical content digest of the whole supplied document, `sha256:<64 hex>`.
+   * The frontier's identity: derived, never stored in the file. An appended
+   * admission epoch commits this value.
+   */
+  frontier_digest: string;
 }
 
 export type DurableFrontierResult =

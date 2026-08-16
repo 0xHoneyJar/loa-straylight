@@ -18,8 +18,12 @@
 // So the CONTENT of every already-accepted epoch is pinned here, in executable
 // protocol code, OUTSIDE the mutable policy representation. The digest covers
 // the COMPLETE canonical epoch object — its id, its temporal boundary, all four
-// admission fields, and its provenance metadata — so no part of an accepted
-// epoch can be altered without breaking the lock.
+// admission fields, its provenance metadata, and (for an appended epoch) the
+// `transition_evidence.frontier_digest` naming the evidence it was authorized
+// against — so no part of an accepted epoch can be altered without breaking the
+// lock. This module needs to know nothing about what those fields MEAN: pinning
+// the whole canonical object is what makes the guarantee survive fields added
+// later.
 //
 //   policy edited, lock unchanged        -> FAIL CLOSED (digest mismatch)
 //   epoch appended, no lock appended     -> FAIL CLOSED (length/id mismatch)
@@ -58,38 +62,41 @@
 //      A merged freeze stops NEW work from being planned; it does not by itself
 //      stop a run that started earlier (see step 2, and § "What a freeze does
 //      and does not stop" in .straylight/README.md).
-//   2. VERIFY QUIESCENCE at that revision, read-only:
+//   2. VERIFY QUIESCENCE at that revision, read-only, as a pre-check:
 //      `node scripts/verify-frozen-quiescence.mjs --repo <owner/name>
 //         --frozen-main-sha $FROZEN_SHA --out /tmp/quiescence.json`
 //      It refuses while any run of any write-capable workflow is in a
 //      non-terminal state, and names the run ids. WAIT for them; do NOT cancel
-//      them — cancelling a run mid-plan is its own hazard.
-//   3. CAPTURE the durable event frontier read-only, bound to that revision and
-//      that evidence:
+//      them — cancelling a run mid-plan is its own hazard. The document it
+//      writes is a RECEIPT, not a licence: the capture can only contradict it.
+//   3. CAPTURE the durable event frontier read-only, bound to that revision:
 //      `node scripts/capture-durable-frontier.mjs --repo <owner/name>
 //         --frozen-main-sha $FROZEN_SHA --quiescence /tmp/quiescence.json
 //         --out /tmp/frontier.json`
-//      It refuses if main is not still exactly FROZEN_SHA, before AND after the
-//      lane reads.
-//   4. RE-VERIFY quiescence (step 2 again) after the capture. Neither tool is a
-//      transactional snapshot: a run created between the scan and the capture is
-//      only visible to a later scan. If it now refuses, or main has moved, go
-//      back to step 1 — do not reuse the captured frontier.
-//   5. APPEND the new epoch to `admission_history` in automation-policy.json,
+//      It PROVES quiescence itself, before AND after the lane reads, and
+//      refuses if main is not still exactly FROZEN_SHA at each — so there is no
+//      separate post-capture verification step. RECORD the `frontier_digest:`
+//      line it prints to stderr: that is the identity of these exact bytes.
+//   4. APPEND the new epoch to `admission_history` in automation-policy.json,
 //      with a `governs_from` strictly after the previous epoch's AND strictly
-//      after the frontier's `max_event_created_at`. Keep `enabled: false`.
-//      APPEND its lock entry below (its digest is `payloadDigest(epoch)`), and
-//      update the top-level projection to deep-equal the new final epoch.
-//   6. Run `node .straylight/bin/policy-transition-check.mjs` against the
+//      after the frontier's `max_event_created_at`, and
+//      `transition_evidence: { "frontier_digest": <the digest step 3 printed> }`.
+//      Keep `enabled: false`. APPEND its lock entry below (its digest is
+//      `payloadDigest(epoch)`, and it now covers the committed frontier digest
+//      too), and update the top-level projection to deep-equal the new final
+//      epoch.
+//   5. Run `node .straylight/bin/policy-transition-check.mjs` against the
 //      previous committed policy, WITH `--frontier`, `--repository`, and
 //      `--expect-frozen-main-sha $FROZEN_SHA`: the whole previous history must
 //      remain a canonical prefix of the new one, the evidence must be the
-//      evidence for THIS freeze, and the new boundary must clear the frontier.
+//      evidence for THIS freeze, the recomputed frontier digest must equal the
+//      one the epoch commits, and the new boundary must clear the frontier.
 //      One epoch per transition.
-//   7. Audit at an exact SHA, then merge the append WHILE STILL FROZEN. Any lane
+//   6. Audit at an exact SHA, then merge the append WHILE STILL FROZEN. Any lane
 //      event posted since step 3, any movement of main other than this merge, or
-//      any new write-capable run makes the evidence stale — restart from step 1.
-//   8. Merge a SEPARATE live-only transition restoring `enabled: true`.
+//      any new write-capable run makes the evidence stale — restart from step 1,
+//      and recommit the new capture's digest with it.
+//   7. Merge a SEPARATE live-only transition restoring `enabled: true`.
 //
 // The order is what carries the weight: freeze BEFORE evidence, evidence BEFORE
 // the append, and the append merged BEFORE automation resumes. Each step is

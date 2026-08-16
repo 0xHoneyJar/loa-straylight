@@ -551,11 +551,20 @@ const POLICY_KEYS = Object.freeze(new Set([
   "admission_history",
 ]));
 const EPOCH_KEYS = Object.freeze(new Set([
-  "epoch_id", "governs_from", ...ADMISSION_FIELDS, "provenance",
+  "epoch_id", "governs_from", ...ADMISSION_FIELDS, "provenance", "transition_evidence",
 ]));
 const PROVENANCE_KEYS = Object.freeze(new Set(["attributed_to", "reference", "note"]));
+// transition_evidence is a COMMITMENT, not description, which is why it is a
+// sibling of `provenance` rather than a member of it. Provenance says what a
+// human believes about the epoch; this says which exact durable-event frontier
+// document the append was authorized against, as a canonical content digest the
+// change-time transition guard recomputes and must match. It carries no
+// admission authority and no reducer behavior — see ADMISSION_FIELDS.
+const TRANSITION_EVIDENCE_KEYS = Object.freeze(new Set(["frontier_digest"]));
 
 const EPOCH_ID_RE = /^epoch-[0-9]{3,6}$/;
+// A canonical payload digest as produced by payloadDigest (canonical.mjs).
+export const FRONTIER_DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 // A documentation key: single leading underscore, then lowercase/digits. These
 // carry NO policy force — nothing reads them — and exist so the file can
 // explain itself. The single-underscore shape deliberately excludes `__proto__`
@@ -640,6 +649,27 @@ function epochErrors(epoch, prefix) {
     checkString(pl, prov, "reference", null, { minLength: 3, maxLength: 400 });
     checkString(pl, prov, "note", null, { optional: true, minLength: 3, maxLength: 4000 });
     errors.push(...pl.map((e) => `${prefix}.provenance.${e}`));
+  }
+  // OPTIONAL here, because the genesis epoch has no frontier to commit to and
+  // this validator sees hypothetical policies as well as real ones. WHEN an
+  // append is required to carry it is decided by the transition guard
+  // (policy-transition.mjs), which refuses an appended epoch without it and
+  // refuses a genesis epoch that has one. Structurally it is closed: present
+  // means exactly one key, a canonical digest string.
+  if (epoch.transition_evidence !== undefined) {
+    const ev = epoch.transition_evidence;
+    if (!isPlainObject(ev)) {
+      errors.push(`${prefix}.transition_evidence: present but not an object`);
+    } else {
+      for (const key of Object.keys(ev)) {
+        if (!TRANSITION_EVIDENCE_KEYS.has(key)) {
+          errors.push(`${prefix}.transition_evidence.${key}: unknown transition evidence key (the shape is closed)`);
+        }
+      }
+      const el = [];
+      checkString(el, ev, "frontier_digest", FRONTIER_DIGEST_RE);
+      errors.push(...el.map((e) => `${prefix}.transition_evidence.${e}`));
+    }
   }
   return errors;
 }

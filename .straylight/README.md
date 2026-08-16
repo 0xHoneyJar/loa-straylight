@@ -135,6 +135,9 @@ that nothing merges.
                                ended, bound to the frozen revision it was
                                captured against; an appended epoch must
                                begin strictly after its derived maximum
+                               and must commit its canonical digest (the
+                               document's identity, derived here, never
+                               stored inside the document)
     frozen-quiescence.mjs    ← frozen-write quiescence: the closed set of
                                workflows reaching the write executor,
                                derived mechanically from the workflow
@@ -156,7 +159,11 @@ that nothing merges.
                                requires `--frontier <file> --repository
                                <owner/name> --expect-frozen-main-sha
                                <40-hex>` and enabled:false on both
-                               sides (§ "Admission policy history")
+                               sides, and refuses unless the appended
+                               epoch commits the supplied frontier's
+                               recomputed canonical digest (there is no
+                               flag that can override it)
+                               (§ "Admission policy history")
     policy-gate.mjs          ← canonical workflow policy gate (exit 0 =
                                valid policy + enabled boolean true; exit 3 =
                                valid kill switch; exit 2 = malformed policy,
@@ -736,14 +743,16 @@ hazard and the decision is the operator's.
 Neither that tool nor the capture is a transactional snapshot. GitHub can
 create a run the instant after the last page is read — while frozen, a
 comment on any lane still triggers the reducer, which then plans nothing
-but is nonetheless a live write-capable run. Two complete independent
-scans, an unmoved `main` checked before and after, and a re-verify after
-the capture are strong evidence, not atomicity.
+but is nonetheless a live write-capable run. What the capture establishes
+is that quiescence held on both sides of its own lane reads: it runs the
+full live proof itself, before and after them, with `main` required to be
+the frozen revision each time. Two complete independent scans per proof
+and an unmoved `main` are strong evidence, not atomicity.
 
 **Where the procedure lives.** The cutover that turns this distinction
-into steps — freeze, verify quiescence, capture, re-verify, append,
-audit, re-enable — is § "Admission policy history" → "Appending an epoch
-— the eight-step cutover", with the same step list in the header of
+into steps — freeze, verify quiescence, capture, append, audit, re-enable
+— is § "Admission policy history" → "Appending an epoch
+— the seven-step cutover", with the same step list in the header of
 [`lib/admission-locks.mjs`](./lib/admission-locks.mjs). It is an operator
 procedure; nothing in the repository runs it automatically. The 48-hour
 lease-duration change is its first intended use: it returns as an
@@ -813,7 +822,7 @@ comments now judges them under the new epoch. Ordering the array is not
 the same as being prospective; the boundary has to be later than the
 history, not merely later than the previous boundary.
 
-So appending an admission epoch requires five things together:
+So appending an admission epoch requires six things together:
 
 - the PREVIOUS committed policy already has `enabled: false`;
 - the CANDIDATE also has `enabled: false`;
@@ -834,12 +843,51 @@ So appending an admission epoch requires five things together:
   maximum authenticated event time, which the validator DERIVES from the
   lane entries and cross-checks against the frontier's own claimed
   maximum in both directions (a claim that disagrees is a refusal, not a
-  correction).
+  correction);
+- the appended epoch's `transition_evidence.frontier_digest` equal to the
+  canonical content digest of the frontier document actually supplied.
 
 Exactly one epoch may be appended per reviewed transition, so the thing
 being reviewed is a single authorizable fact. A missing, malformed,
 duplicate-laned, incoherent, or stale-relative-to-its-own-contents
 frontier is a refusal.
+
+**Which frontier — the commitment.** The five conditions above accept ANY
+sound frontier for this repository at this frozen revision; they do not
+establish that it is the document the append was reviewed against. An
+earlier capture left in `/tmp`, an artifact from an abandoned attempt, or
+a file whose lane entries were trimmed until a backdated boundary looks
+prospective all validate equally well. So the appended epoch COMMITS to
+one document, by carrying that document's canonical content digest:
+
+```json
+"transition_evidence": { "frontier_digest": "sha256:<64 hex>" }
+```
+
+`scripts/capture-durable-frontier.mjs` prints that value to stderr after
+a successful capture (`frontier_digest: sha256:…`); the transition guard
+recomputes the digest over whatever file `--frontier` names and refuses a
+mismatch, naming both digests. The digest is not stored inside the
+frontier — a self-digest is recomputable by whoever edits the document —
+and there is no flag, field, environment variable, or sidecar file that
+can supply, weaken, or override the expected value. The only place it may
+be stated is the candidate policy, where the exact-SHA review sees it
+alongside the boundary it authorizes. Because the digest covers the whole
+document, committing it also commits the repository, the frozen revision,
+the quiescence times, the write-capable set, and every lane bound the
+capture observed — which is why none of those are duplicated into the
+epoch. This distinguishes documents; it is not a signature, a notary, or
+a public anchor, and it does not resist an operator who edits protocol
+code. `transition_evidence` is a sibling of `provenance`, not a member of
+it: provenance is descriptive and self-authorizes nothing, while this is a
+commitment the guard mechanically enforces. It is also NOT an admission
+field — the replay-sensitive set remains exactly the four — so no
+reducer decision depends on it. Once the epoch is accepted, its
+`frontier_digest` is inside the epoch's own content digest: the runtime
+lock and the append-only prefix check both fail closed if it is later
+edited, without either mechanism knowing what the field means.
+The genesis epoch is bounded by no frontier and must NOT carry
+`transition_evidence`; a v1→v2 candidate whose genesis does is refused.
 
 The first two conditions are what make the third meaningful: because the
 freeze must ALREADY be committed, the append cannot be combined with the
@@ -847,11 +895,11 @@ change that stops automation, so the evidence is gathered under a policy
 that already refuses new autonomous work. What a committed freeze does
 NOT do on its own is guarantee that nothing can be written afterwards —
 see § "What a freeze does and does not stop", which is why the frontier
-must additionally be captured under verified QUIESCENCE and carries that
-evidence with it. This deliberately makes policy
-evolution a multi-transition operation — freeze, verify quiescence,
-capture, re-verify, append, re-enable — each merged and audited on its
-own. Historical authority is worth more than saving a round trip. The
+must additionally be captured under QUIESCENCE THE CAPTURE ITSELF PROVES,
+before and after its lane reads, and carries that evidence with it. This
+deliberately makes policy evolution a multi-transition operation —
+freeze, verify quiescence, capture, append, re-enable — each merged and
+audited on its own. Historical authority is worth more than saving a round trip. The
 kill switch itself is never epoched: `enabled` is live operational
 policy, and a live-only change (admission history canonically identical)
 needs no frontier, which is what lets the freeze and the later re-enable
@@ -870,8 +918,9 @@ carries no repository identity, so the library can only require that the
 caller name a repository and a frozen commit SHA and that the evidence
 agree. The verdict echoes the repository, the frozen revision, the capture
 instant, when quiescence was verified, the write-capable workflow set, the
-lane count, the event count, and the frontier maximum it relied on, so the
-review reads the evidence instead of assuming it. (Event append-orientation on GitHub comments is a different matter and
+lane count, the event count, the frontier maximum, and the canonical
+`frontier_digest` it relied on, so the review reads the evidence instead
+of assuming it. (Event append-orientation on GitHub comments is a different matter and
 remains a convention — see § "The one-paragraph model".)
 
 **The genesis epoch.** `epoch-001` transcribes, without alteration, the
@@ -907,13 +956,13 @@ top-level projection): corridor `phase-49p…phase-50b`,
 `maximum_patch_cycles: 3`, `lease_duration_minutes: 240`, single-operator
 allowlist. **240 minutes is the active lease duration.** A longer lease
 (for example 48 hours) would be a NEW appended epoch with its own lock
-entry and its own review, appended through the eight-step cutover below;
+entry and its own review, appended through the seven-step cutover below;
 nothing about it is active here, and appending one could not change how
 any earlier lease was judged.
 
-**Appending an epoch — the eight-step cutover.** Three separate merges,
-in this order. Steps 1–4 establish the freeze and the evidence, 5–7
-append under the freeze, 8 resumes. Every read-only step refuses rather
+**Appending an epoch — the seven-step cutover.** Three separate merges,
+in this order. Steps 1–3 establish the freeze and the evidence, 4–6
+append under the freeze, 7 resumes. Every read-only step refuses rather
 than proceeding on a revision it was not explicitly pointed at.
 
 1. Merge a **live-only** transition setting `enabled: false`. The
@@ -929,7 +978,9 @@ than proceeding on a revision it was not explicitly pointed at.
    is the committed state on `main` — not merely proposed — and that the
    workflows read it (`bin/policy-gate.mjs` returns literal `false`).
 
-2. **Verify frozen-write quiescence** at that exact revision, read-only:
+2. **Verify frozen-write quiescence** at that exact revision, read-only.
+   This is a pre-check: it tells you whether the control plane has come
+   to rest yet, so the capture in step 3 will not simply refuse.
 
    ```bash
    node scripts/verify-frozen-quiescence.mjs \
@@ -942,11 +993,12 @@ than proceeding on a revision it was not explicitly pointed at.
    `enabled: false`, and every run of every write-capable workflow is in
    the terminal status. A refusal names the live run ids: **wait for
    them; do not cancel them.** A merged freeze alone is not this fact —
-   see § "What a freeze does and does not stop".
+   see § "What a freeze does and does not stop". The document it writes
+   is a RECEIPT, not a licence: passing it to step 3 lets the capture
+   contradict it, and nothing more.
 
-3. Capture the durable event frontier read-only, bound to that revision
-   and that evidence. GET operations only; nothing is posted, edited,
-   labelled, or merged:
+3. Capture the durable event frontier read-only, bound to that revision.
+   GET operations only; nothing is posted, edited, labelled, or merged:
 
    ```bash
    node scripts/capture-durable-frontier.mjs \
@@ -954,31 +1006,40 @@ than proceeding on a revision it was not explicitly pointed at.
      --quiescence /tmp/quiescence.json --out /tmp/frontier.json
    ```
 
-   The capture re-validates the quiescence document, requires `main` to
-   be exactly `FROZEN_SHA` **before and after** the lane reads, and
-   copies the quiescence evidence into the frontier. It discovers lanes
-   through the canonical `straylight:lane:v1` marker parser over two
-   unioned issue enumerations (plain and `cp-lane`-labelled — the label
-   is a derived projection, never discovery authority), paginates every
-   lane's comments, and fails closed on any unreadable genesis,
-   duplicated `lane_id`, or ambiguous protocol payload. Read the emitted
-   document: the lane list is the completeness claim, and it is the
-   operator's claim, not the tool's.
+   The capture PROVES QUIESCENCE ITSELF, running the same live proof as
+   step 2 twice — once before the lane reads and once after them — and
+   requires `main` to be exactly `FROZEN_SHA` at each. The frontier
+   carries the SECOND proof's evidence, so what it records is what was
+   still true once the last lane comment had been read; there is no
+   separate post-capture verification step, because the capture will not
+   emit a document it has not just re-proved. `--quiescence` is optional
+   and can only cause a refusal: if the receipt disagrees with the fresh
+   proof about the repository, the revision, the write-capable set, or is
+   stamped later than the proof, the capture aborts. None of its fields
+   reach the frontier. The capture discovers lanes through the canonical
+   `straylight:lane:v1` marker parser over two unioned issue enumerations
+   (plain and `cp-lane`-labelled — the label is a derived projection,
+   never discovery authority), paginates every lane's comments, and fails
+   closed on any unreadable genesis, duplicated `lane_id`, or ambiguous
+   protocol payload. Read the emitted document: the lane list is the
+   completeness claim, and it is the operator's claim, not the tool's.
 
-4. **Re-verify quiescence** (step 2 again) after the capture. Neither
-   tool is a transactional snapshot: a run created between the first scan
-   and the capture is only visible to a later scan. If it now refuses, or
-   `main` has moved, discard the captured frontier and restart at step 1.
+   Record the `frontier_digest: sha256:…` line it prints to stderr. That
+   is the value step 4 commits, and the identity of these exact bytes.
 
-5. Prepare the append: add the new epoch at the end of
+4. Prepare the append: add the new epoch at the end of
    `admission_history` with `governs_from` **strictly after** the
-   frontier's `max_event_created_at`, add its lock entry to
+   frontier's `max_event_created_at` and
+   `transition_evidence: { "frontier_digest": "<the digest step 3
+   printed>" }`, add its lock entry to
    `ACCEPTED_ADMISSION_EPOCH_LOCKS`, and update the top-level projection
    to mirror the new final epoch. Keep `enabled: false`.
 
-6. Run the transition guard **with the evidence**. `--repository` and
+5. Run the transition guard **with the evidence**. `--repository` and
    `--expect-frozen-main-sha` are both required alongside `--frontier`
-   and both must match it:
+   and both must match it; the guard also recomputes the frontier's
+   canonical digest and requires it to equal the epoch's committed one,
+   so the file named here must be the very document step 3 produced:
 
    ```bash
    git show $FROZEN_SHA:.straylight/automation-policy.json > /tmp/prev.json
@@ -988,20 +1049,23 @@ than proceeding on a revision it was not explicitly pointed at.
      --expect-frozen-main-sha $FROZEN_SHA
    ```
 
-7. Independent exact-SHA audit of the append, including the frontier
-   document, its quiescence evidence, and the verdict's echoed evidence.
-   Then merge the append **while still frozen**. If any lane protocol
-   event was posted between step 3 and this merge, if `main` moved for
-   any reason other than this merge, or if a new write-capable run
-   appeared, the evidence is stale: restart at step 1, and move the
-   candidate boundary if it no longer clears the new maximum.
+6. Independent exact-SHA audit of the append, including the frontier
+   document, its quiescence evidence, the committed `frontier_digest`,
+   and the verdict's echoed evidence. Then merge the append **while still
+   frozen**. If any lane protocol event was posted between step 3 and
+   this merge, if `main` moved for any reason other than this merge, or
+   if a new write-capable run appeared, the evidence is stale: restart at
+   step 1, and move the candidate boundary if it no longer clears the new
+   maximum. A recapture produces different bytes and therefore a
+   different digest, so the commitment written in step 4 must be updated
+   with it — a stale commitment refuses rather than passing quietly.
    `operator:eileen` must not write lane events during a cutover.
 
-8. Merge a **separate** live-only transition restoring `enabled: true`.
+7. Merge a **separate** live-only transition restoring `enabled: true`.
 
 The appended epoch becomes the top-level admission projection the moment
-step 7 merges, before its `governs_from` arrives — that interval is
-precisely why steps 1–2 and 7 require the freeze: no worker can acquire a
+step 6 merges, before its `governs_from` arrives — that interval is
+precisely why steps 1–2 and 6 require the freeze: no worker can acquire a
 lease under a projection whose epoch has not begun.
 
 ## Leases
@@ -1198,9 +1262,10 @@ node .straylight/bin/policy-transition-check.mjs \
 ```
 
 An admission APPEND also needs durable event frontier evidence, captured
-read-only while automation is already frozen AND quiescent, and bound to
-the frozen revision — see the eight-step cutover in § "Admission policy
-history":
+read-only while automation is already frozen AND quiescent, bound to the
+frozen revision, and COMMITTED BY DIGEST in the appended epoch's
+`transition_evidence.frontier_digest` — see the seven-step cutover in
+§ "Admission policy history":
 
 ```bash
 node scripts/verify-frozen-quiescence.mjs \
