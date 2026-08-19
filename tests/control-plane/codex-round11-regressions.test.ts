@@ -42,8 +42,7 @@ import { scan, asPositiveIssueNumber, asValidLaneId } from "../../.straylight/li
 import type { WatchdogAction, WatchdogPostEventAction, WatchdogMalformedLaneFinding } from "../../.straylight/lib/watchdog.mjs";
 import {
   makeLane, makeEvent, makeTaskPacket, makeAuditRecord, makePolicy, laneClaudeWorking,
-  payloadDigest, REPO, NOW, AFTER_EXPIRY, BASE_SHA, HEAD_SHA, WORKING_BRANCH,
-} from "./_fixtures.js";
+  payloadDigest, REPO, NOW, AFTER_EXPIRY, BASE_SHA, HEAD_SHA, WORKING_BRANCH, MAIN_SHA,} from "./_fixtures.js";
 
 const REDUCER_PLANNER = ".straylight/bin/plan-reducer-writes.mjs";
 const MERGE_GUARD_PLANNER = ".straylight/bin/plan-merge-guard-write.mjs";
@@ -194,7 +193,7 @@ function runMergeGuard(g1: string, g2: string) {
   const probe = run(REDUCER_PLANNER, [
     "--stage", "a", "--probe", "--slot-mode", "any-pr", "--with-checks", "--claim-root", claimRoot,
     "--gather-1", g1, "--gather-2", g2, "--issue-number", "41",
-    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
   ]);
   if (probe.status !== 0) return { ...probe, requestRoot };
   fabricateReadLedger(claimRoot, g1, g2);
@@ -203,7 +202,7 @@ function runMergeGuard(g1: string, g2: string) {
     "--request-root", requestRoot,
     "--claim", join(claimRoot, "claim.json"),
     "--read-ledger", join(claimRoot, "read-ledger.jsonl"),
-    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
   ]);
   return { ...r, requestRoot };
 }
@@ -380,7 +379,7 @@ describe("J4 — the cp-paused warning is positively identified by its dedicated
     const r = run(REDUCER_PLANNER, [
       "--stage", "b", "--gather-1", g1, "--gather-2", g2,
       "--issue-number", "41", "--request-root", requestRoot,
-      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
     ]);
     const plan = r.status === 0 ? JSON.parse(readFileSync(join(requestRoot, "plan.json"), "utf8")) : null;
     return { r, plan };

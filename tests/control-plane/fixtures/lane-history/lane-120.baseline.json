@@ -1,0 +1,161 @@
+{
+  "_comment": "GOLDEN BASELINE: the disposition of every historical protocol event, captured from the code and policy in effect when this file was written. It is the pre-migration answer that any later replay architecture must reproduce byte-identically. Regenerating this file to make a test pass destroys the proof it exists to provide, and its SHA-256 is pinned in tests/control-plane/lane-history-golden.test.ts.",
+  "repository": "0xHoneyJar/loa-straylight",
+  "issue_number": 120,
+  "source_main_sha": "5625c5be425c71fce90a22e81d123b42ed104538",
+  "replay_now": "2026-08-14T12:00:00Z",
+  "policy_schema": "straylight.automation-policy.v1",
+  "admission": {
+    "actor_allowlist": {
+      "_note": "GitHub commenter identity is the only authenticated identity available in v1; actor_role is a claimed field, not a cryptographic identity (ADR-050 §6). All model roles currently map to the operator's account. Distinct bot identities are a hard precondition for ever enabling auto_merge. github-actions[bot] is allowlisted for SYSTEM events only — it must never appear under operator, or workflow-posted comments could claim operator authority.",
+      "coordinator": [
+        "eileen1337"
+      ],
+      "implementer": [
+        "eileen1337"
+      ],
+      "auditor": [
+        "eileen1337"
+      ],
+      "operator": [
+        "eileen1337"
+      ],
+      "system": [
+        "eileen1337",
+        "github-actions[bot]"
+      ]
+    },
+    "authorized_corridor": [
+      "phase-49p",
+      "phase-49q",
+      "phase-50a",
+      "phase-50b"
+    ],
+    "lease_duration_minutes": 240,
+    "maximum_patch_cycles": 3,
+    "epoch_id": null
+  },
+  "summary": {
+    "state": "merged",
+    "event_sequence": 11,
+    "applied": 11,
+    "refused": 3
+  },
+  "ok": true,
+  "frozen": false,
+  "labels": [
+    "cp-lane",
+    "cp-state:merged",
+    "cp-next:none",
+    "cp-merged"
+  ],
+  "lane": {
+    "schema": "straylight.lane.v1",
+    "lane_id": "lane-phase-49q",
+    "phase": "phase-49q",
+    "authorized_corridor": [
+      "phase-49p",
+      "phase-49q",
+      "phase-50a",
+      "phase-50b"
+    ],
+    "repository": "0xHoneyJar/loa-straylight",
+    "base_branch": "main",
+    "base_sha": "77030a93ec2dddef5a96a7a7e047a009043252d5",
+    "tier": "tier-1",
+    "authority_bearing": true,
+    "state": "merged",
+    "next_actor": "none",
+    "working_branch": "phase-49q-railway-postgresql-acceptance-implementation-authorization",
+    "pr_number": 121,
+    "pr_head_sha": "5807d7d4e6c4802f231d42fe92825269bee1d3a4",
+    "audited_sha": "5807d7d4e6c4802f231d42fe92825269bee1d3a4",
+    "verdict": "ACCEPT",
+    "attempt": 1,
+    "patch_cycle": 0,
+    "audit_retry": 0,
+    "mode": "shadow",
+    "auto_merge_allowed": false,
+    "operator_pause": false,
+    "operator_required_reason": null,
+    "last_lease_role": null,
+    "lease": null,
+    "event_sequence": 11,
+    "last_transition": "ready-for-merge -[operator.merged#11]-> merged"
+  },
+  "dispositions": [
+    {
+      "comment_id": 5116618043,
+      "status": "applied",
+      "detail": "planning -[lane.activated#1]-> ready-for-coordinator"
+    },
+    {
+      "comment_id": 5116657882,
+      "status": "applied",
+      "detail": "ready-for-coordinator -[coordinator.task_packet_posted#2]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5116829971,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#3]-> claude-working"
+    },
+    {
+      "comment_id": 5118175394,
+      "status": "applied",
+      "detail": "claude-working -[implementer.completed#4]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5120278961,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#5]-> codex-working"
+    },
+    {
+      "comment_id": 5120300669,
+      "status": "refused",
+      "refusal": "transition-forbidden",
+      "detail": "auditor.completed by auditor not allowed from codex-working"
+    },
+    {
+      "comment_id": 5123127823,
+      "status": "applied",
+      "detail": "codex-working -[system.lease_expired#6]-> lease-expired"
+    },
+    {
+      "comment_id": 5125012149,
+      "status": "applied",
+      "detail": "lease-expired -[system.requeued#7]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5129474357,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#8]-> codex-working"
+    },
+    {
+      "comment_id": 5129483237,
+      "status": "refused",
+      "refusal": "transition-forbidden",
+      "detail": "auditor.completed by auditor not allowed from codex-working"
+    },
+    {
+      "comment_id": 5129526419,
+      "status": "refused",
+      "refusal": "audit-record-invalid",
+      "detail": "validation_summary: missing; audit_committed_in_pr: missing; next_actor: missing"
+    },
+    {
+      "comment_id": 5131533589,
+      "status": "applied",
+      "detail": "ACCEPT recorded; awaiting durable live-PR-metadata confirmation (system.eligibility_confirmed)"
+    },
+    {
+      "comment_id": 5131539234,
+      "status": "applied",
+      "detail": "shadow merge eligibility confirmed against durably-recorded live PR metadata; merge remains operator-only"
+    },
+    {
+      "comment_id": 5131558860,
+      "status": "applied",
+      "detail": "ready-for-merge -[operator.merged#11]-> merged"
+    }
+  ]
+}

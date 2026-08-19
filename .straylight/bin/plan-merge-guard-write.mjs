@@ -5,7 +5,8 @@
 //     --gather-1 <dir1> --gather-2 <dir2> --issue-number <n> \
 //     --request-root <dir> --repository <owner/repo> \
 //     --nonce <id>-<attempt> --now <iso> \
-//     --claim <claim-file> --read-ledger <ledger-file> [--policy <file>]
+//     --claim <claim-file> --read-ledger <ledger-file> \
+//     --source-main-sha-file <file> [--policy <file>]
 //
 // Two-read stable gather (lane + PR + check-runs + combined status, all
 // through the shared evidence parser with N1/N2 profiles), the universal
@@ -25,6 +26,12 @@
 // a guess; per-gather evidence must be canonically EQUAL (the live half
 // of the stability fence).
 //
+// WRITE-AUTHORITY BINDING (H-02): the plan carries `authority:
+// {source_main_sha, policy_digest}` — the exact commit this planning ran at
+// and the canonical digest of the accepted policy it loaded. The executor
+// re-establishes both from GitHub before the mutation, so a report planned
+// under `enabled: true` cannot post after a freeze is merged.
+//
 // Exit 0 = plan written. Exit 3 = valid no-op (result already posted).
 // Exit 2 = refusal (fail closed; nothing written).
 
@@ -33,6 +40,7 @@ import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { parseStrict } from "../lib/strict-json.mjs";
+import { loadProtocolPolicy } from "../lib/policy-source.mjs";
 import { parseIssuePages, parseIssue, parseCommentPages, parsePr, parseCheckRunPages, parseCombinedStatus } from "../lib/evidence.mjs";
 import { assertUniqueLaneTarget, scanLanes } from "../lib/lane-target.mjs";
 import { reconstructLane } from "../lib/reconstruct.mjs";
@@ -40,6 +48,7 @@ import { evaluate } from "../lib/merge-guard.mjs";
 import { payloadDigest } from "../lib/canonical.mjs";
 import { renderPayload, MARKERS } from "../lib/markers.mjs";
 import { WRITE_PLAN_SCHEMA, hasFullLineDedupe } from "../lib/write-plan.mjs";
+import { buildWriteAuthority, resolveSourceMainSha } from "../lib/write-authority.mjs";
 import { FETCH_SLOT_CLAIM_SCHEMA, parseClaim, parseReadLedger, checkLedgerAgainstClaim, slotFileName } from "../lib/collection.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -71,20 +80,28 @@ for (const [name, v] of [["--gather-1", gather1], ["--gather-2", gather2], ["--i
 }
 const issueNumber = Number(issueArg);
 if (!Number.isInteger(issueNumber) || issueNumber < 1) fail("usage", "--issue-number must be a positive integer");
+// The commit this planning ran at (H-02).
+const resolvedSourceSha = resolveSourceMainSha({
+  literal: arg("--source-main-sha"),
+  filePath: arg("--source-main-sha-file"),
+});
+if (!resolvedSourceSha.ok) fail(resolvedSourceSha.reason, resolvedSourceSha.detail);
 
-const policyPath = arg("--policy") ?? resolve(here, "..", "automation-policy.json");
-let policy;
-{
-  let text;
-  try {
-    text = readFileSync(policyPath, "utf8");
-  } catch (e) {
-    fail("policy-unreadable", String(e?.message ?? e));
-  }
-  const parsed = parseStrict(text);
-  if (!parsed.ok) fail("policy-unreadable", `strict JSON parse failed: ${parsed.reason}`);
-  policy = parsed.value;
-}
+// Strict parse + validation; the accepted-epoch digest lock additionally
+// applies when the file read is the protocol's own committed policy.
+const loadedPolicy = loadProtocolPolicy({
+  committedPath: resolve(here, "..", "automation-policy.json"),
+  overridePath: arg("--policy"),
+});
+if (!loadedPolicy.ok) fail(loadedPolicy.refusal, loadedPolicy.detail);
+const policy = loadedPolicy.value;
+
+// The H-02 write-authority binding: this run's commit + the canonical digest of
+// the accepted policy it reasoned under. Re-established from GitHub by the
+// executor before every mutation.
+const authorityBuilt = buildWriteAuthority({ source_main_sha: resolvedSourceSha.sha, policy });
+if (!authorityBuilt.ok) fail(authorityBuilt.reason, authorityBuilt.detail);
+const authority = authorityBuilt.authority;
 
 // Parse one complete BASE read (enumeration + issue + comments), retaining
 // raw byte digests so the probe claim can be rebound to the exact
@@ -307,6 +324,7 @@ const plan = {
   plan_id: `${nonce}-merge-guard`,
   nonce,
   repository,
+  authority,
   operations: [{
     op_id: "op-1",
     kind: "post-merge-guard-result",

@@ -21,11 +21,18 @@
 // Structural discipline (§10): at most one state-advancing event per
 // issue per plan, positioned after any findings for that issue.
 //
+// WRITE-AUTHORITY BINDING (H-02): the emitted plan carries `authority:
+// {source_main_sha, policy_digest}` — the commit this sweep ran at plus the
+// canonical digest of the accepted policy it reasoned under. The executor
+// re-establishes both from GitHub before every mutation, so recovery events
+// planned under `enabled: true` cannot post after a freeze is merged.
+//
 // Returns { ok: true, plan, empty } (empty=true → the caller uses exit 3),
 // or { ok: false, reason, detail? } (→ exit 2, zero writes).
 
 import { verifyAndProjectCollection, compareProjections } from "./collection.mjs";
 import { scan } from "./watchdog.mjs";
+import { buildWriteAuthority } from "./write-authority.mjs";
 import { hasFullLineDedupe, WRITE_PLAN_SCHEMA } from "./write-plan.mjs";
 import { renderPayload, MARKERS } from "./markers.mjs";
 import { payloadDigest } from "./canonical.mjs";
@@ -95,7 +102,15 @@ function buildFindingBody(action, now) {
 
 // The main entry. `collections` = { A: {ledgerText, manifestText, readFile},
 //                                   B: {…} }.
-export function planWatchdogWrites({ collections, nonce, repository, policy, now }) {
+//
+// `source_main_sha` is the exact commit this sweep's checkout ran at; together
+// with the accepted `policy` it forms the plan's H-02 write-authority binding.
+// It is built FIRST: a sweep that cannot name the revision that authorized it
+// has nothing to plan, and refusing here costs no evidence verification.
+export function planWatchdogWrites({ collections, nonce, repository, policy, now, source_main_sha }) {
+  const authorityBuilt = buildWriteAuthority({ source_main_sha, policy });
+  if (!authorityBuilt.ok) return bad(authorityBuilt.reason, authorityBuilt.detail);
+
   // Step 1+2: independent verification + projection, per collection.
   const projections = {};
   for (const id of ["A", "B"]) {
@@ -250,6 +265,7 @@ export function planWatchdogWrites({ collections, nonce, repository, policy, now
     plan_id: `${nonce}-watchdog`,
     nonce,
     repository,
+    authority: authorityBuilt.authority,
     operations,
   };
   return {

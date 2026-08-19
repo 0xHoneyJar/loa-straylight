@@ -1,19 +1,28 @@
-// Control Plane v1 — committed policy invariants and no-leak checks.
+// Control Plane — committed policy invariants and no-leak checks.
 // Pins the ACTUAL committed .straylight/ artifacts (not fixtures) against
 // the ADR-050 mandate: shadow mode, kill switch, auto-merge off, corridor
 // bounded to MVP-2, and no embedded credentials anywhere in the protocol.
+//
+// Under policy v2 the four admission fields are epoched, so each invariant
+// below is pinned where the authority actually lives — the final accepted
+// epoch — as well as in the top-level projection that mirrors it.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { validatePolicy } from "../../.straylight/lib/validate.mjs";
+import { validatePolicy, acceptPolicy } from "../../.straylight/lib/validate.mjs";
+import { parseStrict } from "../../.straylight/lib/strict-json.mjs";
 
 const ROOT = ".straylight";
-const policy = JSON.parse(readFileSync(join(ROOT, "automation-policy.json"), "utf8"));
+const parsedPolicy = parseStrict(readFileSync(join(ROOT, "automation-policy.json"), "utf8"));
+if (!parsedPolicy.ok) throw new Error(`committed policy: ${(parsedPolicy as any).reason}`);
+const policy = (parsedPolicy as any).value;
+const currentEpoch = policy.admission_history[policy.admission_history.length - 1];
 
 describe("committed automation policy", () => {
-  it("satisfies the v1 validator", () => {
+  it("satisfies the validator AND the accepted-epoch lock", () => {
     expect(validatePolicy(policy).ok).toBe(true);
+    expect(acceptPolicy(policy).ok).toBe(true);
   });
 
   it("is shadow mode with auto_merge=false and an obvious kill switch", () => {
@@ -24,9 +33,9 @@ describe("committed automation policy", () => {
   });
 
   it("authorizes exactly the MVP-2 corridor and nothing beyond", () => {
-    expect(policy.authorized_corridor).toEqual([
-      "phase-49p", "phase-49q", "phase-50a", "phase-50b",
-    ]);
+    const corridor = ["phase-49p", "phase-49q", "phase-50a", "phase-50b"];
+    expect(currentEpoch.authorized_corridor).toEqual(corridor);
+    expect(policy.authorized_corridor).toEqual(corridor);
     expect(policy.automatic_progression_beyond_mvp2).toBe(false);
   });
 
@@ -39,6 +48,8 @@ describe("committed automation policy", () => {
   });
 
   it("bounds patch cycles and leases", () => {
+    expect(currentEpoch.maximum_patch_cycles).toBe(3);
+    expect(currentEpoch.lease_duration_minutes).toBe(240);
     expect(policy.maximum_patch_cycles).toBe(3);
     expect(policy.lease_duration_minutes).toBeGreaterThan(0);
   });
@@ -53,12 +64,13 @@ describe("committed automation policy", () => {
     // Recorded ADR-050 §6 limitation, pinned as committed: the operator's
     // login carries every model role (no cryptographic separation in v1),
     // and the CI bot appears ONLY under system.
-    const al = policy.actor_allowlist;
-    for (const role of ["coordinator", "implementer", "auditor", "operator"]) {
-      expect(al[role], role).toContain("eileen1337");
-      expect(al[role].some((l: string) => l.endsWith("[bot]")), role).toBe(false);
+    for (const al of [currentEpoch.actor_allowlist, policy.actor_allowlist]) {
+      for (const role of ["coordinator", "implementer", "auditor", "operator"]) {
+        expect(al[role], role).toContain("eileen1337");
+        expect(al[role].some((l: string) => l.endsWith("[bot]")), role).toBe(false);
+      }
+      expect(al.system).toContain("github-actions[bot]");
     }
-    expect(al.system).toContain("github-actions[bot]");
   });
 });
 

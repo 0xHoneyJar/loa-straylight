@@ -13,11 +13,13 @@
 // Unknown/missing/mistyped fields are errors, never warnings.
 
 import { STATES, ROLES, VERDICTS, isState, isRole, nextActorFor } from "./state-machine.mjs";
+import { canonicalize } from "./canonical.mjs";
+import { pinnedEpochLockErrors, acceptedEpochLockErrors } from "./admission-locks.mjs";
 
 const LANE_ID_RE = /^lane-[a-z0-9][a-z0-9-]{1,62}$/;
 const PHASE_RE = /^[a-z0-9][a-z0-9-]{1,62}$/;
 const SHA_RE = /^[0-9a-f]{40}$/;
-const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+export const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BRANCH_RE = /^[A-Za-z0-9._/-]{1,200}$/;
 const LEASE_ID_RE = /^lease-[a-z0-9][a-z0-9-]{1,62}$/;
 const EVENT_ID_RE = /^evt-[a-z0-9][a-z0-9-]{1,62}$/;
@@ -499,52 +501,351 @@ export function validatePrMetadata(v) {
 }
 
 // ---------------------------------------------------------------------------
-// Automation policy (automation-policy.json)
+// Automation policy (automation-policy.json) — schema v2, admission epochs
 // ---------------------------------------------------------------------------
+//
+// Two kinds of field live in the policy, and conflating them is the defect v2
+// exists to fix.
+//
+// LIVE OPERATIONAL fields always take effect from their CURRENT value: enabled
+// (the kill switch — it would not be a kill switch if history pinned it), mode,
+// auto_merge, the six automatic_* prohibitions, stuck_lane_threshold_hours.
+//
+// ADMISSION fields decide whether a DURABLE PAST event was admissible:
+// authorized_corridor, actor_allowlist, maximum_patch_cycles,
+// lease_duration_minutes. Reading these live makes lane history a function of a
+// mutable file — raising lease_duration_minutes retroactively converts a
+// refused lease grant into an accepted one. In v2 they are versioned into
+// `admission_history`, and every event is judged under the epoch governing its
+// AUTHENTICATED observation time (the GitHub comment created_at), never under
+// today's value.
+//
+// The epochs themselves are pinned by ACCEPTED_ADMISSION_EPOCH_LOCKS in
+// admission-locks.mjs — executable protocol code outside this mutable file. See
+// that module for the exact guarantee and its honest threat boundary.
 
+// The four replay-sensitive admission fields, canonical order. Frozen: a caller
+// that mutated this list would silently narrow every check derived from it.
+export const ADMISSION_FIELDS = Object.freeze([
+  "authorized_corridor",
+  "actor_allowlist",
+  "maximum_patch_cycles",
+  "lease_duration_minutes",
+]);
+
+// The closed actor-role set. Any other key in an allowlist is an error, so no
+// unrecognized role can sit in the policy looking as though it grants something.
+export const ACTOR_ROLES = Object.freeze([
+  "coordinator", "implementer", "auditor", "operator", "system",
+]);
+
+// Closed key sets. v2 rejects unknown keys outright (see validatePolicy) so an
+// admission-like field cannot be added and silently treated as authoritative.
+const POLICY_KEYS = Object.freeze(new Set([
+  "schema", "mode", "enabled", "auto_merge",
+  "automatic_estate_semantic_decisions", "automatic_cross_repo_contract_changes",
+  "automatic_sibling_repo_edits", "automatic_external_infrastructure",
+  "automatic_secret_use", "automatic_progression_beyond_mvp2",
+  "stuck_lane_threshold_hours",
+  ...ADMISSION_FIELDS,
+  "admission_history",
+]));
+const EPOCH_KEYS = Object.freeze(new Set([
+  "epoch_id", "governs_from", ...ADMISSION_FIELDS, "provenance", "transition_evidence",
+]));
+const PROVENANCE_KEYS = Object.freeze(new Set(["attributed_to", "reference", "note"]));
+// transition_evidence is a COMMITMENT, not description, which is why it is a
+// sibling of `provenance` rather than a member of it. Provenance says what a
+// human believes about the epoch; this says which exact durable-event frontier
+// document the append was authorized against, as a canonical content digest the
+// change-time transition guard recomputes and must match. It carries no
+// admission authority and no reducer behavior — see ADMISSION_FIELDS.
+const TRANSITION_EVIDENCE_KEYS = Object.freeze(new Set(["frontier_digest"]));
+
+const EPOCH_ID_RE = /^epoch-[0-9]{3,6}$/;
+// A canonical payload digest as produced by payloadDigest (canonical.mjs).
+export const FRONTIER_DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
+// A documentation key: single leading underscore, then lowercase/digits. These
+// carry NO policy force — nothing reads them — and exist so the file can
+// explain itself. The single-underscore shape deliberately excludes `__proto__`
+// and friends, which fall through to the unknown-key rejection instead.
+const DOC_KEY_RE = /^_[a-z][a-z0-9_]*$/;
+
+const VOLATILE_PROHIBITIONS = Object.freeze([
+  "automatic_estate_semantic_decisions",
+  "automatic_cross_repo_contract_changes",
+  "automatic_sibling_repo_edits",
+  "automatic_external_infrastructure",
+  "automatic_secret_use",
+  "automatic_progression_beyond_mvp2",
+]);
+
+// The four admission fields of any object that carries them (an epoch, or the
+// top-level current-policy projection). ONE implementation, used by both, so
+// the projection can never be validated more loosely than an epoch.
+function admissionFieldErrors(obj, prefix) {
+  const local = [];
+  checkStringArray(local, obj, "authorized_corridor", PHASE_RE, { minItems: 1 });
+  checkInt(local, obj, "maximum_patch_cycles", { min: 1 });
+  checkInt(local, obj, "lease_duration_minutes", { min: 1 });
+  local.push(...allowlistErrors(obj.actor_allowlist));
+  return prefix ? local.map((e) => `${prefix}${e}`) : local;
+}
+
+function allowlistErrors(al) {
+  if (!isPlainObject(al)) return ["actor_allowlist: missing or not an object"];
+  const errors = [];
+  for (const key of Object.keys(al)) {
+    if (!ACTOR_ROLES.includes(key)) {
+      errors.push(`actor_allowlist.${key}: unknown role key (the role set is closed; documentation belongs in a top-level _-prefixed key)`);
+    }
+  }
+  for (const role of ACTOR_ROLES) {
+    checkStringArray(errors, al, role, GH_LOGIN_RE, { minItems: 1 });
+  }
+  // The mechanical CI identity must never hold operator authority: an
+  // operator-role event from a workflow-posted comment would let repo
+  // automation exercise the operator's exclusive powers (ADR-050 §3).
+  const ops = al.operator;
+  if (Array.isArray(ops) && ops.some((l) => typeof l === "string" && l.endsWith("[bot]"))) {
+    errors.push("actor_allowlist.operator: bot identities are forbidden in the operator role");
+  }
+  return errors;
+}
+
+// One epoch: closed shape, a real boundary instant, valid admission fields, and
+// provenance that is plainly DESCRIPTIVE. `provenance.attributed_to` is checked
+// only as a non-blank string — deliberately NOT pattern-matched against
+// "operator:...". Matching such a pattern would encode the false idea that the
+// string authenticates someone; it does not. Provenance is bound by the epoch's
+// content digest so it cannot be rewritten after acceptance, but its force
+// comes from the reviewed repository change that introduced the epoch, never
+// from what the string says about itself.
+function epochErrors(epoch, prefix) {
+  if (!isPlainObject(epoch)) return [`${prefix}: not an object`];
+  const errors = [];
+  for (const key of Object.keys(epoch)) {
+    if (!EPOCH_KEYS.has(key)) errors.push(`${prefix}.${key}: unknown epoch key (the epoch shape is closed)`);
+  }
+  const local = [];
+  checkString(local, epoch, "epoch_id", EPOCH_ID_RE);
+  // The temporal boundary. Epoch i governs [governs_from_i, governs_from_i+1),
+  // and the final epoch governs [governs_from_n, forever). An event observed
+  // before the FIRST boundary resolves to no epoch and fails closed — the
+  // genesis boundary is where the provable durable history begins, and the
+  // protocol refuses to invent admission authority earlier than that.
+  checkTimestamp(local, epoch, "governs_from");
+  errors.push(...local.map((e) => `${prefix}.${e}`));
+  errors.push(...admissionFieldErrors(epoch, `${prefix}.`));
+  const prov = epoch.provenance;
+  if (!isPlainObject(prov)) {
+    errors.push(`${prefix}.provenance: missing or not an object`);
+  } else {
+    for (const key of Object.keys(prov)) {
+      if (!PROVENANCE_KEYS.has(key)) errors.push(`${prefix}.provenance.${key}: unknown provenance key`);
+    }
+    const pl = [];
+    checkString(pl, prov, "attributed_to", null, { minLength: 3, maxLength: 200 });
+    checkString(pl, prov, "reference", null, { minLength: 3, maxLength: 400 });
+    checkString(pl, prov, "note", null, { optional: true, minLength: 3, maxLength: 4000 });
+    errors.push(...pl.map((e) => `${prefix}.provenance.${e}`));
+  }
+  // OPTIONAL here, because the genesis epoch has no frontier to commit to and
+  // this validator sees hypothetical policies as well as real ones. WHEN an
+  // append is required to carry it is decided by the transition guard
+  // (policy-transition.mjs), which refuses an appended epoch without it and
+  // refuses a genesis epoch that has one. Structurally it is closed: present
+  // means exactly one key, a canonical digest string.
+  if (epoch.transition_evidence !== undefined) {
+    const ev = epoch.transition_evidence;
+    if (!isPlainObject(ev)) {
+      errors.push(`${prefix}.transition_evidence: present but not an object`);
+    } else {
+      for (const key of Object.keys(ev)) {
+        if (!TRANSITION_EVIDENCE_KEYS.has(key)) {
+          errors.push(`${prefix}.transition_evidence.${key}: unknown transition evidence key (the shape is closed)`);
+        }
+      }
+      const el = [];
+      checkString(el, ev, "frontier_digest", FRONTIER_DIGEST_RE);
+      errors.push(...el.map((e) => `${prefix}.transition_evidence.${e}`));
+    }
+  }
+  return errors;
+}
+
+// The whole history: a non-empty array of structurally valid epochs with unique
+// ids and STRICTLY ASCENDING boundaries. Strict ordering is what makes epoch
+// resolution total and unambiguous — two epochs sharing a boundary would both
+// "govern" the same instant, and a descending pair would make the last-match
+// scan depend on array order rather than time. Both are refused here rather
+// than resolved by a tie-break nobody can audit.
+export function admissionHistoryErrors(history) {
+  if (!Array.isArray(history)) return ["admission_history: missing or not an array"];
+  if (history.length === 0) return ["admission_history: must contain at least one epoch"];
+  const errors = [];
+  history.forEach((epoch, i) => {
+    errors.push(...epochErrors(epoch, `admission_history[${i}]`));
+  });
+  const seen = new Map();
+  history.forEach((epoch, i) => {
+    const id = isPlainObject(epoch) ? epoch.epoch_id : undefined;
+    if (typeof id !== "string") return;
+    if (seen.has(id)) {
+      errors.push(`admission_history[${i}].epoch_id: ${id} duplicates admission_history[${seen.get(id)}]`);
+    } else {
+      seen.set(id, i);
+    }
+  });
+  for (let i = 1; i < history.length; i += 1) {
+    const prev = isPlainObject(history[i - 1]) ? parseIsoInstant(history[i - 1].governs_from) : null;
+    const cur = isPlainObject(history[i]) ? parseIsoInstant(history[i].governs_from) : null;
+    if (prev === null || cur === null) continue; // already reported as malformed
+    if (cur <= prev) {
+      errors.push(
+        `admission_history[${i}].governs_from: ${history[i].governs_from} is not strictly after ` +
+          `admission_history[${i - 1}].governs_from ${history[i - 1].governs_from} (epochs must be ordered and non-overlapping)`,
+      );
+    }
+  }
+  return errors;
+}
+
+// Resolve the admission policy governing an instant.
+//
+// CONTRACT (executable, not aspirational): this function validates the ENTIRE
+// history structurally before selecting anything, so calling it directly —
+// without a preceding validatePolicy — cannot yield an answer from a malformed,
+// unordered, duplicate-id, or empty history. It refuses: a non-object policy; a
+// non-integer instant; a missing/non-array/empty history; any malformed epoch;
+// duplicate epoch ids; non-strictly-ascending or unparseable boundaries; and an
+// instant earlier than the first epoch's boundary (no coverage → fail closed,
+// never "use the earliest anyway").
+//
+// SEPARATION OF CONCERNS, stated explicitly: this is STRUCTURAL selection only.
+// It deliberately does NOT check the accepted-epoch digest locks, because it is
+// also the selector used against hypothetical policies. It therefore guarantees
+// "this answer follows from a well-formed history", NOT "this history is the
+// accepted one". Production callers get the second guarantee separately:
+// reduce() runs validatePolicy first (which applies the runtime accepted-epoch
+// binding), and every loader of the real committed policy runs acceptPolicy
+// (which applies the full lock). No caller should read a guarantee here that
+// this function does not itself enforce.
+export function admissionPolicyFor(policy, atMillis) {
+  if (!isPlainObject(policy)) return { ok: false, errors: ["policy: not an object"] };
+  if (!Number.isInteger(atMillis)) {
+    return { ok: false, errors: ["at: not an integer epoch-millis instant"] };
+  }
+  const structural = admissionHistoryErrors(policy.admission_history);
+  if (structural.length > 0) return { ok: false, errors: structural };
+  const history = policy.admission_history;
+  let index = -1;
+  for (let i = 0; i < history.length; i += 1) {
+    if (parseIsoInstant(history[i].governs_from) <= atMillis) index = i;
+    else break; // strictly ascending, so no later epoch can govern either
+  }
+  if (index < 0) {
+    return {
+      ok: false,
+      errors: [
+        `admission-epoch-unavailable: the observed instant precedes the earliest admission epoch ` +
+          `(${history[0].epoch_id} governs from ${history[0].governs_from})`,
+      ],
+    };
+  }
+  const epoch = history[index];
+  const admission = {};
+  for (const field of ADMISSION_FIELDS) admission[field] = epoch[field];
+  return {
+    ok: true,
+    index,
+    epoch_id: epoch.epoch_id,
+    governs_from: epoch.governs_from,
+    admission,
+  };
+}
+
+// STRUCTURAL policy validation + the runtime accepted-epoch binding.
+//
+// Used everywhere a policy is consulted, including inside reduce(), so no
+// reduction can proceed under a policy whose accepted epochs have been
+// rewritten. See pinnedEpochLockErrors for exactly what the binding covers and
+// why the remaining case (a history presenting no accepted epoch at all) is
+// closed at the loader boundary by acceptPolicy instead.
 export function validatePolicy(v) {
   const errors = [];
   if (!isPlainObject(v)) return { ok: false, errors: ["policy: not an object"] };
-  checkEnum(errors, v, "schema", ["straylight.automation-policy.v1"]);
+  checkEnum(errors, v, "schema", ["straylight.automation-policy.v2"]);
+  // CLOSED SHAPE: an unknown top-level key is an error, not ignored. Silently
+  // accepting one lets a field that LOOKS like admission policy sit in the file
+  // while carrying no force — the reader believes it is bounded and it is not.
+  // Documentation keys are the single exception and are inert by construction.
+  for (const key of Object.keys(v)) {
+    if (DOC_KEY_RE.test(key)) continue;
+    if (!POLICY_KEYS.has(key)) {
+      errors.push(`${key}: unknown top-level policy key (v2 is a closed shape; documentation keys must match ${DOC_KEY_RE})`);
+    }
+  }
+  // Live operational fields.
   checkEnum(errors, v, "mode", ["shadow"]);
   checkBool(errors, v, "enabled");
   checkBool(errors, v, "auto_merge");
-  checkStringArray(errors, v, "authorized_corridor", PHASE_RE, { minItems: 1 });
-  checkBool(errors, v, "automatic_estate_semantic_decisions");
-  checkBool(errors, v, "automatic_cross_repo_contract_changes");
-  checkBool(errors, v, "automatic_sibling_repo_edits");
-  checkBool(errors, v, "automatic_external_infrastructure");
-  checkBool(errors, v, "automatic_secret_use");
-  checkBool(errors, v, "automatic_progression_beyond_mvp2");
-  checkInt(errors, v, "maximum_patch_cycles", { min: 1 });
-  checkInt(errors, v, "lease_duration_minutes", { min: 1 });
+  for (const k of VOLATILE_PROHIBITIONS) checkBool(errors, v, k);
   checkInt(errors, v, "stuck_lane_threshold_hours", { min: 1 });
-  if (!isPlainObject(v.actor_allowlist)) {
-    errors.push("actor_allowlist: missing or not an object");
-  } else {
-    for (const role of ["coordinator", "implementer", "auditor", "operator", "system"]) {
-      checkStringArray(errors, v.actor_allowlist, role, GH_LOGIN_RE, { minItems: 1 });
+
+  // The REQUIRED top-level projection of current admission policy. Required
+  // (not optional) so every shipped tool that reads e.g. policy.lease_duration_
+  // minutes keeps reading a real, validated value; and pinned deep-equal to the
+  // final epoch below so it can never disagree with the policy that actually
+  // governs. It is a convenience read of CURRENT policy and never historical
+  // authority: the reducer resolves admission from the governing epoch.
+  errors.push(...admissionFieldErrors(v, ""));
+
+  const historyErrors = admissionHistoryErrors(v.admission_history);
+  errors.push(...historyErrors);
+
+  if (historyErrors.length === 0) {
+    const final = v.admission_history[v.admission_history.length - 1];
+    for (const field of ADMISSION_FIELDS) {
+      if (canonicalize(v[field]) !== canonicalize(final[field])) {
+        errors.push(
+          `${field}: top-level projection does not equal the final admission epoch ` +
+            `(${final.epoch_id}); the projection must be exactly current policy`,
+        );
+      }
     }
-    // The mechanical CI identity must never hold operator authority: an
-    // operator-role event from a workflow-posted comment would let repo
-    // automation exercise the operator's exclusive powers (ADR-050 §3).
-    const ops = v.actor_allowlist.operator;
-    if (Array.isArray(ops) && ops.some((l) => typeof l === "string" && l.endsWith("[bot]"))) {
-      errors.push("actor_allowlist.operator: bot identities are forbidden in the operator role");
-    }
+    // The runtime accepted-epoch lock (admission-locks.mjs).
+    errors.push(...pinnedEpochLockErrors(v.admission_history));
   }
-  // Hard v1 invariants: these fields exist so that flipping them is loud,
-  // but v1 refuses to run with them flipped.
+
+  // Hard v1/v2 invariants: these fields exist so that flipping them is loud,
+  // but the control plane refuses to run with them flipped.
   if (v.auto_merge === true) errors.push("auto_merge: must be false in control plane v1");
-  for (const k of [
-    "automatic_estate_semantic_decisions",
-    "automatic_cross_repo_contract_changes",
-    "automatic_sibling_repo_edits",
-    "automatic_external_infrastructure",
-    "automatic_secret_use",
-    "automatic_progression_beyond_mvp2",
-  ]) {
+  for (const k of VOLATILE_PROHIBITIONS) {
     if (v[k] === true) errors.push(`${k}: must be false in control plane v1`);
   }
   return result(errors, v);
+}
+
+// PRODUCTION ACCEPTANCE of the real committed automation-policy.json.
+//
+// validatePolicy + the FULL accepted-epoch lock: the history must be exactly
+// the accepted history — same length, same ids at the same indices, same
+// canonical content. This is the boundary where provenance is known (the bytes
+// came from the protocol's own policy file), so the unconditional lock is both
+// meaningful and safe here in a way it cannot be inside a pure validator that
+// also serves hypothetical policies.
+//
+// EVERY loader of the committed automation-policy.json reaches this function
+// through loadProtocolPolicy (policy-source.mjs), the single place that decides
+// which validator a policy file must satisfy. That obligation is enforced
+// mechanically by tests/control-plane/admission-epochs.test.ts, which scans
+// .straylight/bin/ and scripts/ with comments blanked — so a comment mentioning
+// the loader cannot satisfy it — and fails if any script reads the policy path
+// itself instead of loading it through policy-source.mjs.
+export function acceptPolicy(v) {
+  const structural = validatePolicy(v);
+  if (!structural.ok) return structural;
+  const lockErrors = acceptedEpochLockErrors(v.admission_history);
+  return lockErrors.length === 0 ? { ok: true, value: v } : { ok: false, errors: lockErrors };
 }

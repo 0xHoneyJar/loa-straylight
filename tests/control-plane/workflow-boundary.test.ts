@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   makeLane, makeEvent, makePolicy, makeTaskPacket, makeAuditRecord,
-  payloadDigest, REPO, NOW, BASE_SHA, HEAD_SHA, WORKING_BRANCH,
+  payloadDigest, REPO, NOW, BASE_SHA, HEAD_SHA, WORKING_BRANCH, MAIN_SHA, planAuthority, authorityResponses,
 } from "./_fixtures.js";
 
 const REDUCER_PLANNER = ".straylight/bin/plan-reducer-writes.mjs";
@@ -188,7 +188,7 @@ describe("row 19 — reducer Stage B gathers and reconstructs AFTER Stage A's wr
     const probe = runPlanner([
       "--stage", "a", "--probe", "--claim-root", claimRoot,
       "--gather-1", gA1, "--gather-2", gA2, "--issue-number", "41",
-      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
     ]);
     expect(probe.status).toBe(0);
     // The read ledger the shared read executor would have written for the
@@ -205,7 +205,7 @@ describe("row 19 — reducer Stage B gathers and reconstructs AFTER Stage A's wr
       "--issue-number", "41", "--request-root", requestA,
       "--claim", join(claimRoot, "claim.json"),
       "--read-ledger", join(claimRoot, "read-ledger.jsonl"),
-      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
     ]);
     expect(a.status).toBe(0);
     const planA = JSON.parse(readFileSync(join(requestA, "plan.json"), "utf8"));
@@ -226,7 +226,7 @@ describe("row 19 — reducer Stage B gathers and reconstructs AFTER Stage A's wr
     const b = runPlanner([
       "--stage", "b", "--gather-1", gB1, "--gather-2", gB2,
       "--issue-number", "41", "--request-root", requestB,
-      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
     ]);
     expect(b.status).toBe(0);
     expect(b.out.state).toBe("ready-for-merge"); // the CONFIRMED state — no pre-write projection escaped
@@ -254,7 +254,7 @@ describe("row 19 — reducer Stage B gathers and reconstructs AFTER Stage A's wr
     const stale = runPlanner([
       "--stage", "b", "--gather-1", gS1, "--gather-2", gS2,
       "--issue-number", "41", "--request-root", requestS,
-      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
     ]);
     expect(stale.status).toBe(0);
     expect(stale.out.state).toBe("eligibility-pending");
@@ -297,7 +297,7 @@ describe("partial-execution recovery — dedupe + fresh reconstruction plan only
     const first = runPlanner([
       "--stage", "b", "--gather-1", g1, "--gather-2", g2,
       "--issue-number", "41", "--request-root", request1,
-      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
     ]);
     expect(first.status).toBe(0);
     const plan1 = JSON.parse(readFileSync(join(request1, "plan.json"), "utf8"));
@@ -321,7 +321,7 @@ describe("partial-execution recovery — dedupe + fresh reconstruction plan only
     const second = runPlanner([
       "--stage", "b", "--gather-1", g3, "--gather-2", g4,
       "--issue-number", "41", "--request-root", request2,
-      "--repository", REPO, "--nonce", "12345-2", "--now", NOW, "--policy", policyPath,
+      "--repository", REPO, "--nonce", "12345-2", "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
     ]);
     expect(second.status).toBe(0);
     const plan2 = JSON.parse(readFileSync(join(request2, "plan.json"), "utf8"));
@@ -341,13 +341,32 @@ describe("partial-execution recovery — dedupe + fresh reconstruction plan only
     const ghDir = join(root, "gh-mock");
     mkdirSync(ghDir);
     const log = join(ghDir, "launches.log");
-    writeFileSync(join(ghDir, "gh"), `#!/bin/sh\n{ printf 'ARGV:'; for a in "$@"; do printf ' %s' "$a"; done; printf '\\n'; } >> "${log}"\ncat > /dev/null\nexit 0\n`);
+    // The read branch answers the executor's H-02 write-time authority probes;
+    // only the mutation is recorded, because only the mutation is the claim.
+    const responses = authorityResponses();
+    writeFileSync(join(ghDir, "read-metadata.json"), responses.metadata);
+    writeFileSync(join(ghDir, "read-ref.json"), responses.ref);
+    writeFileSync(join(ghDir, "read-contents.json"), responses.contents);
+    writeFileSync(join(ghDir, "gh"), `#!/bin/sh
+if [ "$2" != "-X" ]; then
+  case "$2" in
+    */git/ref/heads/main) cat "${ghDir}/read-ref.json" ;;
+    */contents/*) cat "${ghDir}/read-contents.json" ;;
+    *) cat "${ghDir}/read-metadata.json" ;;
+  esac
+  exit 0
+fi
+{ printf 'ARGV:'; for a in "$@"; do printf ' %s' "$a"; done; printf '\\n'; } >> "${log}"
+cat > /dev/null
+exit 0
+`);
     chmodSync(join(ghDir, "gh"), 0o755);
     const plan = {
       schema: "straylight.write-plan.v1",
       plan_id: `${NONCE}-reducer-b`,
       nonce: NONCE,
       repository: REPO,
+      authority: planAuthority(),
       operations: [{
         op_id: "op-1", kind: "remove-derived-cp-paused-after-warning",
         issue_number: 41, lane_id: "lane-phase-49p",

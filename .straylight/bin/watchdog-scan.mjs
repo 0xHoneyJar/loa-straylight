@@ -14,6 +14,7 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scan } from "../lib/watchdog.mjs";
+import { loadProtocolPolicy } from "../lib/policy-source.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -30,12 +31,18 @@ try {
   process.stdout.write(JSON.stringify({ ok: false, refusal: "input-unreadable", detail: String(e?.message ?? e), actions: [] }) + "\n");
   process.exit(2);
 }
-try {
-  const policyPath = arg("--policy") ?? resolve(here, "..", "automation-policy.json");
-  policy = JSON.parse(readFileSync(policyPath, "utf8"));
-} catch (e) {
-  process.stdout.write(JSON.stringify({ ok: false, refusal: "policy-unreadable", detail: String(e?.message ?? e), actions: [] }) + "\n");
-  process.exit(2);
+// Strict parse + validation, with the accepted-epoch digest lock applied
+// because the default path IS the protocol's committed policy.
+{
+  const loaded = loadProtocolPolicy({
+    committedPath: resolve(here, "..", "automation-policy.json"),
+    overridePath: arg("--policy"),
+  });
+  if (!loaded.ok) {
+    process.stdout.write(JSON.stringify({ ok: false, refusal: loaded.refusal, detail: loaded.detail, actions: [] }) + "\n");
+    process.exit(2);
+  }
+  policy = loaded.value;
 }
 
 const result = scan(input.lanes ?? [], policy, { now: new Date().toISOString(), ...(input.context ?? {}) });

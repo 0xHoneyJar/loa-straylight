@@ -65,7 +65,7 @@ import {
   reconstructCollectionLanes, deriveIssueSlots, sealCollection, sha256OfBytes,
 } from "../../.straylight/lib/collection.mjs";
 import { planWatchdogWrites } from "../../.straylight/lib/watchdog-plan.mjs";
-import { makeLane, makeEvent, makeTaskPacket, makePolicy, payloadDigest, REPO, NOW, HEAD_SHA, WORKING_BRANCH } from "./_fixtures.js";
+import { makeLane, makeEvent, makeTaskPacket, makePolicy, payloadDigest, REPO, NOW, HEAD_SHA, WORKING_BRANCH, MAIN_SHA, planAuthority, authorityResponses } from "./_fixtures.js";
 
 const REDUCER_PLANNER = ".straylight/bin/plan-reducer-writes.mjs";
 const EXECUTOR = ".straylight/bin/execute-write-plan.mjs";
@@ -129,7 +129,7 @@ describe("J4 — a forged bot comment carrying the dedupe line is never a warnin
     const r = runNode(REDUCER_PLANNER, [
       "--stage", "b", "--gather-1", g1, "--gather-2", g2,
       "--issue-number", "41", "--request-root", requestRoot,
-      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
     ]);
     const plan = r.status === 0 ? JSON.parse(readFileSync(join(requestRoot, "plan.json"), "utf8")) : null;
     return { r, plan };
@@ -176,10 +176,29 @@ describe("J4 — a forged bot comment carrying the dedupe line is never a warnin
 // J5 — the write executor refuses any plan outside the request root
 // =============================================================================
 describe("J5 — execute-write-plan realpath-contains the plan beneath --request-root", () => {
+  // The read branch answers the executor's H-02 write-time authority probes and
+  // is NOT written to launches.log: this row's claim is about WRITE attempts, and
+  // a read-only GET is not one.
   function ghMock() {
     const dir = mkdtempSync(join(tmpdir(), "cp-r10-gh-"));
     const log = join(dir, "launches.log");
-    writeFileSync(join(dir, "gh"), `#!/bin/sh\n{ printf 'ARGV:'; for a in "$@"; do printf ' %s' "$a"; done; printf '\\n'; } >> "${log}"\ncat > /dev/null\nexit 0\n`);
+    const responses = authorityResponses();
+    writeFileSync(join(dir, "read-metadata.json"), responses.metadata);
+    writeFileSync(join(dir, "read-ref.json"), responses.ref);
+    writeFileSync(join(dir, "read-contents.json"), responses.contents);
+    writeFileSync(join(dir, "gh"), `#!/bin/sh
+if [ "$2" != "-X" ]; then
+  case "$2" in
+    */git/ref/heads/main) cat "${dir}/read-ref.json" ;;
+    */contents/*) cat "${dir}/read-contents.json" ;;
+    *) cat "${dir}/read-metadata.json" ;;
+  esac
+  exit 0
+fi
+{ printf 'ARGV:'; for a in "$@"; do printf ' %s' "$a"; done; printf '\\n'; } >> "${log}"
+cat > /dev/null
+exit 0
+`);
     chmodSync(join(dir, "gh"), 0o755);
     return { dir, log };
   }
@@ -192,6 +211,7 @@ describe("J5 — execute-write-plan realpath-contains the plan beneath --request
         plan_id: `${NONCE}-watchdog`,
         nonce: NONCE,
         repository: REPO,
+        authority: planAuthority(),
         operations: [{
           op_id: "op-1", kind: "post-watchdog-finding", issue_number: 41,
           dedupe_key: "k-1", body_file: "op-1.json", body_sha256: sha256(content),
@@ -464,7 +484,7 @@ describe("J7 — asymmetric per-issue outcomes for ONE PR can never alias into a
         A: { ledgerText: readFileSync(a.ledgerPath, "utf8"), manifestText: readFileSync(join(a.dir, "manifest.json"), "utf8"), readFile: (p: string) => { try { return readFileSync(join(a.dir, p)); } catch { return null; } } },
         B: { ledgerText: readFileSync(b.ledgerPath, "utf8"), manifestText: readFileSync(join(b.dir, "manifest.json"), "utf8"), readFile: (p: string) => { try { return readFileSync(join(b.dir, p)); } catch { return null; } } },
       },
-      nonce: NONCE, repository: REPO, policy: makePolicy(), now: NOW,
+      nonce: NONCE, repository: REPO, policy: makePolicy(), now: NOW, source_main_sha: MAIN_SHA,
     });
   }
 

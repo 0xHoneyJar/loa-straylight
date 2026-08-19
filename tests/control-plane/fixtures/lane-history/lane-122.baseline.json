@@ -1,0 +1,710 @@
+{
+  "_comment": "GOLDEN BASELINE: the disposition of every historical protocol event, captured from the code and policy in effect when this file was written. It is the pre-migration answer that any later replay architecture must reproduce byte-identically. Regenerating this file to make a test pass destroys the proof it exists to provide, and its SHA-256 is pinned in tests/control-plane/lane-history-golden.test.ts.",
+  "repository": "0xHoneyJar/loa-straylight",
+  "issue_number": 122,
+  "source_main_sha": "5625c5be425c71fce90a22e81d123b42ed104538",
+  "replay_now": "2026-08-14T12:00:00Z",
+  "policy_schema": "straylight.automation-policy.v1",
+  "admission": {
+    "actor_allowlist": {
+      "_note": "GitHub commenter identity is the only authenticated identity available in v1; actor_role is a claimed field, not a cryptographic identity (ADR-050 §6). All model roles currently map to the operator's account. Distinct bot identities are a hard precondition for ever enabling auto_merge. github-actions[bot] is allowlisted for SYSTEM events only — it must never appear under operator, or workflow-posted comments could claim operator authority.",
+      "coordinator": [
+        "eileen1337"
+      ],
+      "implementer": [
+        "eileen1337"
+      ],
+      "auditor": [
+        "eileen1337"
+      ],
+      "operator": [
+        "eileen1337"
+      ],
+      "system": [
+        "eileen1337",
+        "github-actions[bot]"
+      ]
+    },
+    "authorized_corridor": [
+      "phase-49p",
+      "phase-49q",
+      "phase-50a",
+      "phase-50b"
+    ],
+    "lease_duration_minutes": 240,
+    "maximum_patch_cycles": 3,
+    "epoch_id": null
+  },
+  "summary": {
+    "state": "ready-for-claude",
+    "event_sequence": 121,
+    "applied": 121,
+    "refused": 3
+  },
+  "ok": true,
+  "frozen": false,
+  "labels": [
+    "cp-lane",
+    "cp-state:ready-for-claude",
+    "cp-next:implementer"
+  ],
+  "lane": {
+    "schema": "straylight.lane.v1",
+    "lane_id": "lane-phase-50a",
+    "phase": "phase-50a",
+    "authorized_corridor": [
+      "phase-49p",
+      "phase-49q",
+      "phase-50a",
+      "phase-50b"
+    ],
+    "repository": "0xHoneyJar/loa-straylight",
+    "base_branch": "main",
+    "base_sha": "70d40058096455c6406d644183ac757a317ce159",
+    "tier": "tier-1",
+    "authority_bearing": false,
+    "state": "ready-for-claude",
+    "next_actor": "implementer",
+    "working_branch": "phase-50a-r3-sealed-authority-closure",
+    "pr_number": 137,
+    "pr_head_sha": "e3afc3605ca3375b5bf5e1096e05af7c31a4061a",
+    "audited_sha": "e3afc3605ca3375b5bf5e1096e05af7c31a4061a",
+    "verdict": "REJECT",
+    "attempt": 22,
+    "patch_cycle": 3,
+    "audit_retry": 0,
+    "mode": "shadow",
+    "auto_merge_allowed": false,
+    "operator_pause": false,
+    "operator_required_reason": null,
+    "last_lease_role": null,
+    "lease": null,
+    "event_sequence": 121,
+    "last_transition": "lease-expired -[system.requeued#121]-> ready-for-claude"
+  },
+  "dispositions": [
+    {
+      "comment_id": 5131683890,
+      "status": "applied",
+      "detail": "planning -[lane.activated#1]-> ready-for-coordinator"
+    },
+    {
+      "comment_id": 5131722110,
+      "status": "refused",
+      "refusal": "task-packet-wrong-next-actor",
+      "detail": "packet expected_next_actor implementer != auditor"
+    },
+    {
+      "comment_id": 5131805569,
+      "status": "applied",
+      "detail": "ready-for-coordinator -[coordinator.task_packet_posted#2]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5132296334,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#3]-> claude-working"
+    },
+    {
+      "comment_id": 5133235421,
+      "status": "applied",
+      "detail": "claude-working -[implementer.completed#4]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5134793125,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#5]-> codex-working"
+    },
+    {
+      "comment_id": 5135023938,
+      "status": "applied",
+      "detail": "codex-working -[auditor.audit_completed#6]-> patch-required"
+    },
+    {
+      "comment_id": 5135199781,
+      "status": "applied",
+      "detail": "patch-required -[coordinator.patch_packet_posted#7]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5135338417,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#8]-> claude-working"
+    },
+    {
+      "comment_id": 5135824541,
+      "status": "applied",
+      "detail": "claude-working -[implementer.completed#9]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5136178297,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#10]-> codex-working"
+    },
+    {
+      "comment_id": 5136415775,
+      "status": "applied",
+      "detail": "codex-working -[auditor.audit_completed#11]-> patch-required"
+    },
+    {
+      "comment_id": 5136486033,
+      "status": "applied",
+      "detail": "patch-required -[coordinator.patch_packet_posted#12]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5142895993,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#13]-> claude-working"
+    },
+    {
+      "comment_id": 5143520173,
+      "status": "applied",
+      "detail": "claude-working -[implementer.completed#14]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5146800174,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#15]-> codex-working"
+    },
+    {
+      "comment_id": 5147151379,
+      "status": "applied",
+      "detail": "codex-working -[auditor.audit_completed#16]-> patch-required"
+    },
+    {
+      "comment_id": 5147289280,
+      "status": "refused",
+      "refusal": "task-packet-wrong-next-actor",
+      "detail": "packet expected_next_actor implementer != auditor"
+    },
+    {
+      "comment_id": 5147659095,
+      "status": "applied",
+      "detail": "patch-required -[coordinator.patch_packet_posted#17]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5147712241,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#18]-> claude-working"
+    },
+    {
+      "comment_id": 5147886458,
+      "status": "applied",
+      "detail": "claude-working -[implementer.completed#19]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5151016756,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#20]-> codex-working"
+    },
+    {
+      "comment_id": 5151656748,
+      "status": "applied",
+      "detail": "codex-working -[auditor.audit_completed#21]-> blocked"
+    },
+    {
+      "comment_id": 5152166078,
+      "status": "applied",
+      "detail": "blocked -[operator.decision#22]-> ready-for-coordinator"
+    },
+    {
+      "comment_id": 5152528087,
+      "status": "applied",
+      "detail": "ready-for-coordinator -[coordinator.task_packet_posted#23]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5152848159,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#24]-> claude-working"
+    },
+    {
+      "comment_id": 5153130007,
+      "status": "applied",
+      "detail": "claude-working -[implementer.completed#25]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5153690689,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#26]-> codex-working"
+    },
+    {
+      "comment_id": 5153799769,
+      "status": "applied",
+      "detail": "codex-working -[auditor.audit_completed#27]-> blocked"
+    },
+    {
+      "comment_id": 5154053719,
+      "status": "applied",
+      "detail": "blocked -[operator.decision#28]-> ready-for-coordinator"
+    },
+    {
+      "comment_id": 5154294118,
+      "status": "applied",
+      "detail": "ready-for-coordinator -[coordinator.task_packet_posted#29]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5156983838,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#30]-> claude-working"
+    },
+    {
+      "comment_id": 5158179984,
+      "status": "applied",
+      "detail": "claude-working -[implementer.lease_released#31]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5158184869,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#32]-> claude-working"
+    },
+    {
+      "comment_id": 5158404314,
+      "status": "applied",
+      "detail": "claude-working -[implementer.completed#33]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5160104429,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#34]-> codex-working"
+    },
+    {
+      "comment_id": 5160307266,
+      "status": "applied",
+      "detail": "codex-working -[auditor.audit_completed#35]-> blocked"
+    },
+    {
+      "comment_id": 5160506197,
+      "status": "applied",
+      "detail": "blocked -[operator.decision#36]-> ready-for-coordinator"
+    },
+    {
+      "comment_id": 5165583883,
+      "status": "applied",
+      "detail": "ready-for-coordinator -[coordinator.task_packet_posted#37]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5166123982,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#38]-> claude-working"
+    },
+    {
+      "comment_id": 5166950788,
+      "status": "applied",
+      "detail": "claude-working -[implementer.completed#39]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5167236154,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#40]-> codex-working"
+    },
+    {
+      "comment_id": 5168085250,
+      "status": "applied",
+      "detail": "codex-working -[auditor.audit_completed#41]-> blocked"
+    },
+    {
+      "comment_id": 5168491994,
+      "status": "applied",
+      "detail": "blocked -[operator.decision#42]-> ready-for-coordinator"
+    },
+    {
+      "comment_id": 5169042916,
+      "status": "applied",
+      "detail": "ready-for-coordinator -[coordinator.task_packet_posted#43]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5169349831,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#44]-> claude-working"
+    },
+    {
+      "comment_id": 5169933022,
+      "status": "applied",
+      "detail": "claude-working -[implementer.completed#45]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5170353734,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#46]-> codex-working"
+    },
+    {
+      "comment_id": 5170630543,
+      "status": "applied",
+      "detail": "codex-working -[auditor.audit_completed#47]-> patch-required"
+    },
+    {
+      "comment_id": 5171018721,
+      "status": "applied",
+      "detail": "patch-required -[coordinator.escalated#48]-> operator-required"
+    },
+    {
+      "comment_id": 5171890625,
+      "status": "applied",
+      "detail": "operator-required -[operator.decision#49]-> ready-for-coordinator"
+    },
+    {
+      "comment_id": 5178044860,
+      "status": "applied",
+      "detail": "ready-for-coordinator -[coordinator.task_packet_posted#50]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5178538560,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#51]-> claude-working"
+    },
+    {
+      "comment_id": 5179435860,
+      "status": "applied",
+      "detail": "claude-working -[implementer.completed#52]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5179779316,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#53]-> codex-working"
+    },
+    {
+      "comment_id": 5180113997,
+      "status": "applied",
+      "detail": "codex-working -[auditor.audit_completed#54]-> blocked"
+    },
+    {
+      "comment_id": 5180621718,
+      "status": "applied",
+      "detail": "blocked -[operator.decision#55]-> ready-for-coordinator"
+    },
+    {
+      "comment_id": 5182145898,
+      "status": "applied",
+      "detail": "ready-for-coordinator -[coordinator.task_packet_posted#56]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5182658226,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#57]-> claude-working"
+    },
+    {
+      "comment_id": 5182708926,
+      "status": "applied",
+      "detail": "claude-working -[implementer.escalated#58]-> operator-required"
+    },
+    {
+      "comment_id": 5183886488,
+      "status": "applied",
+      "detail": "operator-required -[operator.decision#59]-> ready-for-coordinator"
+    },
+    {
+      "comment_id": 5184414449,
+      "status": "applied",
+      "detail": "ready-for-coordinator -[coordinator.task_packet_posted#60]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5185501480,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#61]-> claude-working"
+    },
+    {
+      "comment_id": 5185823114,
+      "status": "applied",
+      "detail": "claude-working -[implementer.completed#62]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5190109773,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#63]-> codex-working"
+    },
+    {
+      "comment_id": 5192000734,
+      "status": "applied",
+      "detail": "codex-working -[system.lease_expired#64]-> lease-expired"
+    },
+    {
+      "comment_id": 5192167788,
+      "status": "applied",
+      "detail": "lease-expired -[system.requeued#65]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5192217348,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#66]-> codex-working"
+    },
+    {
+      "comment_id": 5192241259,
+      "status": "applied",
+      "detail": "codex-working -[auditor.audit_completed#67]-> blocked"
+    },
+    {
+      "comment_id": 5193187237,
+      "status": "applied",
+      "detail": "blocked -[operator.decision#68]-> ready-for-coordinator"
+    },
+    {
+      "comment_id": 5193737209,
+      "status": "applied",
+      "detail": "ready-for-coordinator -[coordinator.task_packet_posted#69]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5194218310,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#70]-> claude-working"
+    },
+    {
+      "comment_id": 5194225902,
+      "status": "applied",
+      "detail": "claude-working -[implementer.escalated#71]-> operator-required"
+    },
+    {
+      "comment_id": 5194786982,
+      "status": "applied",
+      "detail": "operator-required -[operator.decision#72]-> ready-for-coordinator"
+    },
+    {
+      "comment_id": 5195182983,
+      "status": "applied",
+      "detail": "ready-for-coordinator -[coordinator.task_packet_posted#73]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5195313437,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#74]-> claude-working"
+    },
+    {
+      "comment_id": 5195678486,
+      "status": "applied",
+      "detail": "claude-working -[implementer.completed#75]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5196498908,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#76]-> codex-working"
+    },
+    {
+      "comment_id": 5196875228,
+      "status": "applied",
+      "detail": "codex-working -[auditor.audit_completed#77]-> blocked"
+    },
+    {
+      "comment_id": 5197252558,
+      "status": "applied",
+      "detail": "blocked -[operator.decision#78]-> ready-for-coordinator"
+    },
+    {
+      "comment_id": 5197939393,
+      "status": "applied",
+      "detail": "ready-for-coordinator -[coordinator.task_packet_posted#79]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5198105840,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#80]-> claude-working"
+    },
+    {
+      "comment_id": 5198542993,
+      "status": "applied",
+      "detail": "claude-working -[implementer.completed#81]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5202238677,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#82]-> codex-working"
+    },
+    {
+      "comment_id": 5202991585,
+      "status": "applied",
+      "detail": "codex-working -[auditor.audit_completed#83]-> blocked"
+    },
+    {
+      "comment_id": 5204854701,
+      "status": "applied",
+      "detail": "blocked -[operator.decision#84]-> ready-for-coordinator"
+    },
+    {
+      "comment_id": 5207215257,
+      "status": "applied",
+      "detail": "ready-for-coordinator -[coordinator.task_packet_posted#85]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5215628103,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#86]-> claude-working"
+    },
+    {
+      "comment_id": 5216146166,
+      "status": "applied",
+      "detail": "claude-working -[implementer.completed#87]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5220206453,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#88]-> codex-working"
+    },
+    {
+      "comment_id": 5220245991,
+      "status": "applied",
+      "detail": "codex-working -[auditor.audit_completed#89]-> blocked"
+    },
+    {
+      "comment_id": 5220991234,
+      "status": "applied",
+      "detail": "blocked -[operator.decision#90]-> ready-for-coordinator"
+    },
+    {
+      "comment_id": 5222051377,
+      "status": "applied",
+      "detail": "ready-for-coordinator -[coordinator.task_packet_posted#91]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5222834507,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#92]-> claude-working"
+    },
+    {
+      "comment_id": 5223044318,
+      "status": "applied",
+      "detail": "claude-working -[implementer.completed#93]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5226773139,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#94]-> codex-working"
+    },
+    {
+      "comment_id": 5226783484,
+      "status": "applied",
+      "detail": "codex-working -[auditor.audit_completed#95]-> blocked"
+    },
+    {
+      "comment_id": 5226840651,
+      "status": "applied",
+      "detail": "blocked -[operator.decision#96]-> ready-for-coordinator"
+    },
+    {
+      "comment_id": 5226929435,
+      "status": "applied",
+      "detail": "ready-for-coordinator -[coordinator.task_packet_posted#97]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5227665461,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#98]-> claude-working"
+    },
+    {
+      "comment_id": 5229000978,
+      "status": "applied",
+      "detail": "claude-working -[system.lease_expired#99]-> lease-expired"
+    },
+    {
+      "comment_id": 5229807259,
+      "status": "applied",
+      "detail": "lease-expired -[system.requeued#100]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5233669380,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#101]-> claude-working"
+    },
+    {
+      "comment_id": 5234010941,
+      "status": "applied",
+      "detail": "claude-working -[implementer.completed#102]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5242417400,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#103]-> codex-working"
+    },
+    {
+      "comment_id": 5242492831,
+      "status": "applied",
+      "detail": "codex-working -[auditor.audit_completed#104]-> blocked"
+    },
+    {
+      "comment_id": 5244210808,
+      "status": "applied",
+      "detail": "blocked -[operator.decision#105]-> ready-for-coordinator"
+    },
+    {
+      "comment_id": 5250556137,
+      "status": "applied",
+      "detail": "ready-for-coordinator -[coordinator.task_packet_posted#106]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5250781071,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#107]-> claude-working"
+    },
+    {
+      "comment_id": 5252249277,
+      "status": "applied",
+      "detail": "claude-working -[implementer.completed#108]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5257177236,
+      "status": "refused",
+      "refusal": "lease-expiry-unbounded",
+      "detail": "lease_expires_at 2026-08-11T22:40:00Z exceeds observed grant + 240m"
+    },
+    {
+      "comment_id": 5257220713,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#109]-> codex-working"
+    },
+    {
+      "comment_id": 5257733526,
+      "status": "applied",
+      "detail": "codex-working -[auditor.audit_completed#110]-> blocked"
+    },
+    {
+      "comment_id": 5258065113,
+      "status": "applied",
+      "detail": "blocked -[operator.decision#111]-> ready-for-coordinator"
+    },
+    {
+      "comment_id": 5258489292,
+      "status": "applied",
+      "detail": "ready-for-coordinator -[coordinator.task_packet_posted#112]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5263607928,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#113]-> claude-working"
+    },
+    {
+      "comment_id": 5264794840,
+      "status": "applied",
+      "detail": "claude-working -[implementer.completed#114]-> ready-for-codex"
+    },
+    {
+      "comment_id": 5268102278,
+      "status": "applied",
+      "detail": "ready-for-codex -[auditor.lease_acquired#115]-> codex-working"
+    },
+    {
+      "comment_id": 5268133641,
+      "status": "applied",
+      "detail": "codex-working -[auditor.audit_completed#116]-> blocked"
+    },
+    {
+      "comment_id": 5268469156,
+      "status": "applied",
+      "detail": "blocked -[operator.decision#117]-> ready-for-coordinator"
+    },
+    {
+      "comment_id": 5269236213,
+      "status": "applied",
+      "detail": "ready-for-coordinator -[coordinator.task_packet_posted#118]-> ready-for-claude"
+    },
+    {
+      "comment_id": 5270192827,
+      "status": "applied",
+      "detail": "ready-for-claude -[implementer.lease_acquired#119]-> claude-working"
+    },
+    {
+      "comment_id": 5274503689,
+      "status": "applied",
+      "detail": "claude-working -[system.lease_expired#120]-> lease-expired"
+    },
+    {
+      "comment_id": 5276134089,
+      "status": "applied",
+      "detail": "lease-expired -[system.requeued#121]-> ready-for-claude"
+    }
+  ]
+}

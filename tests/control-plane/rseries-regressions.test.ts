@@ -38,7 +38,7 @@ function auditEvent(record: Record<string, any>, overrides: Record<string, any> 
   });
 }
 const frontierCtx = (record: Record<string, any>, over: Record<string, any> = {}) => ({
-  now: NOW, comment_author: "codex-login", audit_record: record, ...over,
+  event_observed_at: NOW, comment_author: "codex-login", audit_record: record, ...over,
 });
 
 // =============================================================================
@@ -50,7 +50,7 @@ describe("R1 — durable live PR metadata governs the eligibility confirmation",
   const lane = () => laneEligibilityPending({ event_sequence: 6 });
   const confirm = (metaOver: Record<string, any> = {}) =>
     makeConfirmEvent({ sequence: 7 }, metaOver);
-  const ctx = { now: NOW };
+  const ctx = { event_observed_at: NOW };
 
   it("1. correct audited head but CLOSED live PR → refused", () => {
     const out = reduce(lane(), confirm({ state: "closed" }), policy, ctx);
@@ -222,7 +222,7 @@ describe("R2 — task-packet binding is temporal, digest-pinned, and full-contra
       event_type: "coordinator.task_packet_posted", prior_state: "ready-for-coordinator",
       refs: { task_packet_comment_id: 2, task_packet_digest: payloadDigest(tp) },
     });
-    const ctx = (tp: any) => ({ now: NOW, comment_author: "chatgpt-login", task_packet: tp });
+    const ctx = (tp: any) => ({ event_observed_at: NOW, comment_author: "chatgpt-login", task_packet: tp });
     // Wrong repository → refused (the R2 exploit: packet drives implementer into a foreign repo).
     let tp = makeTaskPacket({ repository: "attacker/evil-repo" });
     let out = reduce(laneRFC, packetEvent(tp), policy, ctx(tp));
@@ -261,7 +261,7 @@ describe("R2 — task-packet binding is temporal, digest-pinned, and full-contra
       event_type: "coordinator.task_packet_posted", prior_state: "ready-for-coordinator",
       refs: { task_packet_comment_id: 2 },
     });
-    let out = reduce(laneRFC, noDigest, policy, { now: NOW, task_packet: tp });
+    let out = reduce(laneRFC, noDigest, policy, { event_observed_at: NOW, task_packet: tp });
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.refusal).toBe("task-packet-digest-missing");
     // Declared digest of a DIFFERENT packet than the bound one → mismatch
@@ -271,7 +271,7 @@ describe("R2 — task-packet binding is temporal, digest-pinned, and full-contra
       event_type: "coordinator.task_packet_posted", prior_state: "ready-for-coordinator",
       refs: { task_packet_comment_id: 2, task_packet_digest: payloadDigest(makeTaskPacket({ allowed_paths: ["src/"] })) },
     });
-    out = reduce(laneRFC, wrongDigest, policy, { now: NOW, task_packet: tp });
+    out = reduce(laneRFC, wrongDigest, policy, { event_observed_at: NOW, task_packet: tp });
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.refusal).toBe("task-packet-digest-mismatch");
   });
@@ -330,7 +330,7 @@ describe("R3 — lease holder / time / id-reuse discipline", () => {
       event_type: "implementer.completed", prior_state: "claude-working",
       lease_id: "lease-claude-1", head_sha: HEAD_SHA, refs: { pr_number: 120 },
     });
-    const out = reduce(lane, complete, policy, { now: NOW, comment_author: "someone-else" });
+    const out = reduce(lane, complete, policy, { event_observed_at: NOW, comment_author: "someone-else" });
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.refusal).toBe("lease-holder-mismatch");
   });
@@ -342,7 +342,7 @@ describe("R3 — lease holder / time / id-reuse discipline", () => {
       event_type: "implementer.lease_released", prior_state: "claude-working",
       lease_id: "lease-claude-1",
     });
-    const out = reduce(lane, release, policy, { now: NOW, comment_author: "impostor" });
+    const out = reduce(lane, release, policy, { event_observed_at: NOW, comment_author: "impostor" });
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.refusal).toBe("lease-holder-mismatch");
   });
@@ -355,7 +355,7 @@ describe("R3 — lease holder / time / id-reuse discipline", () => {
       lease_id: "lease-old", lease_expires_at: LEASE_EXPIRY,
     });
     const out = reduce(lane, event, policy, {
-      now: NOW, comment_author: "claude-login", task_packet: makeTaskPacket(),
+      event_observed_at: NOW, comment_author: "claude-login", task_packet: makeTaskPacket(),
       used_lease_ids: ["lease-old"],
     });
     expect(out.ok).toBe(false);
@@ -369,7 +369,7 @@ describe("R3 — lease holder / time / id-reuse discipline", () => {
       event_type: "implementer.lease_acquired", prior_state: "ready-for-claude",
       lease_id: "lease-claude-1", lease_expires_at: LEASE_EXPIRY, occurred_at: "2026-13-01T00:00:00Z",
     });
-    const out = reduce(lane, event, policy, { now: NOW, comment_author: "claude-login", task_packet: makeTaskPacket() });
+    const out = reduce(lane, event, policy, { event_observed_at: NOW, comment_author: "claude-login", task_packet: makeTaskPacket() });
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.refusal).toBe("event-invalid");
   });
@@ -381,7 +381,7 @@ describe("R3 — lease holder / time / id-reuse discipline", () => {
       event_type: "implementer.lease_acquired", prior_state: "ready-for-claude",
       lease_id: "lease-claude-1", lease_expires_at: "2026-02-30T00:00:00Z",
     });
-    const out = reduce(lane, event, policy, { now: NOW, comment_author: "claude-login", task_packet: makeTaskPacket() });
+    const out = reduce(lane, event, policy, { event_observed_at: NOW, comment_author: "claude-login", task_packet: makeTaskPacket() });
     expect(out.ok).toBe(false);
   });
 
@@ -393,7 +393,7 @@ describe("R3 — lease holder / time / id-reuse discipline", () => {
       lease_id: "lease-claude-1", lease_expires_at: LEASE_EXPIRY, occurred_at: "2020-01-01T00:00:00Z",
     });
     const out = reduce(lane, event, policy, {
-      now: NOW, event_observed_at: NOW, comment_author: "claude-login", task_packet: makeTaskPacket(),
+      event_observed_at: NOW, comment_author: "claude-login", task_packet: makeTaskPacket(),
     });
     expect(out.ok).toBe(true);
     if (out.ok) {
@@ -414,7 +414,7 @@ describe("R3 — lease holder / time / id-reuse discipline", () => {
       event_type: "implementer.completed", prior_state: "claude-working",
       lease_id: "lease-claude-1", head_sha: HEAD_SHA, refs: { pr_number: 120 },
     });
-    const out = reduce(lane, stale, policy, { now: NOW, comment_author: "claude-login" });
+    const out = reduce(lane, stale, policy, { event_observed_at: NOW, comment_author: "claude-login" });
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.refusal).toBe("lease-id-mismatch");
   });
@@ -427,7 +427,7 @@ describe("R3 — lease holder / time / id-reuse discipline", () => {
       lease_id: "lease-claude-1", head_sha: HEAD_SHA, refs: { pr_number: 120 },
     });
     // github_actor matches allowlist, but the authenticated comment author is not the holder.
-    const out = reduce(lane, complete, policy, { now: NOW, comment_author: "another-claude" });
+    const out = reduce(lane, complete, policy, { event_observed_at: NOW, comment_author: "another-claude" });
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.refusal).toBe("lease-holder-mismatch");
   });
@@ -569,7 +569,7 @@ describe("R4 — audit reference binding and record consistency", () => {
       lease_id: "lease-codex-1", audited_sha: HEAD_SHA, verdict: "ACCEPT",
       refs: { pr_number: 120 },
     }), policy, {
-      now: NOW, comment_author: "codex-login",
+      event_observed_at: NOW, comment_author: "codex-login",
       // no audit_record supplied (adapter could not bind)
     });
     expect(out.ok).toBe(false);

@@ -10,6 +10,9 @@
 // per-kind endpoint body-content binding over the exact retained bytes.
 
 export declare const WRITE_PLAN_SCHEMA: "straylight.write-plan.v1";
+// Every plan carries a REQUIRED write-authority binding (see
+// write-authority.d.mts): `authority: { source_main_sha, policy_digest }`.
+// There is no optional or legacy plan shape without it.
 export declare const REPOSITORY_ALLOWLIST: readonly string[];
 export declare const NONCE_RE: RegExp;
 
@@ -67,7 +70,9 @@ export declare function checkConstructedPath(path: string): PlanError | null;
 export declare function validatePlan(
   plan: unknown,
   expectation: { repository: string; nonce: string }
-): { ok: true; operations: ValidatedOperation[] } | { ok: false; errors: PlanError[] };
+):
+  | { ok: true; authority: import("./write-authority.d.mts").WriteAuthority; operations: ValidatedOperation[] }
+  | { ok: false; errors: PlanError[] };
 
 /** True when text contains a line that is EXACTLY `dedupe:<key>` (C4). */
 export declare function hasFullLineDedupe(text: string, key: string): boolean;

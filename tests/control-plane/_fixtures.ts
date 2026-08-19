@@ -1,8 +1,12 @@
 // Shared fixtures for the control-plane test suite.
 // Everything here mirrors the published v1 contracts in .straylight/schemas/.
 
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { payloadDigest } from "../../.straylight/lib/canonical.mjs";
 import { nextActorFor } from "../../.straylight/lib/state-machine.mjs";
+import { parseStrict } from "../../.straylight/lib/strict-json.mjs";
+import { policyAuthorityDigest } from "../../.straylight/lib/write-authority.mjs";
 
 export const BASE_SHA = "009c4afe34f3f7151db4239fe1c69898833440bb";
 export const HEAD_SHA = "a93e9f3694c3b8e5f7e6839856b9f347998a49ad";
@@ -21,13 +25,56 @@ export const REPO = "0xHoneyJar/loa-straylight";
 
 export { payloadDigest };
 
-export function makePolicy(overrides: Record<string, any> = {}) {
+// The fixture admission epoch's id is deliberately NOT a production accepted
+// epoch id. ACCEPTED_ADMISSION_EPOCH_LOCKS pins the real history, so a fixture
+// policy claiming "epoch-001" must fail closed (proved in
+// tests/control-plane/admission-epochs.test.ts) — the fixtures must therefore
+// never borrow an accepted id, and the suite must never be able to make one
+// pass by adjusting a fixture.
+export const FIXTURE_EPOCH_ID = "epoch-900";
+// Boundary well before NOW so every fixture event resolves to this epoch, and
+// late enough to be an obviously synthetic test value.
+export const FIXTURE_EPOCH_FROM = "2026-07-01T00:00:00Z";
+
+const FIXTURE_ALLOWLIST = {
+  coordinator: ["chatgpt-login"],
+  implementer: ["claude-login"],
+  auditor: ["codex-login"],
+  operator: ["eileen1337"],
+  system: ["eileen1337", "github-actions[bot]"],
+};
+const FIXTURE_CORRIDOR = ["phase-49p", "phase-49q", "phase-50a", "phase-50b"];
+
+// One admission epoch. Callers override individual fields to build adversarial
+// histories (edited content, bad boundaries, duplicate ids).
+export function makeEpoch(overrides: Record<string, any> = {}) {
   return {
-    schema: "straylight.automation-policy.v1",
+    epoch_id: FIXTURE_EPOCH_ID,
+    governs_from: FIXTURE_EPOCH_FROM,
+    authorized_corridor: [...FIXTURE_CORRIDOR],
+    maximum_patch_cycles: 3,
+    lease_duration_minutes: 240,
+    actor_allowlist: structuredClone(FIXTURE_ALLOWLIST),
+    provenance: {
+      attributed_to: "test-fixture",
+      reference: "tests/control-plane/_fixtures.ts (synthetic epoch; not protocol history)",
+    },
+    ...overrides,
+  };
+}
+
+// A v2 policy. The four admission fields exist at top level as the REQUIRED
+// current-policy projection AND inside a single admission epoch, and
+// validatePolicy demands they be deep-equal — so overriding one (the way most
+// of this suite exercises admission policy) must change both. Overriding
+// `admission_history` explicitly takes full control of the history instead.
+export function makePolicy(overrides: Record<string, any> = {}) {
+  const policy: Record<string, any> = {
+    schema: "straylight.automation-policy.v2",
     mode: "shadow",
     enabled: true,
     auto_merge: false,
-    authorized_corridor: ["phase-49p", "phase-49q", "phase-50a", "phase-50b"],
+    authorized_corridor: [...FIXTURE_CORRIDOR],
     automatic_estate_semantic_decisions: false,
     automatic_cross_repo_contract_changes: false,
     automatic_sibling_repo_edits: false,
@@ -37,15 +84,20 @@ export function makePolicy(overrides: Record<string, any> = {}) {
     maximum_patch_cycles: 3,
     lease_duration_minutes: 240,
     stuck_lane_threshold_hours: 72,
-    actor_allowlist: {
-      coordinator: ["chatgpt-login"],
-      implementer: ["claude-login"],
-      auditor: ["codex-login"],
-      operator: ["eileen1337"],
-      system: ["eileen1337", "github-actions[bot]"],
-    },
+    actor_allowlist: structuredClone(FIXTURE_ALLOWLIST),
     ...overrides,
   };
+  if (!("admission_history" in overrides)) {
+    policy.admission_history = [
+      makeEpoch({
+        authorized_corridor: policy.authorized_corridor,
+        maximum_patch_cycles: policy.maximum_patch_cycles,
+        lease_duration_minutes: policy.lease_duration_minutes,
+        actor_allowlist: policy.actor_allowlist,
+      }),
+    ];
+  }
+  return policy;
 }
 
 // States in which the lane working branch has been established by the
@@ -245,6 +297,130 @@ export function laneEligibilityPending(overrides: Record<string, any> = {}) {
     pr_head_sha: HEAD_SHA,
     audited_sha: HEAD_SHA,
     verdict: "ACCEPT",
+    ...overrides,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// H-02 WRITE AUTHORITY (Codex H-02)
+//
+// Every production write plan carries `authority: { source_main_sha,
+// policy_digest }`, and the executor re-establishes both from GitHub before
+// EVERY mutation. Tests therefore need two things: a plan-side authority block,
+// and the three read-only responses that make it current.
+//
+// The policy digest is computed over the REAL COMMITTED POLICY, not over a
+// fixture policy. It has to be: the executor accepts those bytes through
+// `acceptCommittedPolicyText`, which enforces the production accepted-epoch
+// digest locks, and FIXTURE_EPOCH_ID ("epoch-900") can never satisfy them. So
+// the mock's committed-policy response serves the repository's own file and the
+// digest is derived from it — one source of truth, nothing to keep in sync.
+// ---------------------------------------------------------------------------
+
+// A synthetic but well-formed main commit. 40 lowercase hex; a branch name is
+// never acceptable anywhere in the authority path.
+export const MAIN_SHA = "7c9b1f0a4d3e2b5c6a89f0e1d2c3b4a5968778e9";
+
+export const COMMITTED_POLICY_TEXT = readFileSync(
+  new URL("../../.straylight/automation-policy.json", import.meta.url),
+  "utf8",
+);
+
+export const COMMITTED_POLICY_DIGEST = (() => {
+  const parsed = parseStrict(COMMITTED_POLICY_TEXT);
+  if (!parsed.ok) throw new Error(`.straylight/automation-policy.json is not strict JSON: ${parsed.reason}`);
+  return policyAuthorityDigest(parsed.value);
+})();
+
+/** The plan-side authority block. Overrides let a test stale exactly one field. */
+export function planAuthority(overrides: Record<string, any> = {}) {
+  return { source_main_sha: MAIN_SHA, policy_digest: COMMITTED_POLICY_DIGEST, ...overrides };
+}
+
+/**
+ * The three read-only GET responses the executor's authority revalidation
+ * makes, keyed by the exact path it constructs. Serialized as the mock `gh`
+ * would print them.
+ */
+export function authorityResponses(
+  {
+    repository = REPO,
+    main_sha = MAIN_SHA,
+    default_branch = "main",
+    policy_text = COMMITTED_POLICY_TEXT,
+  }: {
+    repository?: string;
+    main_sha?: string;
+    default_branch?: string;
+    policy_text?: string;
+  } = {},
+) {
+  const content = Buffer.from(policy_text, "utf8").toString("base64");
+  return {
+    metadata: JSON.stringify({ full_name: repository, default_branch }),
+    ref: JSON.stringify({ ref: "refs/heads/main", object: { type: "commit", sha: main_sha } }),
+    // GitHub wraps contents base64 at 60 columns; the decoder strips newlines
+    // and then requires the encoding to be canonical, so wrapping here keeps the
+    // fixture faithful to the real response shape.
+    contents: JSON.stringify({
+      type: "file",
+      path: ".straylight/automation-policy.json",
+      encoding: "base64",
+      size: Buffer.byteLength(policy_text, "utf8"),
+      content: (content.match(/.{1,60}/g) ?? []).join("\n") + "\n",
+    }),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// THE WORKFLOW TREE AT AN EXACT COMMIT (Codex quiescence-provenance)
+//
+// The write-capable workflow set is derived from the workflow bytes committed at
+// the frozen revision, fetched from GitHub — never from the local checkout. These
+// build the two response shapes that derivation reads: the `?ref=<sha>` directory
+// listing, and each file inside it. The blob id is a REAL git blob id so the
+// listing entry and the file response agree the way GitHub's do (the protocol
+// binds one to the other, and a fixture that faked the id would not exercise it).
+// ---------------------------------------------------------------------------
+
+export function gitBlobSha(text: string): string {
+  const bytes = Buffer.from(text, "utf8");
+  return createHash("sha1")
+    .update(Buffer.concat([Buffer.from(`blob ${bytes.length}\0`, "utf8"), bytes]))
+    .digest("hex");
+}
+
+/** GET .../contents/.github/workflows?ref=<sha> — a JSON ARRAY of entries. */
+export function workflowDirectoryResponse(
+  files: Array<{ name: string; text: string }>,
+  extraEntries: Record<string, any>[] = [],
+): string {
+  return JSON.stringify([
+    ...files.map((f) => ({
+      type: "file",
+      name: f.name,
+      path: `.github/workflows/${f.name}`,
+      sha: gitBlobSha(f.text),
+      size: Buffer.byteLength(f.text, "utf8"),
+    })),
+    ...extraEntries,
+  ]);
+}
+
+/** GET .../contents/.github/workflows/<name>?ref=<sha> — one workflow's bytes. */
+export function workflowFileResponse(
+  name: string,
+  text: string,
+  overrides: Record<string, any> = {},
+): string {
+  const content = Buffer.from(text, "utf8").toString("base64");
+  return JSON.stringify({
+    type: "file",
+    path: `.github/workflows/${name}`,
+    sha: gitBlobSha(text),
+    encoding: "base64",
+    size: Buffer.byteLength(text, "utf8"),
+    content: (content.match(/.{1,60}/g) ?? []).join("\n") + "\n",
     ...overrides,
   });
 }

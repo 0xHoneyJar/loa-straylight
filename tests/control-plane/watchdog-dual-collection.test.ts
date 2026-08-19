@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compareProjections } from "../../.straylight/lib/collection.mjs";
 import { planWatchdogWrites, dedupeAlreadyPosted } from "../../.straylight/lib/watchdog-plan.mjs";
-import { makeLane, makeEvent, makePolicy, makeLease, payloadDigest, REPO, NOW, AFTER_EXPIRY } from "./_fixtures.js";
+import { makeLane, makeEvent, makePolicy, makeLease, payloadDigest, REPO, NOW, AFTER_EXPIRY, MAIN_SHA } from "./_fixtures.js";
 
 const PLANNER = ".straylight/bin/plan-watchdog-writes.mjs";
 const COLLECTOR = ".straylight/bin/collect-watchdog-evidence.mjs";
@@ -128,6 +128,7 @@ function planFromCollections(a: ReturnType<typeof buildCollection>, b: ReturnTyp
     repository: REPO,
     policy: makePolicy(),
     now,
+    source_main_sha: MAIN_SHA,
   });
 }
 
@@ -343,7 +344,7 @@ describe("final planner — issue-keyed, deduped, terminal-structured", () => {
           "--collection-a", aDir, "--collection-b", bDir,
           "--ledger-a", aLedger, "--ledger-b", bLedger,
           "--request-root", requestRoot,
-          "--repository", REPO, "--nonce", NONCE, "--now", NOW,
+          "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--source-main-sha", MAIN_SHA,
           "--policy", policyPath,
         ], { encoding: "utf8" });
         return { status: 0, out: JSON.parse(stdout) };
@@ -375,7 +376,7 @@ describe("final planner — issue-keyed, deduped, terminal-structured", () => {
           "--collection-a", a2.dir, "--collection-b", b3.dir,
           "--ledger-a", a2.ledgerPath, "--ledger-b", b3.ledgerPath,
           "--request-root", requestRoot,
-          "--repository", REPO, "--nonce", NONCE, "--now", AFTER_EXPIRY,
+          "--repository", REPO, "--nonce", NONCE, "--now", AFTER_EXPIRY, "--source-main-sha", MAIN_SHA,
           "--policy", a2.policyPath,
         ], { encoding: "utf8" });
         return { status: 0, out: JSON.parse(stdout) };

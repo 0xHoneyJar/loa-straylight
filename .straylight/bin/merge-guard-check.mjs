@@ -22,6 +22,7 @@ import { readFileSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { evaluate } from "../lib/merge-guard.mjs";
+import { loadProtocolPolicy } from "../lib/policy-source.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -38,12 +39,18 @@ try {
   process.stdout.write(JSON.stringify({ shadow: true, eligible: false, action: "report-only", reasons: ["input unreadable: " + String(e?.message ?? e)] }) + "\n");
   process.exit(2);
 }
-try {
-  const policyPath = arg("--policy") ?? resolve(here, "..", "automation-policy.json");
-  policy = JSON.parse(readFileSync(policyPath, "utf8"));
-} catch (e) {
-  process.stdout.write(JSON.stringify({ shadow: true, eligible: false, action: "report-only", reasons: ["policy unreadable: " + String(e?.message ?? e)] }) + "\n");
-  process.exit(2);
+// Strict parse + validation, with the accepted-epoch digest lock applied
+// because the default path IS the protocol's committed policy.
+{
+  const loaded = loadProtocolPolicy({
+    committedPath: resolve(here, "..", "automation-policy.json"),
+    overridePath: arg("--policy"),
+  });
+  if (!loaded.ok) {
+    process.stdout.write(JSON.stringify({ shadow: true, eligible: false, action: "report-only", reasons: [`policy ${loaded.refusal}: ${loaded.detail}`] }) + "\n");
+    process.exit(2);
+  }
+  policy = loaded.value;
 }
 
 const result = evaluate(input.lane ?? null, policy, input.context ?? {});

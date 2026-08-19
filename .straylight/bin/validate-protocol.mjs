@@ -2,8 +2,11 @@
 // Straylight Control Plane v1 — protocol self-validation (no network).
 //
 // Ran by `npm run control-plane:validate`. Verifies, fail-closed:
-//   1. automation-policy.json parses and satisfies validatePolicy
-//      (shadow mode, auto_merge=false, corridor present, allowlist present);
+//   1. automation-policy.json parses (strict, duplicate-key-rejecting) and
+//      satisfies acceptPolicy — validatePolicy (shadow mode, auto_merge=false,
+//      corridor present, allowlist present, admission history well-formed)
+//      PLUS the accepted-epoch digest lock, because this file IS the protocol's
+//      committed policy and therefore must BE the accepted admission history;
 //   2. every schema file under .straylight/schemas/ is well-formed JSON with
 //      the expected $id / title / const invariants;
 //   3. the state machine is closed (every event target and NEXT_ACTOR key is
@@ -15,7 +18,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { resolve, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { validatePolicy } from "../lib/validate.mjs";
+import { loadProtocolPolicy } from "../lib/policy-source.mjs";
 import { STATES, EVENT_TYPES, NEXT_ACTOR, TERMINAL_STATES } from "../lib/state-machine.mjs";
 import { MARKERS, renderPayload, extractPayload } from "../lib/markers.mjs";
 
@@ -24,14 +27,17 @@ const root = resolve(here, "..");
 const failures = [];
 
 // 1. Policy.
-try {
-  const policy = JSON.parse(readFileSync(join(root, "automation-policy.json"), "utf8"));
-  const pv = validatePolicy(policy);
-  if (!pv.ok) failures.push(...pv.errors.map((e) => `policy: ${e}`));
-  if (policy.mode !== "shadow") failures.push("policy: mode must be shadow in v1");
-  if (policy.auto_merge !== false) failures.push("policy: auto_merge must be false in v1");
-} catch (e) {
-  failures.push(`policy: unreadable (${e?.message ?? e})`);
+{
+  const committedPath = join(root, "automation-policy.json");
+  const loaded = loadProtocolPolicy({ committedPath });
+  if (!loaded.ok) {
+    failures.push(`policy: ${loaded.refusal} (${loaded.detail})`);
+  } else {
+    const policy = loaded.value;
+    if (loaded.accepted !== true) failures.push("policy: committed policy was not read under the accepted-epoch lock");
+    if (policy.mode !== "shadow") failures.push("policy: mode must be shadow in v1");
+    if (policy.auto_merge !== false) failures.push("policy: auto_merge must be false in v1");
+  }
 }
 
 // 2. Schemas.

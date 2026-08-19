@@ -49,4 +49,6 @@ export declare function planWatchdogWrites(options: {
   repository: string;
   policy: unknown;
   now: string;
+  /** Exact commit the sweep ran at; half the plan's H-02 authority binding. */
+  source_main_sha: string;
 }): WatchdogPlanResult | WatchdogPlanFailure;

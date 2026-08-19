@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   makeLane, makeEvent, makePolicy, makeTaskPacket, makeAuditRecord,
-  payloadDigest, REPO, NOW, BASE_SHA, HEAD_SHA, WORKING_BRANCH,
+  payloadDigest, REPO, NOW, BASE_SHA, HEAD_SHA, WORKING_BRANCH, MAIN_SHA,
 } from "./_fixtures.js";
 import { warningDedupeKey, warningBodyFor } from "../../.straylight/lib/write-plan.mjs";
 
@@ -80,7 +80,7 @@ describe("bootstrap planner — the absence proof gates every creation", () => {
     "--pages-1", join(s.dir, "pages.json"), "--pages-2", join(s.dir, "pages2.json"),
     "--labels", join(s.dir, "labels.json"),
     "--base-sha", BASE_SHA, "--request-root", s.requestRoot,
-    "--repository", REPO, "--nonce", NONCE,
+    "--repository", REPO, "--nonce", NONCE, "--source-main-sha", MAIN_SHA,
   ];
 
   it("absence proven → plans label definition + lane issue; genesis validates and binds", () => {
@@ -240,7 +240,7 @@ function reducerArgs(stage: string, g1: string, g2: string, requestRoot: string 
     "--gather-1", g1, "--gather-2", g2,
     "--issue-number", String(issue),
     ...(requestRoot === null ? ["--probe"] : ["--request-root", requestRoot]),
-    "--repository", REPO, "--nonce", NONCE, "--now", NOW,
+    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--source-main-sha", MAIN_SHA,
     "--policy", policyPath,
   ];
 }
@@ -287,7 +287,7 @@ function runStageA(g1: string, g2: string, requestRoot: string, policyPath: stri
   const probe = run(REDUCER_PLANNER, [
     "--stage", "a", "--probe", "--claim-root", claimRoot,
     "--gather-1", g1, "--gather-2", g2, "--issue-number", String(issue),
-    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
   ]);
   if (probe.status !== 0) return probe;
   fabricateReadLedger(claimRoot, g1, g2);
@@ -297,7 +297,7 @@ function runStageA(g1: string, g2: string, requestRoot: string, policyPath: stri
     "--request-root", requestRoot,
     "--claim", join(claimRoot, "claim.json"),
     "--read-ledger", join(claimRoot, "read-ledger.jsonl"),
-    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
   ]);
 }
 
@@ -308,7 +308,7 @@ function runMergeGuard(g1: string, g2: string, requestRoot: string, policyPath: 
   const probe = run(REDUCER_PLANNER, [
     "--stage", "a", "--probe", "--slot-mode", "any-pr", "--with-checks", "--claim-root", claimRoot,
     "--gather-1", g1, "--gather-2", g2, "--issue-number", String(issue),
-    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
   ]);
   if (probe.status !== 0) return probe;
   fabricateReadLedger(claimRoot, g1, g2);
@@ -317,7 +317,7 @@ function runMergeGuard(g1: string, g2: string, requestRoot: string, policyPath: 
     "--request-root", requestRoot,
     "--claim", join(claimRoot, "claim.json"),
     "--read-ledger", join(claimRoot, "read-ledger.jsonl"),
-    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+    "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
   ]);
 }
 
@@ -356,7 +356,7 @@ describe("reducer Stage A — at most the eligibility confirmation, terminal", (
     const r = run(REDUCER_PLANNER, [
       "--stage", "a", "--probe", "--claim-root", claimRoot,
       "--gather-1", g1, "--gather-2", g2, "--issue-number", "41",
-      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
     ]);
     expect(r.status).toBe(0);
     expect(r.out).toMatchObject({ ok: true, state: "eligibility-pending", lane_id: "lane-phase-49p", pr_number: 120 });
@@ -453,7 +453,7 @@ describe("reducer Stage A — at most the eligibility confirmation, terminal", (
     const probe = run(REDUCER_PLANNER, [
       "--stage", "a", "--probe", "--claim-root", claimRoot,
       "--gather-1", g1, "--gather-2", g2, "--issue-number", "41",
-      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
     ]);
     expect(probe.status).toBe(0);
     // Forge the claim: swap the PR slot to a different number.
@@ -468,7 +468,7 @@ describe("reducer Stage A — at most the eligibility confirmation, terminal", (
       "--request-root", requestRoot,
       "--claim", join(claimRoot, "claim.json"),
       "--read-ledger", join(claimRoot, "read-ledger.jsonl"),
-      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
     ]);
     expect(r.status).toBe(2);
     expect(r.out.reason).toBe("claim-derivation-mismatch");
@@ -484,7 +484,7 @@ describe("reducer Stage A — at most the eligibility confirmation, terminal", (
     run(REDUCER_PLANNER, [
       "--stage", "a", "--probe", "--claim-root", claimRoot,
       "--gather-1", g1, "--gather-2", g2, "--issue-number", "41",
-      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
     ]);
     fabricateReadLedger(claimRoot, g1, g2);
     const requestRoot = mkdtempSync(join(tmpdir(), "cp-req-"));
@@ -494,7 +494,7 @@ describe("reducer Stage A — at most the eligibility confirmation, terminal", (
       "--request-root", requestRoot,
       "--claim", join(claimRoot, "claim.json"),
       "--read-ledger", join(claimRoot, "read-ledger.jsonl"),
-      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
     ];
     const goodLedger = readFileSync(join(claimRoot, "read-ledger.jsonl"), "utf8");
 
@@ -528,7 +528,7 @@ describe("reducer Stage A — at most the eligibility confirmation, terminal", (
     run(REDUCER_PLANNER, [
       "--stage", "a", "--probe", "--claim-root", claimRoot2,
       "--gather-1", g3, "--gather-2", g4, "--issue-number", "41",
-      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
     ]);
     fabricateReadLedger(claimRoot2, g3, g4); // ledger: gather2 pr → fetched:false
     writeFileSync(join(g4, "pr.json"), "{ malformed ]"); // …file smuggled in AFTER
@@ -538,7 +538,7 @@ describe("reducer Stage A — at most the eligibility confirmation, terminal", (
       "--request-root", requestRoot,
       "--claim", join(claimRoot2, "claim.json"),
       "--read-ledger", join(claimRoot2, "read-ledger.jsonl"),
-      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath,
+      "--repository", REPO, "--nonce", NONCE, "--now", NOW, "--policy", policyPath, "--source-main-sha", MAIN_SHA,
     ]);
     expect(r.status).toBe(2);
     expect(r.out.reason).toBe("read-ledger-unaccounted-file");

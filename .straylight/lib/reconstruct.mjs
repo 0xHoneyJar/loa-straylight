@@ -15,7 +15,13 @@
 //                // GitHub-recorded last-edit time. All supplied by the
 //                // adapter — never taken from the payload itself.
 //   policy:      parsed automation-policy.json
-//   context:     { now }
+//   context:     ACCEPTED AND IGNORED. Reconstruction takes NO wall clock.
+//                Every event's authoritative time is the authenticated
+//                comment.created_at above, and the reducer context is built
+//                here from the durable comment alone — an adapter cannot
+//                supply, override, or stand in for it. The parameter is still
+//                accepted so callers that pass one are not broken, and
+//                tests/control-plane assert that its contents change nothing.
 // }
 //
 // Returns {
@@ -44,7 +50,9 @@ import { reduce } from "./reducer.mjs";
 import { nextActorFor } from "./state-machine.mjs";
 
 export function reconstructLane(input) {
-  const { issue_body, comments, policy, context = {} } = input ?? {};
+  // `input.context` is deliberately NOT destructured: nothing an adapter can
+  // put in it may reach the reducer. See the header note.
+  const { issue_body, comments, policy } = input ?? {};
 
   // Kill-switch FREEZE semantics (ADR-050 §4: "Suspension never rewrites
   // lane history"). When automation is disabled we must still replay the
@@ -208,13 +216,32 @@ export function reconstructLane(input) {
       continue;
     }
 
-    const ctx = { ...context };
-    if (typeof comment.created_at === "string") {
-      ctx.event_observed_at = comment.created_at;
+    // OBSERVED TIME: the authenticated GitHub post time of THIS comment. It is
+    // the only admission clock — it selects the governing admission epoch, sets
+    // any lease grant instant, and decides whether a completion was timely. A
+    // comment the adapter cannot timestamp is unadmittable rather than
+    // adjudicated under a substitute clock: without a trustworthy observation
+    // time we cannot say which policy governed the event. The refusal does NOT
+    // escalate — it is an adapter/API gap, not a lane-authority violation, and
+    // the lane simply does not advance past it.
+    if (typeof comment.created_at !== "string" || parseIsoInstant(comment.created_at) === null) {
+      dispositions.push({
+        comment_id: comment.id,
+        status: "refused",
+        refusal: "event-time-unavailable",
+        detail: "comment has no valid authenticated created_at; event admission has no substitute clock",
+      });
+      continue;
     }
-    // The authenticated comment author binds the lease holder + holder checks.
-    ctx.comment_author = typeof comment.user === "string" ? comment.user : null;
-    ctx.used_lease_ids = usedLeaseIds;
+    // The reducer context is built HERE, field by field, from the durable
+    // comment and the replay's own accumulators. It is never derived from
+    // input.context, so no caller can inject an observation time.
+    const ctx = {
+      event_observed_at: comment.created_at,
+      // The authenticated comment author binds the lease holder + holder checks.
+      comment_author: typeof comment.user === "string" ? comment.user : null,
+      used_lease_ids: usedLeaseIds,
+    };
     // Task-packet binding (R2): only a coordinator packet-posting event may
     // NAME a packet comment, and only an EARLIER one. Every other event uses
     // the coordinator-approved packet tracked in currentPacketCommentId. The

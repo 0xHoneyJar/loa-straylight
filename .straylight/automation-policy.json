@@ -1,30 +1,59 @@
 {
-  "schema": "straylight.automation-policy.v1",
+  "schema": "straylight.automation-policy.v2",
   "_kill_switch": "Set `enabled` to false to suspend ALL autonomous processing. One field, one file. Suspension never rewrites lane history.",
+  "_live_vs_historical": "Two kinds of field live in this file. LIVE operational fields (enabled, mode, auto_merge, the automatic_* prohibitions, stuck_lane_threshold_hours) always take effect from their current value — that is what makes the kill switch a kill switch. ADMISSION fields (authorized_corridor, actor_allowlist, maximum_patch_cycles, lease_duration_minutes) decide whether a DURABLE PAST event was admissible, so they are versioned in `admission_history`: each event is judged under the epoch governing its authenticated GitHub comment time, never under today's value.",
+  "_admission_history": "Append-only. Every already-accepted epoch is digest-locked by ACCEPTED_ADMISSION_EPOCH_LOCKS in .straylight/lib/admission-locks.mjs — executable protocol code OUTSIDE this file. Editing an accepted epoch here makes the policy fail closed everywhere; making it pass again requires changing that protocol code too, which is an exact-SHA reviewed repository change and NOT an ordinary policy edit. Adding a new epoch means appending it here AND appending its lock there.",
+  "_projection": "authorized_corridor, actor_allowlist, maximum_patch_cycles and lease_duration_minutes at top level are a REQUIRED, read-only PROJECTION of the final (current) epoch, kept so tools can read current admission policy without walking the history. They are validated deep-equal to the final epoch and carry no historical authority: the reducer resolves admission from the epoch governing the event's observed time, never from here.",
+  "_actor_allowlist": "GitHub commenter identity is the only authenticated identity available in v1/v2; actor_role is a claimed field, not a cryptographic identity (ADR-050 §6). All model roles currently map to the operator's account. Distinct bot identities are a hard precondition for ever enabling auto_merge. github-actions[bot] is allowlisted for SYSTEM events only — it must never appear under operator, or workflow-posted comments could claim operator authority.",
   "mode": "shadow",
   "enabled": true,
   "auto_merge": false,
-  "authorized_corridor": [
-    "phase-49p",
-    "phase-49q",
-    "phase-50a",
-    "phase-50b"
-  ],
   "automatic_estate_semantic_decisions": false,
   "automatic_cross_repo_contract_changes": false,
   "automatic_sibling_repo_edits": false,
   "automatic_external_infrastructure": false,
   "automatic_secret_use": false,
   "automatic_progression_beyond_mvp2": false,
+  "stuck_lane_threshold_hours": 72,
+  "authorized_corridor": [
+    "phase-49p",
+    "phase-49q",
+    "phase-50a",
+    "phase-50b"
+  ],
   "maximum_patch_cycles": 3,
   "lease_duration_minutes": 240,
-  "stuck_lane_threshold_hours": 72,
   "actor_allowlist": {
-    "_note": "GitHub commenter identity is the only authenticated identity available in v1; actor_role is a claimed field, not a cryptographic identity (ADR-050 §6). All model roles currently map to the operator's account. Distinct bot identities are a hard precondition for ever enabling auto_merge. github-actions[bot] is allowlisted for SYSTEM events only — it must never appear under operator, or workflow-posted comments could claim operator authority.",
     "coordinator": ["eileen1337"],
     "implementer": ["eileen1337"],
     "auditor": ["eileen1337"],
     "operator": ["eileen1337"],
     "system": ["eileen1337", "github-actions[bot]"]
-  }
+  },
+  "admission_history": [
+    {
+      "epoch_id": "epoch-001",
+      "governs_from": "2026-07-25T20:49:00Z",
+      "authorized_corridor": [
+        "phase-49p",
+        "phase-49q",
+        "phase-50a",
+        "phase-50b"
+      ],
+      "maximum_patch_cycles": 3,
+      "lease_duration_minutes": 240,
+      "actor_allowlist": {
+        "coordinator": ["eileen1337"],
+        "implementer": ["eileen1337"],
+        "auditor": ["eileen1337"],
+        "operator": ["eileen1337"],
+        "system": ["eileen1337", "github-actions[bot]"]
+      },
+      "provenance": {
+        "attributed_to": "operator:eileen",
+        "reference": "ADR-050 §4 (admission epochs); .straylight/README.md (admission policy history)",
+        "note": "Transcribes, without alteration, the four admission fields of straylight.automation-policy.v1 as committed at main 5625c5be425c71fce90a22e81d123b42ed104538 — the policy under which every durable control-plane event up to that commit was admitted. governs_from is the authenticated GitHub created_at of the earliest durable protocol event in the repository (lane-phase-49p sequence 1, issue #118 comment 5080520742); it records when the replayable history begins, and asserts nothing about authorization before that instant. Attribution is descriptive metadata, not authentication: force comes from the reviewed repository change that introduced this epoch and its executable lock."
+      }
+    }
+  ]
 }

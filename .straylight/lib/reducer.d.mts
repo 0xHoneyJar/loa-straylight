@@ -15,8 +15,14 @@ export interface PrMetadata {
   head_sha?: string;
 }
 export interface ReduceContext {
-  now?: string;
-  event_observed_at?: string;
+  /**
+   * REQUIRED. The authenticated GitHub comment created_at of the event being
+   * reduced. Selects the admission epoch, sets the lease grant instant, and
+   * decides whether a completion was timely. There is deliberately NO `now`
+   * fallback: the reducer's own run clock is not authority over any question
+   * about a past event. Omitting it refuses with `event-time-unavailable`.
+   */
+  event_observed_at: string;
   /** Authenticated GitHub login of the event's comment (binds lease holder). */
   comment_author?: string;
   /** Lease ids already consumed earlier in lane history (reuse is refused). */

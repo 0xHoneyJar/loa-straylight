@@ -1,0 +1,903 @@
+{
+  "_comment": "DURABLE cp-lane history captured from the GitHub API for offline replay. Bodies are stored at payload level; renderPayload() rebuilds them exactly. Regenerate with: node scripts/capture-cp-lane-history.mjs --issue 118 NEVER hand-edit: this is evidence, not configuration. Its SHA-256 is pinned in tests/control-plane/lane-history-golden.test.ts.",
+  "repository": "0xHoneyJar/loa-straylight",
+  "issue_number": 118,
+  "source_main_sha": "5625c5be425c71fce90a22e81d123b42ed104538",
+  "lane_id": "lane-phase-49p",
+  "genesis_lane": {
+    "schema": "straylight.lane.v1",
+    "lane_id": "lane-phase-49p",
+    "phase": "phase-49p",
+    "authorized_corridor": [
+      "phase-49p",
+      "phase-49q",
+      "phase-50a",
+      "phase-50b"
+    ],
+    "repository": "0xHoneyJar/loa-straylight",
+    "base_branch": "main",
+    "base_sha": "a50a91ab633d296dda4848c37d7dda60a18127d8",
+    "tier": "tier-1",
+    "authority_bearing": false,
+    "state": "planning",
+    "next_actor": "coordinator",
+    "working_branch": null,
+    "pr_number": null,
+    "pr_head_sha": null,
+    "audited_sha": null,
+    "verdict": null,
+    "attempt": 0,
+    "patch_cycle": 0,
+    "mode": "shadow",
+    "auto_merge_allowed": false,
+    "operator_pause": false,
+    "operator_required_reason": null,
+    "lease": null,
+    "event_sequence": 0,
+    "last_transition": null
+  },
+  "comment_count": 30,
+  "comments": [
+    {
+      "id": 5080520742,
+      "user": "eileen1337",
+      "created_at": "2026-07-25T20:49:00Z",
+      "updated_at": "2026-07-25T20:49:00Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49p-activate-001",
+          "lane_id": "lane-phase-49p",
+          "sequence": 1,
+          "actor_role": "coordinator",
+          "github_actor": "eileen1337",
+          "event_type": "lane.activated",
+          "prior_state": "planning",
+          "requested_state": "ready-for-coordinator",
+          "base_sha": "a50a91ab633d296dda4848c37d7dda60a18127d8",
+          "reason": "Operator authorized the next larger Phase 49P slice: one docs-only, provider-neutral canonical-estate persistence evidence-intake lane. Railway PostgreSQL remains only the current bounded MVP-2 deployment candidate; Gate #8 disposition and implementation authority remain separate.",
+          "occurred_at": "2026-07-25T20:48:46Z"
+        }
+      }
+    },
+    {
+      "id": 5080521646,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-25T20:49:16Z",
+      "updated_at": "2026-07-25T20:49:16Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    },
+    {
+      "id": 5080533426,
+      "user": "eileen1337",
+      "created_at": "2026-07-25T20:52:51Z",
+      "updated_at": "2026-07-25T20:52:51Z",
+      "payloads": {
+        "task_packet": {
+          "schema": "straylight.task-packet.v1",
+          "lane_id": "lane-phase-49p",
+          "authority_basis": "ADR-050 authorized corridor phase-49p; ADR-049 §9.1 portability clauses and §10 step 3 (PR A sibling evidence intake); operator:eileen authorization recorded by lane activation event evt-phase-49p-activate-001; merged Finn PR #258 at 0e04a4c8f2d3865c58dd7c6afa9249d86bcc87e3 and merged Dixie PR #255 at d36c0846f03bfd097d35dd2c001de19eec817cf0.",
+          "base_sha": "a50a91ab633d296dda4848c37d7dda60a18127d8",
+          "repository": "0xHoneyJar/loa-straylight",
+          "target_branch": "phase-49p-provider-neutral-persistence-evidence-intake",
+          "allowed_paths": [
+            "docs/PHASE-49P-PROVIDER-NEUTRAL-PERSISTENCE-SIBLING-EVIDENCE-INTAKE.md"
+          ],
+          "forbidden_paths": [
+            ".github/",
+            ".straylight/",
+            "src/",
+            "tests/",
+            "packages/",
+            "scripts/",
+            "migrations/",
+            "docs/decisions/",
+            "package.json",
+            "package-lock.json",
+            "node_modules/",
+            ".env",
+            ".env.*",
+            "../loa-finn/",
+            "../loa-dixie/",
+            "../loa-hounfour/",
+            "../loa-freeside/"
+          ],
+          "capability_success_condition": "Create one comprehensive docs-only Phase 49P evidence-intake artifact that binds to the exact merged Finn and Dixie evidence responses, accepts them only as bounded sibling evidence, records what each proves/cannot prove/defers, resolves only the sibling-evidence-intake blockers, and derives a provider-neutral canonical-estate persistence requirement set applicable across conforming agents, controllers, tenants, runtimes, model providers, clouds, and storage hosts. Railway PostgreSQL must remain the current bounded MVP-2 deployment candidate rather than the Straylight product boundary. The artifact must preserve Straylight semantic ownership, define portability/export/restore/migration/provider-replacement proof obligations from existing authority, retain all provider and implementation unknowns, and route to a separate Phase 49Q operator acceptance/implementation-authorization decision without disposing Gate #8 or authorizing implementation.",
+          "non_goals": [
+            "Do not accept, select, approve, deploy, provision, or configure Railway PostgreSQL or any other provider.",
+            "Do not discharge ADR-022E Gate #8, satisfy D.1(ii) or D.1, start D.2, close gates #9/#10, or close MVP-2.",
+            "Do not authorize or design a StorageAdapter, canonical migrations, production wiring, rollout, cutover, credentials, auth, consent, signer behavior, or living-estate admission.",
+            "Do not change estate semantics, assertion classes/statuses, signer competence, identity, challenge, revocation, forgetting, inheritance, commitment, or permanence.",
+            "Do not modify Finn, Dixie, Hounfour, Freeside, infrastructure, workflows, control-plane protocol, schemas, source, tests, config, packages, or migrations.",
+            "Do not imply that PostgreSQL, Railway, Finn, Dixie, Loa, Satoshi, one controller, or one deployment is the Straylight product boundary.",
+            "Do not create a new architecture authority or claim product acceptance; the document is evidence intake and routing only."
+          ],
+          "required_tests": [
+            "Verify the working branch is based exactly on a50a91ab633d296dda4848c37d7dda60a18127d8 and the diff contains exactly the one allowed Markdown file.",
+            "Verify every Finn claim is grounded in PR #258 / merge SHA 0e04a4c8f2d3865c58dd7c6afa9249d86bcc87e3 and its three named docs; verify every Dixie claim is grounded in PR #255 / merge SHA d36c0846f03bfd097d35dd2c001de19eec817cf0 and its three named docs.",
+            "Verify the artifact cites ADR-049 §9.1 and §10 step 3, ADR-050 shadow/no-auto-merge posture, both PR numbers, both merge SHAs, all six sibling evidence paths, and the sibling result tokens.",
+            "Verify the artifact has explicit sections for authority/scope, exact evidence identity, Finn prove/cannot-prove/defer, Dixie prove/cannot-prove/defer, combined findings, provider-neutral persistence requirements, portability/restore/migration obligations, unresolved risks, gate-state preservation, and Phase 49Q routing.",
+            "Run any repository Markdown/link/citation validation that exists and report exact commands/results; if none exists, perform explicit path and token checks without inventing a validator."
+          ],
+          "required_negative_tests": [
+            "Search the changed file for overclaims equivalent to Railway accepted/approved/selected as final, Gate #8 closed/discharged, adapter authorized, implementation authorized, production ready, gates #9/#10 satisfied, D.1 satisfied, D.2 started, or MVP-2 complete; any such claim is a failure.",
+            "Search the diff for source, schema, policy, workflow, test, package, config, migration, generated, binary, or sibling-repository changes; any occurrence is a failure.",
+            "Confirm the document does not turn storage, hosting, runtime, model generation, signatures alone, or sibling evidence into semantic authority.",
+            "Confirm every combined inference is labeled as Straylight intake synthesis and is not misrepresented as a claim made locally by Finn or Dixie.",
+            "Confirm Railway-specific facts not present in the merged evidence are recorded as unknowns requiring later evidence, not silently filled from general knowledge."
+          ],
+          "required_no_leak_checks": [
+            "No secrets, tokens, credentials, connection strings, database URLs, account/project identifiers, private endpoints, environment values, or deployment topology details.",
+            "No private estate contents, user data, hidden memory, personal information, or copied operational logs.",
+            "No sibling working-tree state, unmerged material, local-only paths, or uncited chat assertions presented as merged evidence.",
+            "No provider-specific identifiers or configuration may enter the canonical estate domain model or be described as estate authority."
+          ],
+          "required_completion_report": "Report the exact branch, base SHA, head SHA, commit(s), changed file list, document section inventory, all evidence PR/SHA/path/token bindings, commands and results, negative/no-leak checks, PR URL/number, and a clear statement that the work is docs-only, evidence-intake-only, authority-bearing false, merge forbidden, Gate #8 held, D.1(ii) unresolved, D.1 not satisfied, D.2 not started, and MVP-2 open.",
+          "stop_conditions": [
+            "Stop and report BLOCKED if the base SHA has moved or the working branch cannot be established exactly as named.",
+            "Stop if any required claim cannot be supported by the exact merged sibling artifacts or merged Straylight authority; record the gap rather than infer it.",
+            "Stop if satisfying the task appears to require editing docs/decisions, source, schemas, tests, workflows, config, packages, migrations, sibling repositories, infrastructure, or secrets.",
+            "Stop if the evidence suggests a Tier 2 or Tier 3 contract/semantic decision is required; do not widen the Tier 1 lane.",
+            "Stop if the document would have to prejudge Phase 49Q, dispose a gate, authorize implementation, or claim product acceptance.",
+            "Stop before merge. A draft or ready PR may be opened, but no merge action is permitted."
+          ],
+          "may_open_pr": true,
+          "merge_forbidden": true,
+          "expected_next_actor": "implementer",
+          "packet_kind": "initial",
+          "patch_cycle": 0
+        }
+      }
+    },
+    {
+      "id": 5080534124,
+      "user": "eileen1337",
+      "created_at": "2026-07-25T20:53:04Z",
+      "updated_at": "2026-07-25T20:53:04Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49p-task-packet-002",
+          "lane_id": "lane-phase-49p",
+          "sequence": 2,
+          "actor_role": "coordinator",
+          "github_actor": "eileen1337",
+          "event_type": "coordinator.task_packet_posted",
+          "prior_state": "ready-for-coordinator",
+          "requested_state": "ready-for-claude",
+          "base_sha": "a50a91ab633d296dda4848c37d7dda60a18127d8",
+          "reason": "Post the initial bounded Phase 49P task packet and establish the dedicated provider-neutral persistence evidence-intake working branch.",
+          "occurred_at": "2026-07-25T20:52:53Z",
+          "refs": {
+            "task_packet_comment_id": 5080533426,
+            "task_packet_digest": "sha256:d44ce974756a571507f4dad7629a899411f2acde7c386a96cf71d31134a0fcdf"
+          }
+        }
+      }
+    },
+    {
+      "id": 5081081371,
+      "user": "eileen1337",
+      "created_at": "2026-07-25T23:46:39Z",
+      "updated_at": "2026-07-25T23:46:39Z",
+      "payloads": {
+        "task_packet": {
+          "schema": "straylight.task-packet.v1",
+          "lane_id": "lane-phase-49p",
+          "authority_basis": "ADR-050 authorized corridor phase-49p; ADR-049 §9.1 portability clauses and §10 step 3 (PR A sibling evidence intake); operator:eileen authorization recorded by lane activation event evt-phase-49p-activate-001; merged Finn PR #258 at 0e04a4c8f2d3865c58dd7c6afa9249d86bcc87e3 and merged Dixie PR #255 at d36c0846f03bfd097d35dd2c001de19eec817cf0.",
+          "base_sha": "a50a91ab633d296dda4848c37d7dda60a18127d8",
+          "repository": "0xHoneyJar/loa-straylight",
+          "target_branch": "phase-49p-provider-neutral-persistence-evidence-intake",
+          "allowed_paths": [
+            "docs/PHASE-49P-PROVIDER-NEUTRAL-PERSISTENCE-SIBLING-EVIDENCE-INTAKE.md"
+          ],
+          "forbidden_paths": [
+            ".github/",
+            ".straylight/",
+            "src/",
+            "tests/",
+            "packages/",
+            "scripts/",
+            "migrations/",
+            "docs/decisions/",
+            "package.json",
+            "package-lock.json",
+            "node_modules/",
+            ".env",
+            ".env.*"
+          ],
+          "capability_success_condition": "Create one comprehensive docs-only Phase 49P evidence-intake artifact that binds to the exact merged Finn and Dixie evidence responses, accepts them only as bounded sibling evidence, records what each proves, cannot prove, and defers, resolves only the sibling-evidence-intake blockers, and derives provider-neutral canonical-estate persistence requirements applicable across conforming agents, controllers, tenants, runtimes, model providers, clouds, and storage hosts. Railway PostgreSQL remains the current bounded MVP-2 deployment candidate rather than the Straylight product boundary. Preserve Straylight semantic ownership; define portability, export, restoration, migration, provider-replacement, chain-of-custody, authority-separation, and fail-closed proof obligations; retain provider and implementation unknowns; and route to a separate Phase 49Q operator acceptance and implementation-authorization decision without disposing Gate #8 or authorizing implementation.",
+          "non_goals": [
+            "Do not accept, select, approve, deploy, provision, or configure Railway PostgreSQL or any other provider.",
+            "Do not discharge ADR-022E Gate #8, satisfy D.1(ii) or D.1, start D.2, close gates #9 or #10, or close MVP-2.",
+            "Do not authorize or design a StorageAdapter, canonical migrations, production wiring, rollout, cutover, credentials, auth, consent, signer behavior, or living-estate admission.",
+            "Do not change estate semantics, assertion classes or statuses, signer competence, identity, challenge, revocation, forgetting, inheritance, commitment, or permanence.",
+            "Do not modify Finn, Dixie, Hounfour, Freeside, infrastructure, workflows, control-plane files, source, tests, packages, scripts, migrations, or decision records.",
+            "Do not make Railway, PostgreSQL, any cloud, any runtime, any model provider, any adapter, or any current controller the semantic owner of an estate."
+          ],
+          "required_tests": [
+            "Verify the complete base-to-head diff changes exactly the one allowed Markdown file and no other path.",
+            "Verify every Finn and Dixie claim is bound to the exact merged PR and merge SHA and is categorized as proves, cannot prove, or defers.",
+            "Verify the artifact states provider-neutral persistence requirements and treats Railway PostgreSQL only as the current bounded MVP-2 deployment candidate.",
+            "Verify Gate #8, D.1(ii), D.1, D.2, gates #9 and #10, and MVP-2 remain explicitly open or unresolved as applicable.",
+            "Run repository-appropriate Markdown, citation, link, whitespace, and git diff checks available at the exact branch head."
+          ],
+          "required_negative_tests": [
+            "Confirm the artifact contains no claim that Railway or another provider is accepted, selected, approved, deployed, or authorized.",
+            "Confirm the artifact contains no StorageAdapter design, migration plan, schema change, production wiring, credential instructions, endpoint details, or implementation steps.",
+            "Confirm no sibling repository, docs/decisions file, source, test, package, script, migration, workflow, or control-plane file changed.",
+            "Confirm the artifact does not claim Gate #8 disposition, D.1 completion, D.2 start, gate #9 or #10 closure, or MVP-2 completion.",
+            "Confirm no unsupported semantic ownership transfer to Finn, Dixie, Railway, PostgreSQL, a cloud, a runtime, a model provider, an adapter, or a controller."
+          ],
+          "required_no_leak_checks": [
+            "Scan the complete diff for credentials, secrets, tokens, private keys, database URLs, connection strings, endpoint hostnames, ports, account or project identifiers, regions, topology, environment-variable values, API or curl examples, pricing, and deployment instructions.",
+            "Confirm repository citations expose only already-public repository paths, PR numbers, and commit SHAs needed for evidence binding.",
+            "Confirm no hidden local state, scratch files, generated artifacts, or unrelated pre-existing work is committed."
+          ],
+          "required_completion_report": "Report the exact base SHA, branch, final head SHA, commit and PR number, complete changed-file list, diff summary, evidence citations used, every validation command and result, negative and no-leak check results, working-tree state, confirmation that no merge occurred, and the exact implementer.completed event posted to lane issue #118.",
+          "stop_conditions": [
+            "Stop and escalate if the lane is not ready-for-claude, the packet is stale or refused, the policy is disabled or invalid, or a conflicting lease exists.",
+            "Stop and block if either exact sibling evidence response or its merged SHA cannot be verified from GitHub.",
+            "Stop and escalate on any ambiguity about evidence acceptance versus provider acceptance, Gate #8 disposition, semantic ownership, implementation authority, or allowed file scope.",
+            "Stop without widening scope if satisfying the artifact would require a sibling-repository edit, infrastructure access, a secret, a provider decision, a schema or contract change, or more than the one allowed file.",
+            "Stop before merge and before any self-audit; Codex audit is a separate actor turn."
+          ],
+          "may_open_pr": true,
+          "merge_forbidden": true,
+          "expected_next_actor": "auditor",
+          "packet_kind": "initial",
+          "patch_cycle": 0
+        }
+      }
+    },
+    {
+      "id": 5081082461,
+      "user": "eileen1337",
+      "created_at": "2026-07-25T23:47:02Z",
+      "updated_at": "2026-07-25T23:47:02Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49p-task-packet-003",
+          "lane_id": "lane-phase-49p",
+          "sequence": 2,
+          "actor_role": "coordinator",
+          "github_actor": "eileen1337",
+          "event_type": "coordinator.task_packet_posted",
+          "prior_state": "ready-for-coordinator",
+          "requested_state": "ready-for-claude",
+          "base_sha": "a50a91ab633d296dda4848c37d7dda60a18127d8",
+          "occurred_at": "2026-07-25T23:46:44Z",
+          "refs": {
+            "task_packet_comment_id": 5081081371,
+            "task_packet_digest": "sha256:e0ee220014bcf16069b140148a0a6de2e536077999364ae5cf241abc2b032ddf"
+          }
+        }
+      }
+    },
+    {
+      "id": 5081083838,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-25T23:47:29Z",
+      "updated_at": "2026-07-25T23:47:29Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    },
+    {
+      "id": 5090659127,
+      "user": "eileen1337",
+      "created_at": "2026-07-27T11:19:27Z",
+      "updated_at": "2026-07-27T11:19:27Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49p-implementer-lease-001",
+          "lane_id": "lane-phase-49p",
+          "sequence": 3,
+          "actor_role": "implementer",
+          "github_actor": "eileen1337",
+          "event_type": "implementer.lease_acquired",
+          "prior_state": "ready-for-claude",
+          "requested_state": "claude-working",
+          "base_sha": "a50a91ab633d296dda4848c37d7dda60a18127d8",
+          "lease_id": "lease-phase-49p-implementer-001",
+          "lease_expires_at": "2026-07-27T15:09:26Z",
+          "occurred_at": "2026-07-27T11:19:26Z",
+          "refs": {
+            "task_packet_comment_id": 5081081371
+          }
+        }
+      }
+    },
+    {
+      "id": 5090661910,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-27T11:19:47Z",
+      "updated_at": "2026-07-27T11:19:47Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    },
+    {
+      "id": 5090920007,
+      "user": "eileen1337",
+      "created_at": "2026-07-27T11:50:09Z",
+      "updated_at": "2026-07-27T11:50:09Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49p-implementer-completed-001",
+          "lane_id": "lane-phase-49p",
+          "sequence": 4,
+          "actor_role": "implementer",
+          "github_actor": "eileen1337",
+          "event_type": "implementer.completed",
+          "prior_state": "claude-working",
+          "requested_state": "ready-for-codex",
+          "base_sha": "a50a91ab633d296dda4848c37d7dda60a18127d8",
+          "head_sha": "2e522431f0aa38f08e469aa58a6da1d1c7d74bb1",
+          "head_branch": "phase-49p-provider-neutral-persistence-evidence-intake",
+          "lease_id": "lease-phase-49p-implementer-001",
+          "occurred_at": "2026-07-27T11:50:09Z",
+          "refs": {
+            "pr_number": 119,
+            "task_packet_comment_id": 5081081371
+          }
+        }
+      }
+    },
+    {
+      "id": 5090922578,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-27T11:50:27Z",
+      "updated_at": "2026-07-27T11:50:27Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    },
+    {
+      "id": 5092449266,
+      "user": "eileen1337",
+      "created_at": "2026-07-27T14:14:21Z",
+      "updated_at": "2026-07-27T14:14:21Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49p-auditor-lease-001",
+          "lane_id": "lane-phase-49p",
+          "sequence": 5,
+          "actor_role": "auditor",
+          "github_actor": "eileen1337",
+          "event_type": "auditor.lease_acquired",
+          "prior_state": "ready-for-codex",
+          "lease_id": "lease-phase-49p-auditor-001",
+          "lease_expires_at": "2026-07-27T18:13:34Z",
+          "reason": "Record the independently completed exact-SHA Codex PATCH audit supplied to the coordinator. The shared v1 GitHub identity is allowlisted for auditor bookkeeping; this is audit evidence, not operator acceptance.",
+          "occurred_at": "2026-07-27T14:13:34Z"
+        }
+      }
+    },
+    {
+      "id": 5092452390,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-27T14:14:38Z",
+      "updated_at": "2026-07-27T14:14:38Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    },
+    {
+      "id": 5092483236,
+      "user": "eileen1337",
+      "created_at": "2026-07-27T14:17:27Z",
+      "updated_at": "2026-07-27T14:17:27Z",
+      "payloads": {
+        "audit": {
+          "schema": "straylight.audit.v1",
+          "lane_id": "lane-phase-49p",
+          "pr_number": 119,
+          "base_branch": "main",
+          "base_sha": "a50a91ab633d296dda4848c37d7dda60a18127d8",
+          "head_branch": "phase-49p-provider-neutral-persistence-evidence-intake",
+          "audited_head_sha": "2e522431f0aa38f08e469aa58a6da1d1c7d74bb1",
+          "complete_diff_reviewed": true,
+          "changed_files": [
+            "docs/PHASE-49P-PROVIDER-NEUTRAL-PERSISTENCE-SIBLING-EVIDENCE-INTAKE.md"
+          ],
+          "verdict": "PATCH",
+          "concerns": [
+            {
+              "severity": "high",
+              "location": "docs/PHASE-49P-PROVIDER-NEUTRAL-PERSISTENCE-SIBLING-EVIDENCE-INTAKE.md:130-132,264-273,326",
+              "description": "Evidence-integrity overclaim: restrict Finn negative conclusions to literal Straylight coupling and the PostgreSQL storage surface. Preserve TIER_TRUST_MAP and CRITICAL_ACTIONS as unresolved locally-defined-classification findings; do not infer broader Finn non-drift or no-creep."
+            },
+            {
+              "severity": "high",
+              "location": "docs/PHASE-49P-PROVIDER-NEUTRAL-PERSISTENCE-SIBLING-EVIDENCE-INTAKE.md:330,338",
+              "description": "P-5 and P-13 overrestrict authorized runtime behavior. Recast around no semantic redefinition, unauthorized re-minting, or self-authorized admission while preserving authorized runtime execution of policy, emission of Straylight-defined receipts, append of Straylight-defined audit events, and persistence of the chain."
+            },
+            {
+              "severity": "medium",
+              "location": "docs/PHASE-49P-PROVIDER-NEUTRAL-PERSISTENCE-SIBLING-EVIDENCE-INTAKE.md:327",
+              "description": "P-2 unsupported domain-model prohibition: narrow the ban to provider-, deployment-, and host-specific product concepts, semantics, and configuration; do not ban all provider-neutral storage-host, cloud, runtime, or model-provider concepts."
+            },
+            {
+              "severity": "medium",
+              "location": "docs/PHASE-49P-PROVIDER-NEUTRAL-PERSISTENCE-SIBLING-EVIDENCE-INTAKE.md:335",
+              "description": "P-10 overconstrains decision artifacts. Require explicit, non-implied authority grants, but permit host acceptance and implementation authorization to be expressly co-recorded in one operator-signed Phase 49Q PR as ADR-049 allows."
+            },
+            {
+              "severity": "medium",
+              "location": "docs/PHASE-49P-PROVIDER-NEUTRAL-PERSISTENCE-SIBLING-EVIDENCE-INTAKE.md:337",
+              "description": "P-12 citation support does not establish its identity/controller/tenancy sentence. Remove that sentence or add exact existing authority that supports it."
+            },
+            {
+              "severity": "medium",
+              "location": "docs/PHASE-49P-PROVIDER-NEUTRAL-PERSISTENCE-SIBLING-EVIDENCE-INTAKE.md:270-271,326,426-427,544",
+              "description": "Incorrect ownership citation: ADR-048B line 156 records physical host UNSELECTED, while line 155 records loa-straylight as permanent semantic owner. Replace every 'owner none' claim with that distinction."
+            },
+            {
+              "severity": "low",
+              "location": "docs/PHASE-49P-PROVIDER-NEUTRAL-PERSISTENCE-SIBLING-EVIDENCE-INTAKE.md:90-93,564-568",
+              "description": "Improve evidence anchors: cite request topics at lines 63-84 rather than heading line 61, and dispatch authority at lines 29-33 or 40-67 rather than result-token line 114."
+            }
+          ],
+          "validation_summary": "Independent Codex exact-SHA audit confirmed PR #119 open/unmerged; current main equals the bound base; audited head has the base as sole parent and is one ahead/zero behind; complete diff is exactly one new 602-line Markdown file with no forbidden paths. npm run build, typecheck, control-plane:validate, npm test (74 files/2100 tests), and control-plane:test (29 files/1025 tests) passed; git diff --check, path/link bounds, sibling artifact identity, and no-leak checks passed. Seven bounded semantic/citation corrections remain. Initial test-before-build lacked dist-types and was classified as a proof-harness build-order condition, not a target defect.",
+          "audit_committed_in_pr": false,
+          "next_actor": "coordinator",
+          "provenance": "Independent Codex read-only cloud audit supplied by operator:eileen and durably recorded under the v1 shared allowlisted GitHub auditor identity. This record is audit evidence only, not product acceptance, readiness, gate disposition, or merge authorization."
+        }
+      }
+    },
+    {
+      "id": 5092485814,
+      "user": "eileen1337",
+      "created_at": "2026-07-27T14:17:41Z",
+      "updated_at": "2026-07-27T14:17:41Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49p-audit-completed-001",
+          "lane_id": "lane-phase-49p",
+          "sequence": 6,
+          "actor_role": "auditor",
+          "github_actor": "eileen1337",
+          "event_type": "auditor.audit_completed",
+          "prior_state": "codex-working",
+          "audited_sha": "2e522431f0aa38f08e469aa58a6da1d1c7d74bb1",
+          "verdict": "PATCH",
+          "lease_id": "lease-phase-49p-auditor-001",
+          "reason": "Independent exact-SHA Codex audit found seven bounded semantic and citation corrections. Scope, ancestry, gate posture, provider neutrality, executable checks, and no-leak posture otherwise passed.",
+          "refs": {
+            "audit_comment_id": 5092483236,
+            "audit_digest": "sha256:92cbff0e6fafdfd58e1352ae99d8d67fbda78f07d7ab50bd280363929dd47778"
+          },
+          "occurred_at": "2026-07-27T14:16:57Z"
+        }
+      }
+    },
+    {
+      "id": 5092488082,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-27T14:17:53Z",
+      "updated_at": "2026-07-27T14:17:53Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    },
+    {
+      "id": 5092514647,
+      "user": "eileen1337",
+      "created_at": "2026-07-27T14:20:18Z",
+      "updated_at": "2026-07-27T14:20:18Z",
+      "payloads": {
+        "task_packet": {
+          "schema": "straylight.task-packet.v1",
+          "lane_id": "lane-phase-49p",
+          "authority_basis": "ADR-050 authorized corridor phase-49p and patch-cycle routing; ADR-049 §9.1 and §10 step 3; durable Codex PATCH audit at lane issue #118 audit comment 5092483236 bound to PR #119 head 2e522431f0aa38f08e469aa58a6da1d1c7d74bb1; operator:eileen remains sole acceptance, gate-disposition, readiness, and merge authority.",
+          "base_sha": "a50a91ab633d296dda4848c37d7dda60a18127d8",
+          "repository": "0xHoneyJar/loa-straylight",
+          "target_branch": "phase-49p-provider-neutral-persistence-evidence-intake",
+          "allowed_paths": [
+            "docs/PHASE-49P-PROVIDER-NEUTRAL-PERSISTENCE-SIBLING-EVIDENCE-INTAKE.md"
+          ],
+          "forbidden_paths": [
+            ".github/",
+            ".straylight/",
+            "src/",
+            "tests/",
+            "packages/",
+            "scripts/",
+            "migrations/",
+            "docs/decisions/",
+            "package.json",
+            "package-lock.json",
+            "node_modules/",
+            ".env",
+            ".env.*"
+          ],
+          "capability_success_condition": "Patch the existing Phase 49P document on the established branch and PR #119 to close all seven concerns in the exact-SHA Codex PATCH audit, without widening the original one-file docs-only evidence-intake scope. Preserve accurate bounded Finn and Dixie evidence intake; Straylight semantic ownership; authorized runtime emit/append/persist behavior without semantic redefinition or self-authorized admission; provider-neutral rather than provider-specific persistence obligations; explicit but not artificially separated operator authority grants; correct physical-host-versus-semantic-owner distinctions; accurate evidence anchors; Railway PostgreSQL only as the current bounded MVP-2 deployment candidate; all held/open gate and dependency states; and routing to separate Phase 49Q. Produce a new pushed head on the same working branch, update PR #119, and return the lane to independent Codex audit.",
+          "non_goals": [
+            "Do not add new requirements, architecture, doctrine, evidence conclusions, or files beyond corrections required by the seven audit concerns.",
+            "Do not resolve Finn's TIER_TRUST_MAP or CRITICAL_ACTIONS enforce-not-define findings, and do not make a broad Finn non-drift or no-creep claim.",
+            "Do not prohibit authorized runtimes from executing policy, emitting Straylight-defined receipts, appending Straylight-defined audit events, or persisting an authorized chain.",
+            "Do not ban all provider-neutral storage-host, cloud, runtime, controller, tenant, or model-provider concepts; prohibit only unsupported provider-, deployment-, and host-specific product semantics/configuration where existing authority supports that prohibition.",
+            "Do not require host acceptance and implementation authorization to occupy separate decision artifacts when ADR-049 permits them to be expressly co-recorded in one operator-signed Phase 49Q PR.",
+            "Do not accept, select, approve, deploy, provision, or configure Railway PostgreSQL or any provider; do not discharge Gate #8, close gates #9/#10, resolve D.1(ii), satisfy D.1, start D.2, or close MVP-2.",
+            "Do not design or authorize a StorageAdapter, migrations, schemas, production wiring, rollout, cutover, credentials, consent, signer behavior, living-estate admission, or estate-semantic changes.",
+            "Do not modify PR metadata except updating its body if needed to keep it accurate after the patch; do not create a second PR; do not modify sibling repositories or infrastructure."
+          ],
+          "required_tests": [
+            "Reconstruct lane #118 from the complete issue body and comment stream; confirm patch-required/coordinator, event sequence 6, current patch packet binding, established branch, PR #119, and audited SHA before acquiring an implementer lease.",
+            "Verify current main and the lane base remain a50a91ab633d296dda4848c37d7dda60a18127d8; fetch PR #119 and verify its starting head is 2e522431f0aa38f08e469aa58a6da1d1c7d74bb1 before patching.",
+            "Apply all seven audit corrections and provide a concern-by-concern resolution table with final line/section anchors and supporting authority.",
+            "Independently verify the revised Finn claims against merge SHA 0e04a4c8f2d3865c58dd7c6afa9249d86bcc87e3 and the revised Dixie claims against merge SHA d36c0846f03bfd097d35dd2c001de19eec817cf0.",
+            "Verify P-2, P-5, P-10, P-12, and P-13 against the exact cited authority, including ADR-022D lines 97-99, ADR-048B lines 155-158, and ADR-049 lines 446-470 and 484-492; remove unsupported tails rather than inventing authority.",
+            "Verify every repository path:line citation, ADR-049 §9.1 clause mapping, relative link, sibling section anchor, and full SHA after edits; use request-topic anchors 63-84 and dispatch-authority anchors 29-33 or 40-67 where applicable.",
+            "Run npm run build, npm run typecheck, npm run control-plane:validate, npm test, npm run control-plane:test, and git diff --check in a valid build order; report exact results and distinguish any proof-harness issue from artifact defects.",
+            "Confirm the complete base-to-new-head diff remains exactly the sole allowed Markdown file and that PR #119 points to the new exact pushed head."
+          ],
+          "required_negative_tests": [
+            "No sentence may infer broad Finn non-drift, broad Finn no-creep, or inability to drift toward gate #9 responsibility from literal coupling absence or PostgreSQL-surface evidence.",
+            "No sentence may state or imply that authorized runtimes cannot emit Straylight-defined receipts, append Straylight-defined audit events, persist the authorized chain, or act as authorized canonical writers under granted authority.",
+            "No sentence may categorically exclude all provider-neutral storage-host, cloud, runtime, controller, tenant, or model-provider concepts from the domain model.",
+            "No sentence may require one separate operator decision artifact per authority grant; authority must be explicit and non-implied while permitting express co-recording in Phase 49Q.",
+            "No unsupported identity/controller/tenancy claim may remain in P-12; retain it only with exact existing authority.",
+            "No occurrence may describe semantic owner as none. The document must distinguish permanent semantic owner loa-straylight from physical host UNSELECTED.",
+            "No citation may point only to a heading or result token when the supporting topic or authority lines are available.",
+            "No provider acceptance, gate disposition, implementation authorization, sibling-repo change, estate-semantic change, or MVP-2 completion claim may be introduced."
+          ],
+          "required_no_leak_checks": [
+            "Scan the complete revised diff for credentials, tokens, keys, connection strings, database URLs, provider endpoints/hostnames, ports, account or project IDs, regions, topology, environment values, pricing, commands, deployment steps, API examples, private infrastructure details, or secrets.",
+            "Confirm no scratch, generated, hidden-state, control-plane, workflow, test, source, package, migration, decision-record, or sibling-repository path is committed.",
+            "Confirm only the authorized base, prior audited head where historically necessary, new exact head in completion metadata, Finn merge SHA, and Dixie merge SHA are used; no stale or abbreviated SHA appears in the document."
+          ],
+          "required_completion_report": "Report the reconstructed starting lane state and sequence; accepted implementer lease; starting audited SHA; new exact head SHA and parent/ancestry; exact changed-file list and diff summary; a seven-row audit-finding resolution table with final anchors and cited authority; all validation commands and exact outcomes; PR #119 updated at the new head; completion event id/comment/sequence; final reconstructed lane state ready-for-codex/auditor; confirmation that nothing merged, no new PR was created, no forbidden path or sibling repository changed, and Codex audit was not performed by the implementer.",
+          "stop_conditions": [
+            "Stop and post implementer.blocked or implementer.escalated if lane reconstruction does not yield ready-for-claude/implementer after this patch packet applies, the packet or digest is invalid, the starting PR head is not 2e522431f0aa38f08e469aa58a6da1d1c7d74bb1, main/base binding changed, a conflicting lease exists, or PR #119 no longer targets the established branch.",
+            "Stop rather than guessing if any audit correction would require new doctrine, an estate-semantic decision, a sibling contract change, a second file, infrastructure detail, provider acceptance, gate disposition, or Phase 49Q decision.",
+            "Stop if a cited source does not support the correction; remove unsupported wording where permitted or escalate the exact ambiguity instead of inventing authority.",
+            "Stop before merge, operator acceptance, readiness, gate disposition, or any audit action."
+          ],
+          "may_open_pr": true,
+          "merge_forbidden": true,
+          "expected_next_actor": "auditor",
+          "packet_kind": "patch",
+          "patch_cycle": 1
+        }
+      }
+    },
+    {
+      "id": 5092518451,
+      "user": "eileen1337",
+      "created_at": "2026-07-27T14:20:39Z",
+      "updated_at": "2026-07-27T14:20:39Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49p-patch-packet-001",
+          "lane_id": "lane-phase-49p",
+          "sequence": 7,
+          "actor_role": "coordinator",
+          "github_actor": "eileen1337",
+          "event_type": "coordinator.patch_packet_posted",
+          "prior_state": "patch-required",
+          "base_sha": "a50a91ab633d296dda4848c37d7dda60a18127d8",
+          "patch_cycle": 1,
+          "reason": "Route the seven bounded exact-SHA Codex PATCH findings back to the implementer without widening the original one-file Phase 49P scope.",
+          "refs": {
+            "task_packet_comment_id": 5092514647,
+            "task_packet_digest": "sha256:793de6398115d2e4ff314c1880829fd796dedfcec5c678ba53cecd786060a121",
+            "pr_number": 119
+          },
+          "occurred_at": "2026-07-27T14:20:22Z"
+        }
+      }
+    },
+    {
+      "id": 5092522430,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-27T14:21:00Z",
+      "updated_at": "2026-07-27T14:21:00Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    },
+    {
+      "id": 5093106316,
+      "user": "eileen1337",
+      "created_at": "2026-07-27T15:12:21Z",
+      "updated_at": "2026-07-27T15:12:21Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49p-implementer-lease-002",
+          "lane_id": "lane-phase-49p",
+          "sequence": 8,
+          "actor_role": "implementer",
+          "github_actor": "eileen1337",
+          "event_type": "implementer.lease_acquired",
+          "prior_state": "ready-for-claude",
+          "requested_state": "claude-working",
+          "base_sha": "a50a91ab633d296dda4848c37d7dda60a18127d8",
+          "lease_id": "lease-phase-49p-implementer-002",
+          "lease_expires_at": "2026-07-27T19:12:00Z",
+          "occurred_at": "2026-07-27T15:12:00Z",
+          "refs": {
+            "task_packet_comment_id": 5092514647,
+            "pr_number": 119
+          }
+        }
+      }
+    },
+    {
+      "id": 5093110888,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-27T15:12:47Z",
+      "updated_at": "2026-07-27T15:12:47Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    },
+    {
+      "id": 5093330959,
+      "user": "eileen1337",
+      "created_at": "2026-07-27T15:30:57Z",
+      "updated_at": "2026-07-27T15:30:57Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49p-implementer-completed-002",
+          "lane_id": "lane-phase-49p",
+          "sequence": 9,
+          "actor_role": "implementer",
+          "github_actor": "eileen1337",
+          "event_type": "implementer.completed",
+          "prior_state": "claude-working",
+          "requested_state": "ready-for-codex",
+          "base_sha": "a50a91ab633d296dda4848c37d7dda60a18127d8",
+          "head_sha": "e379c08bd3adee7a460311284055b507bed424f0",
+          "head_branch": "phase-49p-provider-neutral-persistence-evidence-intake",
+          "lease_id": "lease-phase-49p-implementer-002",
+          "occurred_at": "2026-07-27T15:29:30Z",
+          "refs": {
+            "pr_number": 119,
+            "task_packet_comment_id": 5092514647
+          }
+        }
+      }
+    },
+    {
+      "id": 5093335122,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-27T15:31:17Z",
+      "updated_at": "2026-07-27T15:31:17Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    },
+    {
+      "id": 5094475290,
+      "user": "eileen1337",
+      "created_at": "2026-07-27T17:18:05Z",
+      "updated_at": "2026-07-27T17:18:05Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49p-auditor-lease-002",
+          "lane_id": "lane-phase-49p",
+          "sequence": 10,
+          "actor_role": "auditor",
+          "github_actor": "eileen1337",
+          "event_type": "auditor.lease_acquired",
+          "prior_state": "ready-for-codex",
+          "lease_id": "lease-phase-49p-auditor-002",
+          "lease_expires_at": "2026-07-27T21:15:00Z",
+          "reason": "Acquire the bounded audit lease to durably record the independent Codex ACCEPT for PR #119 at exact head e379c08bd3adee7a460311284055b507bed424f0. This records audit eligibility evidence only; it is not product acceptance, readiness, merge authorization, gate disposition, or MVP completion.",
+          "occurred_at": "2026-07-27T17:18:00Z"
+        }
+      }
+    },
+    {
+      "id": 5094478497,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-27T17:18:26Z",
+      "updated_at": "2026-07-27T17:18:26Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    },
+    {
+      "id": 5094490594,
+      "user": "eileen1337",
+      "created_at": "2026-07-27T17:19:45Z",
+      "updated_at": "2026-07-27T17:19:45Z",
+      "payloads": {
+        "audit": {
+          "schema": "straylight.audit.v1",
+          "lane_id": "lane-phase-49p",
+          "pr_number": 119,
+          "base_branch": "main",
+          "base_sha": "a50a91ab633d296dda4848c37d7dda60a18127d8",
+          "head_branch": "phase-49p-provider-neutral-persistence-evidence-intake",
+          "audited_head_sha": "e379c08bd3adee7a460311284055b507bed424f0",
+          "complete_diff_reviewed": true,
+          "changed_files": [
+            "docs/PHASE-49P-PROVIDER-NEUTRAL-PERSISTENCE-SIBLING-EVIDENCE-INTAKE.md"
+          ],
+          "verdict": "ACCEPT",
+          "validation_summary": "Independent Codex exact-SHA audit reviewed the complete base-to-head diff and patch delta; replayed lane issue #118 to ready-for-codex at sequence 9; confirmed exact ancestry, one-file scope, all seven prior PATCH findings resolved, no new material findings, 27/27 repository path:line citations and 11/11 relative links supported, build/typecheck/control-plane validation/full test/control-plane test suites passed, diff checks and no-leak checks passed, bound Finn and Dixie evidence verified, two Socket Security check runs succeeded, and no repository or GitHub mutation was performed. Combined status had zero contexts; no additional CI status evidence was available.",
+          "audit_committed_in_pr": false,
+          "next_actor": "system",
+          "prior_finding_disposition": [
+            {
+              "finding": 1,
+              "status": "RESOLVED",
+              "summary": "Finn negative conclusions are limited to literal coupling absence and the PostgreSQL storage surface; TIER_TRUST_MAP and CRITICAL_ACTIONS remain explicitly unresolved."
+            },
+            {
+              "finding": 2,
+              "status": "RESOLVED",
+              "summary": "P-5 and P-13 preserve authorized runtime execute/emit/append/persist behavior while forbidding semantic redefinition, unauthorized re-minting, and self-authorized admission."
+            },
+            {
+              "finding": 3,
+              "status": "RESOLVED",
+              "summary": "P-2 prohibits provider-, deployment-, and host-specific product concepts while permitting generic provider-neutral concepts."
+            },
+            {
+              "finding": 4,
+              "status": "RESOLVED",
+              "summary": "P-10 requires explicit non-implied grants and permits co-recording in one operator-signed Phase 49Q PR."
+            },
+            {
+              "finding": 5,
+              "status": "RESOLVED",
+              "summary": "The unsupported identity/controller/tenancy tail was removed and the remaining P-12 claim is supported."
+            },
+            {
+              "finding": 6,
+              "status": "RESOLVED",
+              "summary": "loa-straylight is preserved as permanent semantic owner; the physical canonical-store host remains UNSELECTED."
+            },
+            {
+              "finding": 7,
+              "status": "RESOLVED",
+              "summary": "Request and dispatch claims cite the substantive Phase 49J and Phase 49L ranges."
+            }
+          ],
+          "new_findings": [],
+          "authority_gate_assessment": {
+            "evidence_not_acceptance": true,
+            "semantic_owner": "loa-straylight",
+            "physical_host": "UNSELECTED",
+            "railway_postgresql": "bounded current MVP-2 deployment candidate only",
+            "gate_8": "OPEN / HELD",
+            "gates_9_10": "PARTIAL_RECORDED",
+            "d_1_ii": "unresolved",
+            "d_1": "unsatisfied",
+            "d_2": "not started",
+            "mvp_2": "open",
+            "next_phase": "Phase 49Q remains a separate operator decision"
+          },
+          "residual_risks": [
+            "Provider operational evidence, including real backup and restore proof, remains absent.",
+            "Finn's two locally defined classifications remain unresolved.",
+            "A future substrate contract may create a bounded Dixie boundary-evidence requirement."
+          ],
+          "provenance": "Durable transcription of the independent Codex ACCEPT returned to operator:eileen for exact head e379c08bd3adee7a460311284055b507bed424f0. This record is audit eligibility evidence only and is not operator product acceptance, readiness, merge authorization, gate disposition, or MVP completion."
+        }
+      }
+    },
+    {
+      "id": 5094494013,
+      "user": "eileen1337",
+      "created_at": "2026-07-27T17:20:06Z",
+      "updated_at": "2026-07-27T17:20:06Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49p-audit-completed-002",
+          "lane_id": "lane-phase-49p",
+          "sequence": 11,
+          "actor_role": "auditor",
+          "github_actor": "eileen1337",
+          "event_type": "auditor.audit_completed",
+          "prior_state": "codex-working",
+          "lease_id": "lease-phase-49p-auditor-002",
+          "audited_sha": "e379c08bd3adee7a460311284055b507bed424f0",
+          "verdict": "ACCEPT",
+          "reason": "Independent Codex exact-SHA audit ACCEPT: all seven prior PATCH findings resolved, no new material findings, full scope/ancestry/citation/test/no-leak checks passed. This establishes audit eligibility evidence only and does not constitute operator product acceptance, readiness, merge authorization, gate disposition, or MVP completion.",
+          "refs": {
+            "pr_number": 119,
+            "audit_comment_id": 5094490594,
+            "audit_digest": "sha256:3a9df900b7771cf37accae8830691bdf25e57c063fedd6bbe6dc7dc0344f3c3d"
+          },
+          "occurred_at": "2026-07-27T17:20:00Z"
+        }
+      }
+    },
+    {
+      "id": 5094497655,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-27T17:20:29Z",
+      "updated_at": "2026-07-27T17:20:29Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-844b3de68282f332653042ac82b0bbeade0c19576508ca99",
+          "lane_id": "lane-phase-49p",
+          "sequence": 12,
+          "actor_role": "system",
+          "github_actor": "github-actions[bot]",
+          "event_type": "system.eligibility_confirmed",
+          "prior_state": "eligibility-pending",
+          "occurred_at": "2026-07-27T17:20:22Z",
+          "pr_metadata": {
+            "fetch_ok": true,
+            "repository": "0xHoneyJar/loa-straylight",
+            "pr_number": 119,
+            "state": "open",
+            "draft": false,
+            "merged": false,
+            "base_branch": "main",
+            "base_sha": "a50a91ab633d296dda4848c37d7dda60a18127d8",
+            "head_branch": "phase-49p-provider-neutral-persistence-evidence-intake",
+            "head_sha": "e379c08bd3adee7a460311284055b507bed424f0"
+          }
+        }
+      }
+    },
+    {
+      "id": 5094499146,
+      "user": "github-actions[bot]",
+      "created_at": "2026-07-27T17:20:38Z",
+      "updated_at": "2026-07-27T17:20:38Z",
+      "payloads": {},
+      "non_protocol_markers": [
+        "straylight:reducer-result:v1"
+      ]
+    },
+    {
+      "id": 5096236059,
+      "user": "eileen1337",
+      "created_at": "2026-07-27T20:06:05Z",
+      "updated_at": "2026-07-27T20:06:05Z",
+      "payloads": {
+        "event": {
+          "schema": "straylight.event.v1",
+          "event_id": "evt-phase-49p-operator-merged-001",
+          "lane_id": "lane-phase-49p",
+          "sequence": 12,
+          "actor_role": "operator",
+          "github_actor": "eileen1337",
+          "event_type": "operator.merged",
+          "prior_state": "ready-for-merge",
+          "requested_state": "merged",
+          "base_sha": "a50a91ab633d296dda4848c37d7dda60a18127d8",
+          "head_sha": "e379c08bd3adee7a460311284055b507bed424f0",
+          "merge_commit_sha": "77030a93ec2dddef5a96a7a7e047a009043252d5",
+          "refs": {
+            "pr_number": 119,
+            "audit_comment_id": 5094490594
+          },
+          "reason": "operator:eileen authorized and completed the merge of PR #119 after exact-SHA Codex ACCEPT, durable audit recording, and live-head eligibility confirmation. This records the external operator merge only; it does not dispose Gate #8, gates #9/#10, D.1(ii), D.1, D.2, provider acceptance, implementation authorization, or MVP-2.",
+          "occurred_at": "2026-07-27T20:05:50Z"
+        }
+      }
+    }
+  ]
+}

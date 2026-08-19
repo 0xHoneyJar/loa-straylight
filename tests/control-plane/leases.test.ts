@@ -12,7 +12,7 @@ import {
 } from "./_fixtures.js";
 
 const policy = makePolicy();
-const ctx = { now: NOW };
+const ctx = { event_observed_at: NOW };
 
 describe("lease acquisition", () => {
   it("grants an implementer lease with a valid task packet", () => {
@@ -122,7 +122,7 @@ describe("completion discipline", () => {
       lease_id: "lease-claude-1", head_sha: HEAD_SHA, refs: { pr_number: 120 },
       occurred_at: AFTER_EXPIRY,
     });
-    const out = reduce(lane, event, policy, { now: AFTER_EXPIRY, event_observed_at: AFTER_EXPIRY });
+    const out = reduce(lane, event, policy, { event_observed_at: AFTER_EXPIRY });
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.refusal).toBe("lease-expired");
   });
@@ -172,16 +172,21 @@ describe("completion discipline", () => {
     expect(out.lane.state).toBe("codex-working");
   });
 
-  it("rejects unknown-time lease checks (fail closed without now)", () => {
+  it("rejects an event with no authenticated observation time (fail closed; the run clock is not authority)", () => {
     const lane = laneClaudeWorking();
     const event = makeEvent({
       sequence: 4, actor_role: "implementer", github_actor: "claude-login",
       event_type: "implementer.completed", prior_state: "claude-working",
       lease_id: "lease-claude-1", head_sha: HEAD_SHA, refs: { pr_number: 120 },
     });
-    const out = reduce(lane, event, policy, {});
+    const out = reduce(lane, event, policy, {} as any);
     expect(out.ok).toBe(false);
-    if (!out.ok) expect(out.refusal).toBe("time-missing");
+    if (!out.ok) expect(out.refusal).toBe("event-time-unavailable");
+    // A reducer-run wall clock must not stand in for the authenticated
+    // comment time — not for lease validity, not for anything else.
+    const withRunClock = reduce(lane, event, policy, { now: AFTER_EXPIRY } as any);
+    expect(withRunClock.ok).toBe(false);
+    if (!withRunClock.ok) expect(withRunClock.refusal).toBe("event-time-unavailable");
   });
 
   it("blocks a coordinator from touching a leased lane (stale lease cannot be bypassed)", () => {
@@ -210,7 +215,7 @@ describe("lease expiry recovery", () => {
       event_type: "system.lease_expired", prior_state: "claude-working",
       occurred_at: AFTER_EXPIRY,
     });
-    const out = reduce(lane, event, policy, { now: AFTER_EXPIRY });
+    const out = reduce(lane, event, policy, { event_observed_at: AFTER_EXPIRY });
     expect(out.ok).toBe(true);
     if (out.ok) {
       expect(out.lane.state).toBe("lease-expired");
@@ -263,14 +268,14 @@ describe("lease expiry recovery", () => {
       sequence: 6, actor_role: "system", github_actor: "github-actions[bot]",
       event_type: "system.lease_expired", prior_state: "codex-working",
       occurred_at: AFTER_EXPIRY,
-    }), policy, { now: AFTER_EXPIRY });
+    }), policy, { event_observed_at: AFTER_EXPIRY });
     expect(expire.ok).toBe(true);
     if (!expire.ok) return;
     const requeue = reduce(expire.lane, makeEvent({
       sequence: 7, actor_role: "system", github_actor: "github-actions[bot]",
       event_type: "system.requeued", prior_state: "lease-expired",
       requested_state: "ready-for-codex",
-    }), policy, { now: AFTER_EXPIRY });
+    }), policy, { event_observed_at: AFTER_EXPIRY });
     expect(requeue.ok).toBe(true);
     if (requeue.ok) expect(requeue.lane.state).toBe("ready-for-codex");
   });

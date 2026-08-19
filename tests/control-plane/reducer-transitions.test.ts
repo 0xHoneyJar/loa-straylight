@@ -10,7 +10,7 @@ import {
   NOW, BASE_SHA, OTHER_SHA, WORKING_BRANCH,
 } from "./_fixtures.js";
 
-const ctx = { now: NOW };
+const ctx = { event_observed_at: NOW };
 
 describe("allowed transitions", () => {
   it("advances planning → ready-for-coordinator on lane.activated", () => {

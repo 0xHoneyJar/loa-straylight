@@ -15,7 +15,7 @@ import {
 } from "./_fixtures.js";
 
 const policy = makePolicy();
-const ctx = { now: NOW };
+const ctx = { event_observed_at: NOW };
 
 // An audit completion event whose refs declare the digest of `record` —
 // the durable content pinning the reducer re-checks on every replay.

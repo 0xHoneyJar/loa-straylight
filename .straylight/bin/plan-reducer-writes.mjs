@@ -5,7 +5,8 @@
 //
 //   node plan-reducer-writes.mjs --stage a --probe --claim-root <dir> \
 //     --gather-1 <dir1> --gather-2 <dir2> --issue-number <n> \
-//     --repository <owner/repo> --nonce <id>-<attempt> --now <iso> [--policy <f>]
+//     --repository <owner/repo> --nonce <id>-<attempt> --now <iso> \
+//     --source-main-sha-file <f> [--policy <f>]
 //       → validates both reads, proves the lane target IN BOTH reads,
 //         reconstructs, derives the fetch slot (the recorded PR, only when
 //         eligibility-pending), and writes <dir>/claim.json (a closed
@@ -63,6 +64,14 @@
 // same-execution enumeration; duplicate valid lane IDs in EITHER read
 // exit 2 (C1).
 //
+// WRITE-AUTHORITY BINDING (H-02): every plan this script writes carries
+// `authority: {source_main_sha, policy_digest}` — the exact commit the
+// planning ran at (--source-main-sha / --source-main-sha-file, required in
+// both modes) and the canonical digest of the accepted policy loaded above.
+// The executor re-establishes BOTH from GitHub, read-only, before every
+// mutation, so a plan authored under `enabled: true` cannot write after a
+// freeze is merged.
+//
 // No network I/O; no GitHub writes; files are byte containers.
 
 import { readFileSync, writeFileSync, realpathSync, existsSync } from "node:fs";
@@ -70,12 +79,14 @@ import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import { parseStrict } from "../lib/strict-json.mjs";
+import { loadProtocolPolicy } from "../lib/policy-source.mjs";
 import { parseIssuePages, parseIssue, parseCommentPages, parsePr, parseLabelPages } from "../lib/evidence.mjs";
 import { assertUniqueLaneTarget, scanLanes } from "../lib/lane-target.mjs";
 import { reconstructLane, deriveLabels } from "../lib/reconstruct.mjs";
 import { payloadDigest } from "../lib/canonical.mjs";
 import { renderPayload, hasMarker, MARKERS } from "../lib/markers.mjs";
 import { WRITE_PLAN_SCHEMA, warningDedupeKey, warningBodyFor, hasFullLineDedupe } from "../lib/write-plan.mjs";
+import { buildWriteAuthority, resolveSourceMainSha } from "../lib/write-authority.mjs";
 import {
   READ_PLAN_SCHEMA, FETCH_SLOT_CLAIM_SCHEMA, parseClaim, parseReadLedger,
   checkLedgerAgainstClaim, slotFileName,
@@ -119,6 +130,16 @@ for (const [name, v] of [["--gather-1", gather1], ["--gather-2", gather2], ["--i
 }
 const issueNumber = Number(issueArg);
 if (!Number.isInteger(issueNumber) || issueNumber < 1) fail("usage", "--issue-number must be a positive integer");
+// The commit this planning ran at (H-02). Required in BOTH modes so a workflow
+// that failed to supply it refuses at its FIRST planner step rather than after
+// a full gather; the probe writes no write plan, but a run that cannot name its
+// own revision has nothing to plan under.
+const resolvedSourceSha = resolveSourceMainSha({
+  literal: arg("--source-main-sha"),
+  filePath: arg("--source-main-sha-file"),
+});
+if (!resolvedSourceSha.ok) fail(resolvedSourceSha.reason, resolvedSourceSha.detail);
+const sourceMainSha = resolvedSourceSha.sha;
 const requestRoot = arg("--request-root");
 if (!probe && requestRoot === null) fail("usage", "--request-root is required unless --probe");
 // Probe slot derivation mode: "eligibility" (reducer Stage A — the slot
@@ -136,19 +157,26 @@ if (stage === "a" && !probe && (claimPath === null || readLedgerPath === null)) 
   fail("usage", "--claim and --read-ledger are required for the final Stage A planner (J2)");
 }
 
+// Strict parse + validation; the accepted-epoch digest lock additionally
+// applies when the file read is the protocol's own committed policy.
 function loadPolicy() {
-  const policyPath = arg("--policy") ?? resolve(here, "..", "automation-policy.json");
-  let text;
-  try {
-    text = readFileSync(policyPath, "utf8");
-  } catch (e) {
-    fail("policy-unreadable", String(e?.message ?? e));
-  }
-  const parsed = parseStrict(text);
-  if (!parsed.ok) fail("policy-unreadable", `strict JSON parse failed: ${parsed.reason}`);
-  return parsed.value;
+  const loaded = loadProtocolPolicy({
+    committedPath: resolve(here, "..", "automation-policy.json"),
+    overridePath: arg("--policy"),
+  });
+  if (!loaded.ok) fail(loaded.refusal, loaded.detail);
+  return loaded.value;
 }
 const policy = loadPolicy();
+
+// The H-02 write-authority binding, built ONCE from the two things that
+// authorized this run: the exact commit the planning ran at and the canonical
+// digest of the accepted policy it reasoned under. Every plan below carries it,
+// and the executor re-establishes both from GitHub before every mutation — a
+// plan is a proposal bound to a revision, never a licence.
+const authorityBuilt = buildWriteAuthority({ source_main_sha: sourceMainSha, policy });
+if (!authorityBuilt.ok) fail(authorityBuilt.reason, authorityBuilt.detail);
+const authority = authorityBuilt.authority;
 
 // Parse one complete read: enumeration + issue + comments (+ labels for
 // stage b). Every stream goes through the shared evidence parser. Raw
@@ -454,6 +482,7 @@ if (stage === "a") {
     plan_id: `${nonce}-reducer-a`,
     nonce,
     repository,
+    authority,
     operations: [{
       op_id: "op-1",
       kind: "post-state-advancing-event",
@@ -616,6 +645,7 @@ const plan = {
   plan_id: `${nonce}-reducer-b`,
   nonce,
   repository,
+  authority,
   operations,
 };
 writeFileSync(join(realRoot, "plan.json"), JSON.stringify(plan, null, 2) + "\n");
