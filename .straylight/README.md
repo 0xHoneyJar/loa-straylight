@@ -1025,7 +1025,11 @@ than proceeding on a revision it was not explicitly pointed at.
    completeness claim, and it is the operator's claim, not the tool's.
 
    Record the `frontier_digest: sha256:…` line it prints to stderr. That
-   is the value step 4 commits, and the identity of these exact bytes.
+   is the value step 4 commits, and the identity of this document's
+   CANONICAL CONTENT — not of one particular raw serialization of it.
+   Reprinting the same frontier with different whitespace or object-key
+   order canonicalizes to the same value and keeps the same digest;
+   changing what the document actually says does not.
 
 4. Prepare the append: add the new epoch at the end of
    `admission_history` with `governs_from` **strictly after** the
@@ -1056,9 +1060,14 @@ than proceeding on a revision it was not explicitly pointed at.
    this merge, if `main` moved for any reason other than this merge, or
    if a new write-capable run appeared, the evidence is stale: restart at
    step 1, and move the candidate boundary if it no longer clears the new
-   maximum. A recapture produces different bytes and therefore a
-   different digest, so the commitment written in step 4 must be updated
-   with it — a stale commitment refuses rather than passing quietly.
+   maximum. A recapture normally yields a DIFFERENT digest because its
+   semantic proof fields differ — `captured_at`, `quiescence_checked_at`,
+   the lane and event material, the event counts, the authenticated
+   event times — so the commitment written in step 4 must be updated
+   with whatever the new capture prints; a stale commitment refuses
+   rather than passing quietly. Reserialization alone is not what moves
+   it: a recapture whose canonical value happens to be identical
+   legitimately keeps the same digest.
    `operator:eileen` must not write lane events during a cutover.
 
 7. Merge a **separate** live-only transition restoring `enabled: true`.
