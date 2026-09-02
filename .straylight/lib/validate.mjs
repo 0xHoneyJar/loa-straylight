@@ -24,7 +24,18 @@ const BRANCH_RE = /^[A-Za-z0-9._/-]{1,200}$/;
 const LEASE_ID_RE = /^lease-[a-z0-9][a-z0-9-]{1,62}$/;
 const EVENT_ID_RE = /^evt-[a-z0-9][a-z0-9-]{1,62}$/;
 const GH_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(\[bot\])?$/;
-const RELATIVE_PATH_RE = /^(?!\/)(?!.*\.\.)[\x20-\x7E]{1,300}$/;
+// STRUCTURAL repo-relative path legality, and the single owner of it. Shared:
+// the packet's own scope entries are validated against it here, and
+// task-scope.mjs judges a PROPOSED changed path against the same constant
+// rather than restating the rule.
+//
+// STRUCTURALLY VALID PACKET STRING != CANONICAL TASK-SCOPE PATH. This is
+// necessary but not sufficient for semantic scope MATCHING: it admits
+// `docs//`, `docs/./`, `docs\x` and `C:/secret.txt`, which are legal packet
+// strings but ambiguous to match against. task-scope.mjs layers a strictly
+// stronger SEMANTIC canonicality predicate on top of this constant for that
+// purpose. Packet-level structural validation deliberately stays as it is.
+export const RELATIVE_PATH_RE = /^(?!\/)(?!.*\.\.)[\x20-\x7E]{1,300}$/;
 const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 
 // Strict UTC calendar instant: the ISO shape AND a real calendar date/time.

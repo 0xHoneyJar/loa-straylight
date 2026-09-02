@@ -138,6 +138,14 @@ that nothing merges.
                                and must commit its canonical digest (the
                                document's identity, derived here, never
                                stored inside the document)
+    task-scope.mjs           ← the ONLY definition of what a packet's
+                               `allowed_paths` / `forbidden_paths` /
+                               `may_open_pr` actually PERMIT
+                               (`evaluateTaskPacketScopeComponent`). Pure
+                               and fail-closed; establishes ONE component
+                               of implementer authorization and never
+                               authorization itself (§ "Task-packet effect
+                               scope")
     frozen-quiescence.mjs    ← frozen-write quiescence: the closed set of
                                workflows reaching the write executor,
                                derived mechanically from the workflow
@@ -1133,6 +1141,127 @@ reducer enforces this at `implementer.lease_acquired`. A packet whose
 `base_sha` no longer equals the lane's base SHA is stale and fails closed,
 as is one whose `target_branch` differs from the established working
 branch.
+
+### Task-packet effect scope
+
+`allowed_paths`, `forbidden_paths` and `may_open_pr` are validated for
+shape by `validateTaskPacket`, but their EFFECT semantics — what they
+actually permit — are defined by
+[`lib/task-scope.mjs`](./lib/task-scope.mjs) and nowhere else. An executor
+may MECHANICALLY ENFORCE these semantics; it must never define them
+independently or hand-copy them.
+
+```
+evaluateTaskPacketScopeComponent({ packet, changed_paths, requested_effect })
+  → { ok: true, component: "task-packet-effect-scope" }
+  → { ok: false, refusal: "<closed code>", detail }
+```
+
+Pure and total: no I/O, no clock, no mutation. The packet is validated
+through `validateTaskPacket` — the single task-packet validator — so
+arbitrary JSON is refused as `packet-invalid`.
+
+**Effect vocabulary** is closed to `modify-worktree` and `open-pr`;
+anything else refuses as `unknown-effect`. `may_open_pr` gates `open-pr`
+ONLY (a worktree modification is never gated on it), and only the boolean
+`true` permits.
+
+**Path scope.** A scope entry ending in `/` is a DIRECTORY SUBTREE; an
+entry without one is an EXACT file path. For every proposed path,
+`forbidden_paths` is evaluated BEFORE `allowed_paths`, so **forbidden
+always wins on overlap**. One refused path refuses the whole
+determination. Duplicates are deduplicated and cannot change the answer;
+an empty changed-path set refuses as `empty-changed-path-set`.
+
+**One canonical path language.** A **structurally valid packet string is
+NOT necessarily a canonical task-scope path.** Structural legality is
+owned by `validate.mjs#RELATIVE_PATH_RE` (no leading `/`, no `..`,
+printable ASCII, ≤300 chars) and is necessary but NOT sufficient for
+semantic MATCHING — it admits `docs//`, `docs/./`, `docs\secret.md` and
+`C:/secret.txt`, each of which would either match nothing (an INERT
+prohibition) or depend on a platform's normalization. So `task-scope.mjs`
+adds a strictly stronger SEMANTIC canonicality predicate and applies the
+SAME ONE to all three path populations — `allowed_paths` entries,
+`forbidden_paths` entries and proposed changed paths — with no per-field
+normalization rules. Beyond the structural rule it refuses any backslash
+(including UNC forms), a Windows drive-letter prefix (`C:/x`, `C:\x`,
+`C:x`), a repeated separator (`a//b`), a `.` segment (`./a`, `a/./b`) and
+a whitespace-padded segment. Ambiguous input is REFUSED as
+`scope-entry-non-canonical` (packet entry) or `changed-path-malformed`
+(proposed path), **never normalized into something permitted**. The
+deliberate trailing-slash directory spelling is canonical and preserved; a
+proposed path must additionally name a FILE, so a trailing `/` refuses
+there. Packet-level structural validation is unchanged.
+
+Where the merged record is not decisive, the reading that REFUSES MORE is
+taken, so no gap can widen real write capability: a slashless ALLOWED
+entry is exact-only, while a slashless FORBIDDEN entry also covers its
+subtree (the corpus writes both `.loa`, a file, and `.claude`, a
+directory, without a slash).
+
+**There is no pattern language here, and none is implemented.** `*`, `?`,
+`[`, `]`, `{` and `}` have no defined meaning anywhere in the protocol; no
+matcher of any kind exists in the repository and **real pattern semantics
+remain an open operator decision** that this module does not decide.
+Nothing interprets a pattern. Entries carrying that syntax are governed by
+the one rule that does not depend on the undecided question:
+
+> Unsupported syntax may only REDUCE permission or REFUSE the
+> determination. It may NEVER expand permission.
+
+In `allowed_paths`, unsupported syntax refuses the whole determination as
+`allowed-scope-uninterpretable` — any reading would admit paths on a
+guess. In `forbidden_paths` it is over-approximated by the literal text
+preceding it, but ONLY where that prefix is non-empty and therefore
+demonstrably fail-closed:
+
+```
+.env.*         → conservatively forbids the prefix ".env."  (.env.local refuses)
+docs/*.secret  → conservatively forbids the prefix "docs/"  (all of docs/ refuses)
+*  ?foo  [abc] → NO literal prefix → whole determination refuses
+                 (forbidden-scope-uninterpretable)
+```
+
+An entry BEGINNING with unsupported syntax has an EMPTY literal prefix, so
+there is nothing conservative to reduce toward. Treating it as matching
+nothing was **fail-open** — a declared prohibition permitted the path it
+was written to forbid — so the determination refuses outright instead.
+
+**Authority ceiling.** A positive result establishes exactly one
+component — the packet's effect scope — and is NOT authorization to
+execute, launch a model, modify the worktree, push, open a pull request,
+post an event, or continue a lane. Production authorization is the
+CONJUNCTION of separately established facts, each owned elsewhere:
+current committed policy (`acceptPolicy`) + resolved admission epoch
+(`admissionPolicyFor`) + authenticated/current packet (`reconstruct.mjs`)
++ current lane/turn (`state-machine.mjs`) + an admitted current
+implementer lease (`reconstruct.mjs`, `reducer.mjs`) + task-packet effect
+scope (this module). `task-scope.mjs` absorbs none of the others: its
+whole import closure is pure, which
+`tests/control-plane/task-scope.test.ts` pins structurally alongside the
+semantics.
+
+**What the committed tests do and do not prove.**
+`tests/control-plane/task-scope.test.ts` is DETERMINISTIC CASE COVERAGE
+against the real exported API, including a table that names each
+load-bearing rule and the witness that pins it. It is **not** mutation
+testing, and no committed table should be read as proving a rule is
+non-vacuous: a committed re-implementation of the decision could only
+prove that the copy agrees with itself.
+
+Mutation evidence is produced separately, by mutating
+`.straylight/lib/task-scope.mjs` ITSELF in a **disposable isolated copy**
+of the repository and running this suite against the mutated production
+source — one control weakened at a time, each mutation required to be
+found exactly once, to actually change the file, to fail its owning test,
+and to leave the pristine source byte-identical on restore. It is
+deliberately not a committed subsystem: it is an operator-run check, not a
+production capability, and nothing in the control plane depends on it.
+The controls covered are: the empty forbidden-prefix refusal
+(`conservativeForbiddenPrefix`), the canonical packet-entry check
+(`classifyTaskScopePath` over both scope arrays), Windows drive-path
+rejection (`DRIVE_PREFIX_RE`), forbidden-overrides-allowed, the
+`may_open_pr` gate, and the closed effect vocabulary.
 
 ## Audits and the exact-SHA rule
 
