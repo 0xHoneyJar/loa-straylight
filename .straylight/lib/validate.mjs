@@ -24,7 +24,10 @@ const BRANCH_RE = /^[A-Za-z0-9._/-]{1,200}$/;
 const LEASE_ID_RE = /^lease-[a-z0-9][a-z0-9-]{1,62}$/;
 const EVENT_ID_RE = /^evt-[a-z0-9][a-z0-9-]{1,62}$/;
 const GH_LOGIN_RE = /^[A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38}(\[bot\])?$/;
-const RELATIVE_PATH_RE = /^(?!\/)(?!.*\.\.)[\x20-\x7E]{1,300}$/;
+// Repo-relative path legality. Shared: the packet's own scope entries are
+// validated against it here, and task-scope.mjs judges a PROPOSED changed
+// path against the same constant rather than restating the rule.
+export const RELATIVE_PATH_RE = /^(?!\/)(?!.*\.\.)[\x20-\x7E]{1,300}$/;
 const DIGEST_RE = /^sha256:[0-9a-f]{64}$/;
 
 // Strict UTC calendar instant: the ISO shape AND a real calendar date/time.

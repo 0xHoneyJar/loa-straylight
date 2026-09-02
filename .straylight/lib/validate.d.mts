@@ -71,3 +71,9 @@ export declare function validatePrMetadata(v: unknown): ValidationResult;
 export declare function parseIsoInstant(s: unknown): number | null;
 /** The one canonical "owner/name" repository pattern. */
 export declare const REPO_RE: RegExp;
+/**
+ * The one repo-relative path pattern: no absolute path, no `..` traversal,
+ * printable ASCII, 1–300 chars. Shared with task-scope.mjs so a proposed
+ * changed path is judged by the same rule as the packet's scope entries.
+ */
+export declare const RELATIVE_PATH_RE: RegExp;
