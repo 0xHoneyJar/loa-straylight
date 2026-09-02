@@ -32,6 +32,13 @@ export type TaskScopeResult =
  *
  * `may_open_pr` gates ONLY `open-pr`. Forbidden scope wins over allowed for
  * every path. One refused path refuses the whole determination.
+ *
+ * ONE canonical path language is applied to `allowed_paths` entries,
+ * `forbidden_paths` entries and proposed changed paths alike: a structurally
+ * valid packet string is NOT necessarily a canonical task-scope path, and
+ * non-canonical input is refused rather than normalized. No pattern language
+ * is implemented; syntax the protocol does not define may only reduce
+ * permission or refuse the determination, never expand it.
  */
 export declare function evaluateTaskPacketScopeComponent(input: {
   packet: unknown;

@@ -60,12 +60,39 @@
 //   * A slashless FORBIDDEN entry covers its subtree too. The corpus uses
 //     both `.loa` (a real file) and `.claude` (a real directory) without a
 //     slash, so exact-only would silently drop a directory prohibition.
-//   * A glob metacharacter has no defined meaning anywhere in the protocol
-//     (there is no matcher in the repository). In ALLOWED scope it is
-//     uninterpretable and refuses the whole determination; in FORBIDDEN
-//     scope it is over-approximated by its literal prefix, so `.env.*`
-//     still refuses `.env.local`. Real pattern semantics remain an OPEN
-//     OPERATOR DECISION; nothing here depends on inventing them.
+//
+// THERE IS NO PATTERN LANGUAGE HERE. `*`, `?`, `[`, `]`, `{` and `}` have no
+// defined meaning anywhere in the protocol — no matcher of any kind exists in
+// the repository, and pattern semantics remain an OPEN OPERATOR DECISION that
+// this module does not decide. Nothing below interprets a pattern. Entries
+// carrying that syntax are handled by the ONE rule that cannot depend on the
+// undecided question:
+//
+//     UNSUPPORTED SYNTAX MAY ONLY REDUCE PERMISSION OR REFUSE THE
+//     DETERMINATION. IT MAY NEVER EXPAND PERMISSION.
+//
+// In ALLOWED scope, unsupported syntax refuses the whole determination: any
+// reading of it would admit paths on a guess. In FORBIDDEN scope it is
+// over-approximated by the literal text preceding it — but ONLY when that
+// literal prefix is non-empty and therefore demonstrably fail-closed, so the
+// corpus's real `.env.*` entry still refuses `.env.local`. An entry that
+// BEGINS with unsupported syntax (`*`, `?foo`, `[abc]`) has an EMPTY literal
+// prefix: there is no conservative prefix to reduce toward, so the whole
+// determination refuses rather than letting a prohibition match nothing.
+//
+// ONE CANONICAL PATH LANGUAGE, USED FOR EVERY PATH. A STRUCTURALLY VALID
+// PACKET STRING IS NOT NECESSARILY A CANONICAL TASK-SCOPE PATH. Structural
+// packet legality is owned by validate.mjs#RELATIVE_PATH_RE and is necessary
+// but NOT sufficient for semantic matching: it admits `docs//`, `docs/./`,
+// `docs\secret.md` and `C:/secret.txt`. Each of those either silently matches
+// nothing — an INERT prohibition, which is under-matching — or depends on a
+// platform's normalization rules. So this module adds a stricter SEMANTIC
+// canonicality predicate (classifyTaskScopePath) and applies THE SAME ONE to
+// all three path populations: `allowed_paths` entries, `forbidden_paths`
+// entries and proposed changed paths. Non-canonical input is REFUSED, never
+// normalized into something permitted. The deliberate trailing-slash
+// directory spelling is canonical and preserved; ambiguous or repeated
+// separators are not.
 
 import { validateTaskPacket, RELATIVE_PATH_RE } from "./validate.mjs";
 
@@ -80,54 +107,110 @@ export const TASK_PACKET_SCOPE_COMPONENT = "task-packet-effect-scope";
  */
 export const IMPLEMENTER_EFFECTS = Object.freeze(["modify-worktree", "open-pr"]);
 
-/** The closed refusal vocabulary. Bounded output, never prose reasoning. */
+/**
+ * The closed refusal vocabulary. Bounded output, never prose reasoning.
+ * Listed in REFUSAL PRECEDENCE order (see evaluateTaskPacketScopeComponent).
+ */
 export const SCOPE_REFUSALS = Object.freeze([
   "input-malformed",
   "packet-invalid",
   "unknown-effect",
+  "pr-not-permitted",
+  "scope-entry-non-canonical",
+  "allowed-scope-uninterpretable",
+  "forbidden-scope-uninterpretable",
   "changed-paths-malformed",
   "empty-changed-path-set",
   "changed-path-malformed",
-  "allowed-scope-uninterpretable",
-  "pr-not-permitted",
   "path-forbidden",
   "path-outside-allowed-scope",
 ]);
 
-// A glob metacharacter. No component of the protocol defines pattern
-// matching over packet scope, so these are handled as documented above
-// rather than silently treated as literals.
-const GLOB_META_RE = /[*?[\]{}]/;
+// Syntax the protocol does not define. NOT a pattern language: nothing here
+// interprets these characters. They are handled by the reduce-or-refuse rule
+// documented in the module header.
+const UNSUPPORTED_SYNTAX_RE = /[*?[\]{}]/;
+
+// A Windows drive-letter prefix (`C:/secret.txt`, `C:\secret.txt`, `C:x`).
+// Whether such a string names a repo-relative file at all is platform
+// dependent, so it is not a canonical task-scope path.
+const DRIVE_PREFIX_RE = /^[A-Za-z]:/;
 
 function refuse(refusal, detail) {
   return { ok: false, refusal, detail };
 }
 
 /**
- * Canonical form of a PROPOSED CHANGED PATH: a repo-relative path naming
- * exactly one file, in one unambiguous spelling. Returns a short form code,
- * or null when the path is canonical.
+ * THE ONE canonical task-scope path language. Applied identically to
+ * `allowed_paths` entries, `forbidden_paths` entries and proposed changed
+ * paths, so no population has its own normalization rules.
  *
- * RELATIVE_PATH_RE (validate.mjs, the same constant the packet's own scope
- * entries are validated against) already refuses an absolute path, any `..`
- * traversal, a non-printable or non-ASCII byte, an empty string and
- * anything over 300 characters. The rest closes normalization ambiguity: a
- * path must not be spelled two ways, so `./a`, `a//b`, `a/./b`, `a/`, ` a`
- * and `a\b` are all refused rather than normalized into `a`.
+ *   -> { kind: "exact" }      a canonical slashless path: one exact path
+ *   -> { kind: "directory" }  a canonical trailing-slash path: a subtree
+ *   -> { error: <code> }      not canonical; the caller must REFUSE
+ *
+ * RELATIVE_PATH_RE (validate.mjs — the single structural owner, reused rather
+ * than restated) already refuses a leading `/`, any `..` traversal, a
+ * non-printable or non-ASCII byte (so NUL and every control form), an empty
+ * string and anything over 300 characters. That is NECESSARY BUT NOT
+ * SUFFICIENT for semantic matching, so this predicate is strictly stronger:
+ * it also refuses any backslash (`docs\x`, UNC forms), a Windows drive-letter
+ * prefix (`C:/secret.txt`), a repeated separator (`docs//`), a `.` segment
+ * (`./docs`, `docs/./x`) and a whitespace-padded segment. Those are REFUSED
+ * rather than normalized, so a path cannot be spelled two ways and a
+ * prohibition can never be silently inert.
+ *
+ * Unsupported syntax is deliberately NOT a canonicality error here: the
+ * per-field reduce-or-refuse rule owns it, because `.env.*` must remain a
+ * conservatively fail-closed prohibition rather than an invalid packet.
+ */
+function classifyTaskScopePath(s) {
+  if (typeof s !== "string") return { error: "not-a-string" };
+  if (s.length === 0) return { error: "empty" };
+  if (!RELATIVE_PATH_RE.test(s)) return { error: "malformed" }; // absolute, traversal, non-printable, over-long
+  if (s.includes("\\")) return { error: "backslash" };
+  if (DRIVE_PREFIX_RE.test(s)) return { error: "drive-letter-path" };
+  // A trailing slash is the established DIRECTORY spelling, so it is stripped
+  // once before the segments are judged — and exactly once, so `docs//` and
+  // `docs/./` still fail below.
+  const directory = s.endsWith("/");
+  for (const segment of (directory ? s.slice(0, -1) : s).split("/")) {
+    if (segment === "") return { error: "empty-segment" }; // `a//b`, `docs//`
+    if (segment === ".") return { error: "dot-segment" }; // `./a`, `a/./b`, `docs/./`
+    if (segment !== segment.trim()) return { error: "whitespace-padded-segment" };
+  }
+  return { kind: directory ? "directory" : "exact" };
+}
+
+/**
+ * Canonical form of a PROPOSED CHANGED PATH: it must be a canonical
+ * task-scope path that names exactly one FILE, in syntax the protocol
+ * defines. Returns a short form code, or null when the path is canonical.
  */
 function changedPathFormError(p) {
-  if (typeof p !== "string") return "not-a-string";
-  if (p.length === 0) return "empty";
-  if (!RELATIVE_PATH_RE.test(p)) return "malformed"; // absolute, traversal, non-printable, over-long
-  if (p.endsWith("/")) return "names-a-directory-not-a-file";
-  if (GLOB_META_RE.test(p)) return "glob-metacharacter";
-  if (p.includes("\\")) return "backslash-separator";
-  for (const segment of p.split("/")) {
-    if (segment === "") return "empty-segment"; // `a//b`
-    if (segment === ".") return "dot-segment"; // `./a`, `a/./b`
-    if (segment !== segment.trim()) return "whitespace-padded-segment";
-  }
+  const form = classifyTaskScopePath(p);
+  if (form.error !== undefined) return form.error;
+  if (form.kind === "directory") return "names-a-directory-not-a-file";
+  if (UNSUPPORTED_SYNTAX_RE.test(p)) return "unsupported-syntax";
   return null;
+}
+
+/**
+ * The conservative FORBIDDEN reduction of an entry carrying syntax the
+ * protocol does not define. This interprets nothing; it only asks how far the
+ * entry can be read as a plain literal.
+ *
+ *   -> undefined  no unsupported syntax; the entry is read literally
+ *   -> string     a non-empty literal prefix, demonstrably fail-closed:
+ *                 forbidding it forbids AT LEAST what the entry could mean
+ *   -> null       NO SAFE PREFIX (the entry begins with unsupported syntax),
+ *                 so there is nothing conservative to reduce toward
+ */
+function conservativeForbiddenPrefix(entry) {
+  const at = entry.search(UNSUPPORTED_SYNTAX_RE);
+  if (at < 0) return undefined;
+  const literal = entry.slice(0, at);
+  return literal.length > 0 ? literal : null;
 }
 
 /**
@@ -141,15 +224,18 @@ function allowedEntryCovers(entry, p) {
 
 /**
  * Does a FORBIDDEN scope entry cover `p`? Trailing slash is a subtree; no
- * trailing slash is the exact file AND its subtree; a metacharacter entry
- * is over-approximated by the literal prefix preceding it.
+ * trailing slash is the exact file AND its subtree; an entry carrying
+ * unsupported syntax is over-approximated by its conservative literal prefix.
+ *
+ * An entry with NO safe prefix covers EVERY path. The evaluator refuses such a
+ * packet outright before reaching here, so this branch is defence in depth —
+ * but it is deliberately the maximally restrictive answer, so unsupported
+ * syntax cannot expand permission at either layer.
  */
 function forbiddenEntryCovers(entry, p) {
-  const meta = entry.search(GLOB_META_RE);
-  if (meta >= 0) {
-    const literal = entry.slice(0, meta);
-    return literal.length > 0 && p.startsWith(literal);
-  }
+  const prefix = conservativeForbiddenPrefix(entry);
+  if (prefix === null) return true;
+  if (prefix !== undefined) return p.startsWith(prefix);
   if (entry.endsWith("/")) return p.startsWith(entry) && p.length > entry.length;
   return p === entry || p.startsWith(`${entry}/`);
 }
@@ -172,11 +258,15 @@ function forbiddenEntryCovers(entry, p) {
  * separately and conjoin them with this result.
  *
  * REFUSAL PRECEDENCE is fixed so the answer is deterministic: input shape,
- * then packet validity, then effect vocabulary, then the effect's own
- * packet permission (`may_open_pr`), then changed-path shape, then
- * allowed-scope interpretability, then — per path, in the given order —
- * forbidden before allowed. Forbidden is evaluated before allowed for every
- * path, so forbidden always wins on overlap.
+ * then packet validity, then effect vocabulary, then the effect's own packet
+ * permission (`may_open_pr`), then the packet's own declared SCOPE LANGUAGE
+ * (canonicality of every entry, then allowed-scope and forbidden-scope
+ * interpretability), then changed-path shape, then — per path, in the given
+ * order — forbidden before allowed. The scope language is judged before any
+ * proposed path because a packet whose declared scope cannot be read admits
+ * no determination at all, whatever is proposed against it. Forbidden is
+ * evaluated before allowed for every path, so forbidden always wins on
+ * overlap.
  *
  * Every path must pass: one refused path refuses the whole determination.
  * Duplicate paths are deduplicated and cannot change the answer. An empty
@@ -207,6 +297,52 @@ export function evaluateTaskPacketScopeComponent(input) {
     return refuse("pr-not-permitted", "packet.may_open_pr is not true");
   }
 
+  // THE PACKET'S OWN SCOPE LANGUAGE. validateTaskPacket establishes that each
+  // entry is a structurally legal packet string; it does NOT establish that
+  // the entry is a canonical task-scope path. `docs//`, `docs/./`,
+  // `docs\secret.md` and `C:/secret.txt` all pass structurally and would then
+  // match nothing — an operator's prohibition silently forbidding NOTHING, or
+  // a scope decided by a platform's normalization. Refuse instead.
+  for (const [field, entries] of [
+    ["allowed_paths", pkt.allowed_paths],
+    ["forbidden_paths", pkt.forbidden_paths],
+  ]) {
+    for (const entry of entries) {
+      const form = classifyTaskScopePath(entry);
+      if (form.error !== undefined) {
+        return refuse(
+          "scope-entry-non-canonical",
+          `${field} entry ${JSON.stringify(entry)} is not a canonical task-scope path: ${form.error}`
+        );
+      }
+    }
+  }
+
+  // Unsupported syntax may only REDUCE permission or REFUSE. In allowed scope
+  // there is nothing to reduce toward — any reading would admit paths on a
+  // guess — so the determination refuses.
+  for (const entry of pkt.allowed_paths) {
+    if (UNSUPPORTED_SYNTAX_RE.test(entry)) {
+      return refuse(
+        "allowed-scope-uninterpretable",
+        `allowed_paths entry ${JSON.stringify(entry)} uses syntax the protocol does not define`
+      );
+    }
+  }
+
+  // In forbidden scope the conservative literal prefix is used — but only
+  // where it is demonstrably fail-closed. An entry BEGINNING with unsupported
+  // syntax has an empty prefix, i.e. no safe conservative reading, so the
+  // whole determination refuses rather than under-matching.
+  for (const entry of pkt.forbidden_paths) {
+    if (conservativeForbiddenPrefix(entry) === null) {
+      return refuse(
+        "forbidden-scope-uninterpretable",
+        `forbidden_paths entry ${JSON.stringify(entry)} uses syntax the protocol does not define and has no literal prefix to conservatively forbid`
+      );
+    }
+  }
+
   if (!Array.isArray(changed_paths)) {
     return refuse("changed-paths-malformed", "changed_paths must be an array");
   }
@@ -217,15 +353,6 @@ export function evaluateTaskPacketScopeComponent(input) {
     const formError = changedPathFormError(changed_paths[i]);
     if (formError !== null) {
       return refuse("changed-path-malformed", `changed_paths[${i}]: ${formError}`);
-    }
-  }
-
-  for (const entry of pkt.allowed_paths) {
-    if (GLOB_META_RE.test(entry)) {
-      return refuse(
-        "allowed-scope-uninterpretable",
-        `allowed_paths entry ${JSON.stringify(entry)} contains a glob metacharacter, which has no defined meaning`
-      );
     }
   }
 

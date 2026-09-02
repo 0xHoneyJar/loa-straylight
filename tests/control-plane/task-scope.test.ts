@@ -8,14 +8,23 @@
 // Three things are proven here, in order:
 //
 //   1. THE SEMANTICS — path scope and PR scope, case by case, fail-closed.
+//      Every case calls the real exported production API; there is no
+//      reimplementation of the decision anywhere in this file.
 //   2. NON-AUTHORITY — a positive determination is one COMPONENT and cannot
 //      become execution authorization: the module's whole import closure is
 //      pure, so it has no way to advance a lane, take a lease, launch a
 //      process, reach Git/GitHub, or post an event.
-//   3. NON-VACUITY — for each critical rule, a MUTANT evaluator with that
-//      one rule weakened is built and must DISAGREE with the real module on
-//      a named witness. A rule whose mutant agreed everywhere would mean
-//      the rule is untested; these rows fail if a rule is ever weakened.
+//   3. CRITICAL-RULE COVERAGE — a table naming each load-bearing rule with
+//      the witness that pins it, so a weakened rule has an owning row.
+//
+// WHAT THIS FILE IS NOT. It is DETERMINISTIC CASE COVERAGE, not mutation
+// testing: nothing here mutates production source, and no row may be read as
+// proof that a rule is non-vacuous by construction. Mutation evidence is
+// produced by mutating .straylight/lib/task-scope.mjs itself in a disposable
+// isolated copy of the repository and running this suite against it — see
+// ".straylight/README.md § Task-packet effect scope". Keeping that run out of
+// the committed tree is deliberate: a committed re-implementation of the
+// algorithm would only prove that the copy disagrees with itself.
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
@@ -147,7 +156,7 @@ describe("task-packet path scope", () => {
     }
   });
 
-  it("refuses a glob metacharacter in a changed path", () => {
+  it("refuses unsupported syntax in a changed path", () => {
     expect(verdict(scope({}, ["docs/decisions/*.md"]))).toBe("changed-path-malformed");
   });
 
@@ -191,18 +200,162 @@ describe("task-packet path scope", () => {
     expect(a).toEqual(b);
   });
 
-  it("refuses an uninterpretable glob in ALLOWED scope instead of guessing", () => {
+  it("refuses uninterpretable syntax in ALLOWED scope instead of guessing", () => {
     const r = scope({ allowed_paths: ["docs/**"] }, ["docs/decisions/ADR-051.md"]);
     expect(verdict(r)).toBe("allowed-scope-uninterpretable");
   });
+});
 
-  it("over-approximates a glob in FORBIDDEN scope (fail closed, e.g. `.env.*`)", () => {
-    // The merged corpus really does carry `.env.*` in forbidden_paths. With
-    // no pattern matcher defined anywhere, the literal prefix is used, so the
+// F-01. Unsupported syntax may only REDUCE permission or REFUSE the
+// determination; it may never EXPAND permission. There is no pattern language
+// here and none is being decided.
+describe("unsupported forbidden syntax never expands permission", () => {
+  it("a non-empty literal prefix is conservatively forbidden (the corpus's `.env.*`)", () => {
+    // The merged corpus really does carry `.env.*` in forbidden_paths. With no
+    // matcher defined anywhere, the literal prefix `.env.` is forbidden, so the
     // prohibition still bites instead of collapsing to one odd filename.
     const p = { allowed_paths: ["docs/", ".env.local"], forbidden_paths: [".env.*"] };
     expect(verdict(scope(p, [".env.local"]))).toBe("path-forbidden");
+    expect(verdict(scope(p, [".env.production"]))).toBe("path-forbidden");
+    // Reducing permission, not expanding it: an unrelated in-scope path is
+    // unaffected.
     expect(verdict(scope(p, ["docs/decisions/ADR-051.md"]))).toBe("OK");
+  });
+
+  it("a mid-entry prefix reduces to the containing directory (`docs/*.secret`)", () => {
+    const p = { allowed_paths: ["docs/"], forbidden_paths: ["docs/*.secret"] };
+    // Conservative prefix `docs/`: everything under docs/ is forbidden. That
+    // is MORE restrictive than any glob reading, which is the safe direction.
+    expect(verdict(scope(p, ["docs/keys.secret"]))).toBe("path-forbidden");
+    expect(verdict(scope(p, ["docs/decisions/ADR-051.md"]))).toBe("path-forbidden");
+  });
+
+  it("NO safe literal prefix refuses the WHOLE determination, never fail-open", () => {
+    // The audited counterexample: an entry beginning with unsupported syntax
+    // has an EMPTY literal prefix. Reading it as "matches nothing" made a
+    // declared prohibition permit the very path it was written to forbid.
+    for (const entry of ["*", "?foo", "[abc]", "*?foo[abc]", "**/secret", "{a,b}", "]x"]) {
+      expect(
+        verdict(scope({ allowed_paths: ["docs/"], forbidden_paths: [entry] }, ["docs/secret.md"])),
+        entry
+      ).toBe("forbidden-scope-uninterpretable");
+    }
+  });
+
+  it("the refusal does not depend on the proposed path or the effect", () => {
+    const p = { allowed_paths: ["docs/"], forbidden_paths: ["*"] };
+    for (const paths of [["docs/secret.md"], [IN_SCOPE], ["README.md"], ["../x"], []]) {
+      for (const effect of ["modify-worktree", "open-pr"]) {
+        expect(verdict(scope(p, paths, effect)), `${effect} ${JSON.stringify(paths)}`)
+          .toBe("forbidden-scope-uninterpretable");
+      }
+    }
+  });
+
+  it("one uninterpretable entry refuses even beside interpretable ones", () => {
+    const p = { allowed_paths: ["docs/"], forbidden_paths: [".loa", "*", "src/"] };
+    expect(verdict(scope(p, [IN_SCOPE]))).toBe("forbidden-scope-uninterpretable");
+  });
+
+  it("no pattern language is implemented: nothing is interpreted as a wildcard", () => {
+    // `docs/*.md` is NOT read as "md files in docs/". If it were, an unnamed
+    // sibling would be permitted; instead the whole subtree is forbidden.
+    const p = { allowed_paths: ["docs/"], forbidden_paths: ["docs/*.md"] };
+    expect(verdict(scope(p, ["docs/notes.txt"]))).toBe("path-forbidden");
+    // And in allowed scope nothing is interpreted either — it refuses.
+    for (const entry of ["docs/*", "docs/**", "docs/*.md", "*", "?", "[a]", "{a,b}"]) {
+      expect(verdict(scope({ allowed_paths: [entry] }, [IN_SCOPE])), entry)
+        .toBe("allowed-scope-uninterpretable");
+    }
+  });
+});
+
+// F-02. ONE canonical path language, applied identically to allowed_paths
+// entries, forbidden_paths entries and proposed changed paths.
+describe("one canonical task-scope path language", () => {
+  // A structurally valid packet string is NOT necessarily a canonical
+  // task-scope path. Each of these passes validateTaskPacket's
+  // RELATIVE_PATH_RE, yet as a scope entry would match nothing (an INERT
+  // prohibition) or depend on a platform's normalization.
+  const NON_CANONICAL = [
+    "docs//", // repeated separator
+    "docs//x.md",
+    "docs/./", // dot segment, trailing directory form
+    "docs/./x.md",
+    "./docs/", // dot segment, leading
+    "docs\\secret.md", // backslash separator
+    "docs\\", // backslash, directory-looking
+    "\\\\server\\share", // UNC form
+    "C:/secret.txt", // Windows drive letter, forward slashes
+    "C:\\secret.txt", // Windows drive letter, backslashes
+    "C:secret.txt", // drive-relative
+    "docs/ x.md", // whitespace-padded segment
+    " docs/", // whitespace-padded segment
+    "docs/x.md ",
+  ];
+
+  it("refuses a non-canonical ALLOWED entry rather than normalizing it", () => {
+    for (const entry of NON_CANONICAL) {
+      expect(verdict(scope({ allowed_paths: [entry] }, [IN_SCOPE])), entry)
+        .toBe("scope-entry-non-canonical");
+    }
+  });
+
+  it("refuses a non-canonical FORBIDDEN entry rather than letting it match nothing", () => {
+    for (const entry of NON_CANONICAL) {
+      expect(
+        verdict(scope({ allowed_paths: ["docs/"], forbidden_paths: [entry] }, ["docs/x.md"])),
+        entry
+      ).toBe("scope-entry-non-canonical");
+    }
+  });
+
+  it("refuses a non-canonical PROPOSED path by the same language", () => {
+    // Same population of spellings, judged by the same predicate — no
+    // per-field normalization rules.
+    for (const p of NON_CANONICAL) {
+      // A directory-form entry is a legal scope entry but never a changed FILE,
+      // so both refusals are correct; what matters is that none is permitted.
+      expect(verdict(scope({ allowed_paths: ["docs/", "C:/", " docs/"] }, [p])), p)
+        .not.toBe("OK");
+    }
+  });
+
+  it("a Windows drive-letter path is refused, not resolved (audited counterexample)", () => {
+    // Previously `C:/secret.txt` was treated as an ordinary relative path, so a
+    // packet allowing `C:/` permitted it.
+    expect(verdict(scope({ allowed_paths: ["docs/"] }, ["C:/secret.txt"])))
+      .toBe("changed-path-malformed");
+    expect(verdict(scope({ allowed_paths: ["docs/"] }, ["C:\\secret.txt"])))
+      .toBe("changed-path-malformed");
+    expect(verdict(scope({ allowed_paths: ["C:/"] }, ["C:/secret.txt"])))
+      .toBe("scope-entry-non-canonical");
+    expect(verdict(scope({ allowed_paths: ["C:/secret.txt"] }, ["C:/secret.txt"])))
+      .toBe("scope-entry-non-canonical");
+    expect(verdict(scope({ allowed_paths: ["docs/"], forbidden_paths: ["C:/secret.txt"] }, [IN_SCOPE])))
+      .toBe("scope-entry-non-canonical");
+  });
+
+  it("`..` and absolute forms stay refused in a scope entry (structural owner)", () => {
+    // Already refused by validateTaskPacket's RELATIVE_PATH_RE — the stricter
+    // semantic predicate does not weaken the structural one.
+    expect(verdict(scope({ allowed_paths: ["docs/../secret"] }, [IN_SCOPE]))).toBe("packet-invalid");
+    expect(verdict(scope({ forbidden_paths: ["docs/../secret"] }, [IN_SCOPE]))).toBe("packet-invalid");
+    expect(verdict(scope({ allowed_paths: ["/etc/passwd"] }, [IN_SCOPE]))).toBe("packet-invalid");
+  });
+
+  it("PRESERVES the established syntax distinction: trailing slash vs slashless", () => {
+    // The canonicality rule must not reject the deliberate directory spelling
+    // while rejecting repeated or ambiguous slashes.
+    expect(verdict(scope({ allowed_paths: ["docs/"] }, ["docs/x.md"]))).toBe("OK");
+    expect(verdict(scope({ allowed_paths: ["docs/decisions/"] }, [IN_SCOPE]))).toBe("OK");
+    expect(verdict(scope({ allowed_paths: ["docs/x.md"] }, ["docs/x.md"]))).toBe("OK");
+    // Slashless is EXACT, not a prefix.
+    expect(verdict(scope({ allowed_paths: ["docs"] }, ["docs/x.md"]))).toBe("path-outside-allowed-scope");
+    // Trailing slash is a SUBTREE, at any depth.
+    expect(verdict(scope({ allowed_paths: ["docs/"] }, ["docs/a/b/c.md"]))).toBe("OK");
+    // A nested directory entry is canonical too.
+    expect(verdict(scope({ allowed_paths: ["docs/a/b/"] }, ["docs/a/b/c.md"]))).toBe("OK");
   });
 });
 
@@ -397,6 +550,8 @@ describe("non-authority: a positive scope result is ONE component, not authoriza
       [{}, [], "open-pr"],
       [{}, ["../x"], "open-pr"],
       [{ allowed_paths: ["docs/**"] }, [IN_SCOPE], "open-pr"],
+      [{ allowed_paths: ["docs//"] }, [IN_SCOPE], "open-pr"],
+      [{ forbidden_paths: ["*"] }, [IN_SCOPE], "open-pr"],
       [{ may_open_pr: false }, [IN_SCOPE], "open-pr"],
       [{}, ["src/straylight/estate.ts"], "open-pr"],
       [{}, ["README.md"], "open-pr"],
@@ -415,47 +570,17 @@ describe("non-authority: a positive scope result is ONE component, not authoriza
   });
 });
 
-describe("mutation discriminators: each critical rule is non-vacuous", () => {
-  // A compact re-implementation of the decision with exactly ONE rule
-  // weakened. For each rule the mutant must PERMIT a witness that the real
-  // module REFUSES. If the real module were ever weakened the same way, the
-  // corresponding case in the suites above would flip — that is what makes
-  // these rules load-bearing rather than decorative.
-  type Weakening =
-    | "forbidden-ignored"
-    | "allowed-ignored"
-    | "path-form-unchecked"
-    | "may-open-pr-ignored"
-    | "unknown-effect-accepted";
-
-  function mutantPermits(weakening: Weakening, packet: any, changed_paths: any[], effect: string): boolean {
-    const known = ["modify-worktree", "open-pr"];
-    if (weakening !== "unknown-effect-accepted" && !known.includes(effect)) return false;
-    if (weakening !== "may-open-pr-ignored" && effect === "open-pr" && packet.may_open_pr !== true) return false;
-    if (changed_paths.length === 0) return false;
-    for (const p of changed_paths) {
-      if (weakening !== "path-form-unchecked") {
-        if (typeof p !== "string" || !/^(?!\/)(?!.*\.\.)[\x20-\x7E]{1,300}$/.test(p)) return false;
-      }
-      if (weakening !== "forbidden-ignored") {
-        const hit = (packet.forbidden_paths as string[]).some((e) =>
-          e.endsWith("/") ? p.startsWith(e) && p.length > e.length : p === e || p.startsWith(`${e}/`)
-        );
-        if (hit) return false;
-      }
-      if (weakening !== "allowed-ignored") {
-        const ok = (packet.allowed_paths as string[]).some((e) =>
-          e.endsWith("/") ? p.startsWith(e) && p.length > e.length : p === e
-        );
-        if (!ok) return false;
-      }
-    }
-    return true;
-  }
-
+describe("critical-rule coverage: every load-bearing rule has an owning witness", () => {
+  // DETERMINISTIC CASE COVERAGE, not mutation testing. Each row names one rule
+  // in the production module and the witness that pins it, so that weakening
+  // the rule in .straylight/lib/task-scope.mjs fails a NAMED row rather than
+  // silently passing. `source` is the control's owner in production, recorded
+  // so the mutation run (README § Task-packet effect scope) can target the
+  // real line instead of a copy. Nothing here re-implements the decision: a
+  // committed re-implementation could only prove the copy agrees with itself.
   const ROWS: Array<{
     rule: string;
-    weakening: Weakening;
+    source: string;
     overrides: Record<string, any>;
     changed_paths: any[];
     effect: string;
@@ -463,7 +588,7 @@ describe("mutation discriminators: each critical rule is non-vacuous", () => {
   }> = [
     {
       rule: "forbidden_paths overrides allowed_paths",
-      weakening: "forbidden-ignored",
+      source: "forbidden checked before allowed, per path",
       overrides: { allowed_paths: ["docs/"], forbidden_paths: ["docs/decisions/"] },
       changed_paths: ["docs/decisions/ADR-051.md"],
       effect: "modify-worktree",
@@ -471,7 +596,7 @@ describe("mutation discriminators: each critical rule is non-vacuous", () => {
     },
     {
       rule: "a path outside allowed_paths is refused",
-      weakening: "allowed-ignored",
+      source: "allowedEntryCovers",
       overrides: {},
       changed_paths: ["README.md"],
       effect: "modify-worktree",
@@ -479,7 +604,7 @@ describe("mutation discriminators: each critical rule is non-vacuous", () => {
     },
     {
       rule: "traversal is refused",
-      weakening: "path-form-unchecked",
+      source: "classifyTaskScopePath / RELATIVE_PATH_RE",
       overrides: { allowed_paths: ["docs/"], forbidden_paths: [".loa"] },
       changed_paths: ["docs/../.loa"],
       effect: "modify-worktree",
@@ -487,15 +612,47 @@ describe("mutation discriminators: each critical rule is non-vacuous", () => {
     },
     {
       rule: "an absolute path is refused",
-      weakening: "path-form-unchecked",
+      source: "classifyTaskScopePath / RELATIVE_PATH_RE",
       overrides: { allowed_paths: ["/etc/passwd"], forbidden_paths: [".loa"] },
       changed_paths: ["/etc/passwd"],
       effect: "modify-worktree",
       refusal: "packet-invalid", // the packet's own scope entry is illegal too
     },
     {
+      rule: "a non-canonical packet scope entry is refused",
+      source: "classifyTaskScopePath, applied to allowed_paths and forbidden_paths",
+      overrides: { allowed_paths: ["docs/"], forbidden_paths: ["docs//"] },
+      changed_paths: ["docs/x.md"],
+      effect: "modify-worktree",
+      refusal: "scope-entry-non-canonical",
+    },
+    {
+      rule: "a Windows drive-letter path is refused",
+      source: "DRIVE_PREFIX_RE",
+      overrides: { allowed_paths: ["docs/"] },
+      changed_paths: ["C:/secret.txt"],
+      effect: "modify-worktree",
+      refusal: "changed-path-malformed",
+    },
+    {
+      rule: "unsupported forbidden syntax with an empty literal prefix refuses",
+      source: "conservativeForbiddenPrefix",
+      overrides: { allowed_paths: ["docs/"], forbidden_paths: ["*"] },
+      changed_paths: ["docs/secret.md"],
+      effect: "modify-worktree",
+      refusal: "forbidden-scope-uninterpretable",
+    },
+    {
+      rule: "unsupported allowed syntax refuses",
+      source: "UNSUPPORTED_SYNTAX_RE over allowed_paths",
+      overrides: { allowed_paths: ["docs/**"] },
+      changed_paths: ["docs/decisions/ADR-051.md"],
+      effect: "modify-worktree",
+      refusal: "allowed-scope-uninterpretable",
+    },
+    {
       rule: "may_open_pr false is not treated as true",
-      weakening: "may-open-pr-ignored",
+      source: "may_open_pr !== true gate on open-pr",
       overrides: { may_open_pr: false },
       changed_paths: [IN_SCOPE],
       effect: "open-pr",
@@ -503,7 +660,7 @@ describe("mutation discriminators: each critical rule is non-vacuous", () => {
     },
     {
       rule: "an unknown effect is refused",
-      weakening: "unknown-effect-accepted",
+      source: "IMPLEMENTER_EFFECTS membership",
       overrides: {},
       changed_paths: [IN_SCOPE],
       effect: "push",
@@ -512,25 +669,32 @@ describe("mutation discriminators: each critical rule is non-vacuous", () => {
   ];
 
   for (const row of ROWS) {
-    it(`${row.rule} — real refuses (${row.refusal}), mutant would permit`, () => {
-      const real = scope(row.overrides, row.changed_paths, row.effect);
-      expect(verdict(real)).toBe(row.refusal);
-
-      // The witness is only a discriminator if the weakened rule flips it.
-      const packet = makeTaskPacket(row.overrides);
-      expect(mutantPermits(row.weakening, packet, row.changed_paths, row.effect)).toBe(true);
+    it(`${row.rule} — refuses ${row.refusal} (owner: ${row.source})`, () => {
+      expect(verdict(scope(row.overrides, row.changed_paths, row.effect))).toBe(row.refusal);
     });
   }
 
-  it("the mutants agree with the real module on the clean baseline", () => {
-    // A mutant that permitted everything would be a vacuous discriminator.
-    const packet = makeTaskPacket({});
-    for (const w of [
-      "forbidden-ignored", "allowed-ignored", "path-form-unchecked",
-      "may-open-pr-ignored", "unknown-effect-accepted",
-    ] as Weakening[]) {
-      expect(mutantPermits(w, packet, [IN_SCOPE], "open-pr"), w).toBe(true);
-      expect(verdict(scope({}, [IN_SCOPE], "open-pr"))).toBe("OK");
+  it("each witness is a real discriminator: the clean baseline PERMITS", () => {
+    // A witness that refused for an unrelated reason would pin nothing, so the
+    // baseline it deviates from must actually be permitted.
+    expect(verdict(scope({}, [IN_SCOPE], "open-pr"))).toBe("OK");
+    expect(verdict(scope({}, [IN_SCOPE], "modify-worktree"))).toBe("OK");
+    expect(verdict(scope({ allowed_paths: ["docs/"] }, ["docs/x.md"]))).toBe("OK");
+    expect(verdict(scope({ allowed_paths: ["docs/"], forbidden_paths: [".loa"] }, ["docs/x.md"])))
+      .toBe("OK");
+  });
+
+  it("every rule's refusal code is distinct enough to identify the broken rule", () => {
+    // Two rules sharing a refusal code would let one regress behind the other.
+    const byRefusal = new Map<string, string[]>();
+    for (const row of ROWS) {
+      byRefusal.set(row.refusal, [...(byRefusal.get(row.refusal) ?? []), row.rule]);
+    }
+    // changed-path-malformed and packet-invalid are shared by construction —
+    // they are the structural refusals; every SEMANTIC rule is on its own code.
+    for (const [refusal, rules] of byRefusal) {
+      if (refusal === "changed-path-malformed" || refusal === "packet-invalid") continue;
+      expect(rules.length, `${refusal}: ${rules.join(" / ")}`).toBe(1);
     }
   });
 });
