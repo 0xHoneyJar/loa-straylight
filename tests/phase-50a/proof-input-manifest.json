@@ -1,0 +1,61 @@
+{
+  "$schema_note": "Phase 50A R3 — the FIXED, CHECKED-IN SCAN SET OF ONE SUITE: tests/phase-50a/no-leak-and-neutrality.test.ts. This file is DATA, not code. Its authority is exactly that suite's read/scan set and NOTHING ELSE: it is the single declaration of the paths that suite scans, so the suite restates no path and cannot widen its own input set (scripts/phase-50a/proof-input-manifest.mjs#readManifestInput refuses an undeclared read). It is NOT a declaration of the inputs to the build, the typecheck, the repository-wide test run, control-plane validation or the control-plane tests, the fixtures, the generated declarations, package pruning, the C1-C9 artifact verification, or the remote proof workflow — and nothing derives trigger, proof, or input completeness from it. The workflow's pull_request trigger is UNCONDITIONAL (no paths, no paths-ignore), so trigger completeness is a property of that trigger and needs no enumeration; tests/phase-50a/workflow-trigger-contract.test.ts pins it. There is NO exception mechanism of any kind — not a renamed one, not an empty one.",
+  "version": 1,
+  "roots": [
+    {
+      "path": "src/straylight",
+      "kind": "tree",
+      "why": "The whole Straylight source tree. A BROAD root rather than a named-file enumeration: it also covers files that do not exist yet, so it cannot be defeated by adding, renaming, or deleting a declaration. Subsumes the estate domain model, the public barrel, the storage adapters, and the PostgreSQL store."
+    },
+    {
+      "path": "migrations/postgres",
+      "kind": "tree",
+      "why": "The canonical schema. The neutrality suite asserts the migrations reference no provider-managed role, database, or extension, so their content changes its verdict."
+    },
+    {
+      "path": "scripts/phase-50a",
+      "kind": "tree",
+      "why": "The proof harness and the artifact/pruning scripts the suites read and execute."
+    },
+    {
+      "path": "tests/phase-50a",
+      "kind": "tree",
+      "why": "The proof suites themselves, INCLUDING this manifest and every file that consumes it. Self-coverage is required so that a change to the scan-set model is itself in scope of the scan it configures."
+    },
+    {
+      "path": "docs/PHASE-50A-PROVIDER-NEUTRAL-POSTGRESQL-CANONICAL-STORE-IMPLEMENTATION-AND-PROOF.md",
+      "kind": "file",
+      "why": "The proof document. It is one of the two places permitted to cite the historical provider name, so the leak-surface scan reads it and its content changes that verdict."
+    },
+    {
+      "path": "docs/runbooks",
+      "kind": "tree",
+      "why": "The operational runbook. The other place permitted to cite the historical provider name, for the same reason."
+    },
+    {
+      "path": "docker-compose.phase-50a.yml",
+      "kind": "file",
+      "why": "The two-host non-production harness. Declares the fixed local-only credentials the leak scan permits only inside the harness files."
+    },
+    {
+      "path": "tests/storage-conformance.test.ts",
+      "kind": "file",
+      "why": "The shared StorageAdapter conformance scenarios the Phase 50A suites run against the PostgreSQL-backed session. Its content decides what conformance means, so it is a proof input; the proof also asserts it is byte-unchanged."
+    },
+    {
+      "path": ".github/workflows/phase-50a-postgres-conformance.yml",
+      "kind": "file",
+      "why": "The workflow itself, as a SCANNED input of the leak/neutrality suite: it carries the fixed local-only harness credentials and must stay provider-neutral. Its trigger and exact-head posture are NOT this manifest's business — tests/phase-50a/workflow-trigger-contract.test.ts pins those directly over the workflow's own bytes."
+    },
+    {
+      "path": "package.json",
+      "kind": "file",
+      "why": "The build, prune, and proof entry points the artifact contract asserts."
+    },
+    {
+      "path": "package-lock.json",
+      "kind": "file",
+      "why": "Dependency resolution. `npm ci` and the package-reproducibility clauses depend on it exactly."
+    }
+  ]
+}
