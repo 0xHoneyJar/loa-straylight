@@ -19,6 +19,15 @@ export interface Disposition {
   refusal?: string;
   detail?: string;
 }
+/**
+ * Provenance of the current task packet: the durable comment the packet was
+ * bound from, and that comment's AUTHENTICATED author. Produced by
+ * reconstruction's own artifact binding — never supplied by a caller.
+ */
+export interface TaskPacketSource {
+  comment_id: number;
+  author: string;
+}
 export interface ReconstructResult {
   ok: boolean;
   refusal?: string;
@@ -47,6 +56,39 @@ export interface ReconstructResult {
    * Undefined only on the early error returns before replay.
    */
   frozen?: boolean;
+  /**
+   * The lane's CURRENT task packet, as ESTABLISHED BY THIS REPLAY.
+   *
+   * This is a projection of the packet binding reconstruction already
+   * performed, not a second resolver: it is the exact packet value the replay
+   * bound from the durable stream and handed to the reducer for the most recent
+   * coordinator packet event the reducer ACCEPTED
+   * (`coordinator.task_packet_posted` or `coordinator.patch_packet_posted`) —
+   * the same value that governed every downstream event in the same replay. A
+   * later applied patch packet supersedes an earlier initial one.
+   *
+   * `null` when no coordinator-approved packet has been established. A packet
+   * comment that merely EXISTS never appears here: an event that was refused
+   * for any reason (malformed, wrong lane, forward/foreign reference,
+   * digest-mismatched, wrong author, edited comment, out of turn, invalid
+   * policy) does not move the projection, and the field carries no
+   * caller-provided context.
+   *
+   * NO NEW AUTHORITY. Reading the packet does not authorize implementation,
+   * lease acquisition, or any Git/GitHub write; it does not change lane state
+   * or task-scope semantics, and it is not a continuation grant.
+   *
+   * Undefined only on the early error returns before replay.
+   */
+  task_packet?: Record<string, any> | null;
+  /**
+   * Provenance of `task_packet`: the binding produced by the SAME replay
+   * (durable comment id + authenticated author). `null` exactly when
+   * `task_packet` is null — the two always move together.
+   *
+   * Undefined only on the early error returns before replay.
+   */
+  task_packet_source?: TaskPacketSource | null;
 }
 export declare function reconstructLane(input: ReconstructInput): ReconstructResult;
 export declare function deriveLabels(lane: Record<string, any>): string[];
