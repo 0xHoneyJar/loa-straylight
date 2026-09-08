@@ -26,8 +26,20 @@
 //
 // Returns {
 //   ok, lane, dispositions: [{comment_id, status, refusal?, detail?}...],
-//   labels: [...], frozen, refusal?, detail?
+//   labels: [...], frozen, task_packet, task_packet_source, refusal?, detail?
 // }
+//
+// CURRENT-PACKET PROJECTION: `task_packet` / `task_packet_source` expose the
+// packet this replay ITSELF bound and the reducer ACCEPTED for the lane's most
+// recent applied coordinator packet event — the same binding the replay used to
+// validate downstream events, not a fresh search of the comment stream. There
+// is deliberately no second end-of-run scan: a refused packet event (malformed,
+// foreign, future-referencing, digest-mismatched, wrong-author, edited, out of
+// turn) leaves the projection exactly where the accepted history left it, and a
+// lane that never had one reports null/null. It is a READING of governed state
+// and confers NO authority: it does not authorize implementation, lease
+// acquisition, or any Git/GitHub write, does not change lane state or
+// task-scope semantics, and is not a continuation grant.
 //
 // DETERMINISM: reconstruction is a pure function of the durable content
 // alone. No transient live signal (PR metadata, live head SHA) enters the
@@ -130,6 +142,14 @@ export function reconstructLane(input) {
   // The lane's CURRENT task packet, tracked as coordinator packet events are
   // applied, so later implementer events validate against it.
   let currentPacketCommentId = null;
+  // PROJECTION of that same tracking, for consumers (see the return value).
+  // Not a second resolver: these are the exact packet value and provenance
+  // this replay already bound into the reducer context for the coordinator
+  // packet event that the reducer ACCEPTED, captured at the one place
+  // currentPacketCommentId moves. Nothing else may write them, so the
+  // projection cannot diverge from the packet state replay itself used.
+  let currentTaskPacket = null;
+  let currentTaskPacketSource = null;
   // Applied event ids (uniqueness) and consumed lease ids (no reuse), R3/R4.
   const seenEventIds = new Set();
   const usedLeaseIds = new Set();
@@ -304,6 +324,13 @@ export function reconstructLane(input) {
         event.refs?.task_packet_comment_id != null
       ) {
         currentPacketCommentId = event.refs.task_packet_comment_id;
+        // Same accepted event, same bound artifact: the reducer refuses a
+        // packet event whose ctx.task_packet is absent, invalid, or
+        // digest-mismatched, so reaching here means THIS packet was bound by
+        // THIS replay and accepted. `?? null` keeps the absence explicit
+        // rather than undefined.
+        currentTaskPacket = ctx.task_packet ?? null;
+        currentTaskPacketSource = ctx.task_packet_source ?? null;
       }
       dispositions.push({ comment_id: comment.id, status: "applied", detail: decision.note || lane.last_transition });
     } else {
@@ -316,7 +343,15 @@ export function reconstructLane(input) {
     }
   }
 
-  return { ok: true, lane, dispositions, labels: deriveLabels(lane), frozen };
+  return {
+    ok: true,
+    lane,
+    dispositions,
+    labels: deriveLabels(lane),
+    frozen,
+    task_packet: currentTaskPacket,
+    task_packet_source: currentTaskPacketSource,
+  };
 }
 
 // A protocol comment is "edited" when the adapter reports an updated_at
