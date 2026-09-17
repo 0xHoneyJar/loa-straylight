@@ -26,7 +26,8 @@
 //
 // Returns {
 //   ok, lane, dispositions: [{comment_id, status, refusal?, detail?}...],
-//   labels: [...], frozen, task_packet, task_packet_source, refusal?, detail?
+//   labels: [...], frozen, task_packet, task_packet_source, used_lease_ids,
+//   refusal?, detail?
 // }
 //
 // CURRENT-PACKET PROJECTION: `task_packet` / `task_packet_source` expose the
@@ -40,6 +41,20 @@
 // and confers NO authority: it does not authorize implementation, lease
 // acquisition, or any Git/GitHub write, does not change lane state or
 // task-scope semantics, and is not a continuation grant.
+//
+// LEASE-HISTORY PROJECTION: `used_lease_ids` exposes the SAME accumulator this
+// replay already hands the reducer as ctx.used_lease_ids — the lease ids of
+// every APPLIED `*.lease_acquired` event, in replay (ascending comment) order.
+// There is no second accumulator and no second scan: the historical-consumption
+// rule stays the reducer's, and the projection is a frozen copy of the one live
+// Set that rule was decided against, so a consumer can ask whether a candidate
+// lease id was already consumed without reimplementing or inferring lease
+// history locally. Consumed is PERMANENT: a released, expired, or requeued
+// lease id stays here (that is the whole point of R3 — a stale worker must not
+// re-match a fresh lease), implementer and auditor ids share one namespace, and
+// a refused acquisition contributes nothing. Like the packet projection it is a
+// READING and confers NO authority: it grants no lease and does not change lane
+// state, lease validity, or lease-ID policy.
 //
 // DETERMINISM: reconstruction is a pure function of the durable content
 // alone. No transient live signal (PR metadata, live head SHA) enters the
@@ -351,6 +366,13 @@ export function reconstructLane(input) {
     frozen,
     task_packet: currentTaskPacket,
     task_packet_source: currentTaskPacketSource,
+    // The reducer's own consumed-lease history, projected for consumers. A
+    // FRESH FROZEN COPY, not the live Set: the reducer keeps deciding
+    // lease-id-reused against `usedLeaseIds` itself, and no consumer mutation
+    // may reach that state. Insertion order is replay order (comments are
+    // replayed in ascending id), so no independent sort is applied — sorting
+    // here would report an order the replay never had.
+    used_lease_ids: Object.freeze([...usedLeaseIds]),
   };
 }
 

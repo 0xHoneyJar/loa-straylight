@@ -89,6 +89,32 @@ export interface ReconstructResult {
    * Undefined only on the early error returns before replay.
    */
   task_packet_source?: TaskPacketSource | null;
+  /**
+   * Every lease id this lane has ALREADY CONSUMED, in replay order.
+   *
+   * The same authoritative fact the reducer decides `lease-id-reused` against:
+   * reconstruction accumulates the lease id of each APPLIED `*.lease_acquired`
+   * event and passes that one accumulator to the reducer as
+   * `context.used_lease_ids`; this is a frozen copy of it taken at the return
+   * boundary. There is no second accumulator, no second scan of the comment
+   * stream, and no local re-derivation of the consumption rule — a consumer
+   * decides whether a candidate lease id is fresh by testing membership here.
+   *
+   * Consumption is PERMANENT and role-shared: a released, expired, or requeued
+   * lease id remains present (so a stale worker cannot re-match a fresh lease)
+   * even when `lane.lease` is null, and implementer and auditor ids occupy one
+   * namespace. A refused acquisition — refused by the reducer, or refused
+   * before reduction (forged identity, edited comment, invalid policy,
+   * unreadable payload, missing observation time) — never appears. Order is the
+   * ascending durable comment order the replay used; it is not sorted.
+   *
+   * FROZEN COPY. Mutating it cannot affect the reducer's live history or a
+   * later reconstruction's refusal. Reading it confers NO authority: it grants
+   * no lease and changes no lane state, lease validity, or lease-ID policy.
+   *
+   * Undefined only on the early error returns before replay.
+   */
+  used_lease_ids?: readonly string[];
 }
 export declare function reconstructLane(input: ReconstructInput): ReconstructResult;
 export declare function deriveLabels(lane: Record<string, any>): string[];
