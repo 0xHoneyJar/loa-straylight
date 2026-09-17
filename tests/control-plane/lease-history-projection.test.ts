@@ -68,16 +68,21 @@ function run(comments: any[], overrides: Record<string, any> = {}) {
   });
 }
 
-/** An implementer acquisition, ready-for-claude → claude-working. */
+/**
+ * An implementer acquisition, ready-for-claude → claude-working. `event_id` is
+ * optional (makeEvent mints a unique one otherwise) and exists only so the P4
+ * counterfactual pair can build two histories that differ in ONE named field.
+ */
 function acquireImplementer(
   id: number,
-  { sequence, lease_id, lease_expires_at = LEASE_EXPIRY, created_at = NOW, user = "claude-login" }:
-  { sequence: number; lease_id: string; lease_expires_at?: string; created_at?: string; user?: string },
+  { sequence, lease_id, lease_expires_at = LEASE_EXPIRY, created_at = NOW, user = "claude-login", event_id }:
+  { sequence: number; lease_id: string; lease_expires_at?: string; created_at?: string; user?: string; event_id?: string },
 ) {
   return comment(id, user, MARKERS.event, makeEvent({
     sequence, actor_role: "implementer", github_actor: "claude-login",
     event_type: "implementer.lease_acquired", prior_state: "ready-for-claude",
     lease_id, lease_expires_at,
+    ...(event_id ? { event_id } : {}),
   }), { created_at });
 }
 
@@ -363,23 +368,154 @@ describe("P4 — reducer refusal and projection read the same reconstruction-own
     expect(out.used_lease_ids?.filter((id) => id === "lease-claude-1")).toHaveLength(1);
   });
 
-  it("the refusal and the projection move together — remove the grant and both change", () => {
-    // The counterfactual is the proof of shared authority: with the ESTABLISHING
-    // grant (comment 4) removed, the id is no longer consumed, so the same
-    // comment 10 is no longer a reuse. Two independent readers of one fact
-    // cannot disagree; a second resolver could.
-    const withGrant = run(STREAM);
-    const withoutGrant = run(STREAM.filter((c) => c.id !== 4));
+  // ---------------------------------------------------------------------------
+  // THE COUNTERFACTUAL PAIR — TWO VALID HISTORIES.
+  //
+  // The causal claim is: PRIOR AUTHORITATIVE CONSUMPTION of candidate id X is
+  // what makes a later, otherwise-valid acquisition of X refuse
+  // `lease-id-reused`. Proving that needs two histories that are each valid all
+  // the way to the candidate event, so the candidate is actually adjudicated
+  // against lease history in both.
+  //
+  // Deleting an establishing grant from a finished history does NOT do this:
+  // every later event keeps its original sequence, so replay refuses
+  // stale-sequence from the hole onwards and the candidate never reaches the
+  // reuse check at all. A test built that way passes because
+  // stale-sequence != lease-id-reused, which is a statement about two refusal
+  // codes, not about lease history.
+  //
+  // So both histories are built by ONE builder whose only parameter is which
+  // lease id the earlier applied grant consumed. Same six durable comments, same
+  // sequences 1..5, same authors, same observation times, same expiries, same
+  // bound coordinator packet, same event ids — and literally the SAME candidate
+  // comment object in both. The lane entering the candidate event is therefore
+  // identical (asserted below); the ONLY thing that differs is the projected
+  // lease history.
+  // ---------------------------------------------------------------------------
+  const CANDIDATE_ID = "lease-candidate";
+  const OTHER_ID = "lease-other";
 
-    expect(withGrant.used_lease_ids).toContain("lease-claude-1");
-    expect(statusOf(withGrant, 10)?.refusal).toBe("lease-id-reused");
+  /** The one candidate acquisition, judged against both histories. */
+  const CANDIDATE_ACQUISITION = acquireImplementer(6, {
+    sequence: 5, lease_id: CANDIDATE_ID, event_id: "evt-p4-candidate",
+  });
 
-    expect(statusOf(withoutGrant, 10)?.refusal).not.toBe("lease-id-reused");
-    // Whatever else the shortened history does with comment 10, the projection
-    // agrees with the reducer about WHO consumed lease-claude-1: only an
-    // applied acquisition does.
-    expect(statusOf(withoutGrant, 10)?.status === "applied")
-      .toBe((withoutGrant.used_lease_ids ?? []).includes("lease-claude-1"));
+  /** Activation, coordinator packet, an APPLIED grant of `priorLeaseId`, its
+   *  voluntary release, then the candidate acquisition of CANDIDATE_ID. */
+  function historyWithPriorGrantOf(priorLeaseId: string) {
+    return [
+      // 1..3 — the same activation and packet prelude the stream uses.
+      ...STREAM.slice(0, 3),
+      // 4 — the earlier APPLIED acquisition. The ONE varying fact.
+      acquireImplementer(4, { sequence: 3, lease_id: priorLeaseId, event_id: "evt-p4-prior-grant" }),
+      // 5 — released, so the lane holds no lease when the candidate arrives and
+      // `lease-already-held` cannot be what decides it.
+      comment(5, "claude-login", MARKERS.event, makeEvent({
+        event_id: "evt-p4-prior-release",
+        sequence: 4, actor_role: "implementer", github_actor: "claude-login",
+        event_type: "implementer.lease_released", prior_state: "claude-working",
+        lease_id: priorLeaseId,
+      })),
+      // 6 — the candidate.
+      CANDIDATE_ACQUISITION,
+    ];
+  }
+
+  /** HISTORY A — the candidate id WAS consumed by the earlier applied grant. */
+  const CONSUMED_HISTORY = historyWithPriorGrantOf(CANDIDATE_ID);
+  /** HISTORY B — identical, except the earlier grant consumed a different id. */
+  const FRESH_HISTORY = historyWithPriorGrantOf(OTHER_ID);
+
+  /** Every refused disposition, for the "nothing else was refused" checks. */
+  function refusals(out: any) {
+    return out.dispositions.filter((d: any) => d.status === "refused");
+  }
+
+  it("HISTORY A is valid up to the candidate: no stale-sequence, nothing else refused", () => {
+    const out = run(CONSUMED_HISTORY);
+    expect(out.ok).toBe(true);
+    // Comment 2 is the packet artifact (no event); 1, 3, 4 and 5 are events and
+    // every one of them applied, so the lane reaches the candidate legally.
+    for (const id of [1, 3, 4, 5]) expect(statusOf(out, id)?.status, `comment ${id}`).toBe("applied");
+    expect(refusals(out).map((d: any) => d.comment_id)).toEqual([6]);
+    expect(out.dispositions.some((d: any) => d.refusal === "stale-sequence")).toBe(false);
+  });
+
+  it("HISTORY A refuses the candidate exactly lease-id-reused, having reached the reuse check", () => {
+    const out = run(CONSUMED_HISTORY);
+    // The earlier grant consumed the id …
+    expect(statusOf(out, 4)?.status).toBe("applied");
+    // … and the same id, proposed again by an otherwise-valid acquisition, is
+    // refused by the reducer's historical-consumption rule itself — a refusal
+    // only reachable INSIDE the lease_acquired case, after sequencing,
+    // prior-state, lane-lease and identity checks have all passed.
+    expect(statusOf(out, 6)).toMatchObject({
+      status: "refused",
+      refusal: "lease-id-reused",
+      detail: `lease_id ${CANDIDATE_ID} was already used in this lane`,
+    });
+    expect(statusOf(out, 6)?.refusal).not.toBe("stale-sequence");
+    // Consumed once, by the one acquisition that was applied.
+    expect(out.used_lease_ids?.filter((id) => id === CANDIDATE_ID)).toHaveLength(1);
+    expect(out.used_lease_ids).toEqual([CANDIDATE_ID]);
+  });
+
+  it("HISTORY B is equally valid and APPLIES the very same candidate acquisition", () => {
+    const out = run(FRESH_HISTORY);
+    expect(out.ok).toBe(true);
+    // Valid sequencing throughout, and no refusal anywhere: the candidate is not
+    // rescued by a repair, it is simply legal.
+    expect(refusals(out)).toEqual([]);
+    expect(out.dispositions.some((d: any) => d.refusal === "stale-sequence")).toBe(false);
+    expect(statusOf(out, 6)?.status).toBe("applied");
+    expect(statusOf(out, 6)?.refusal).toBeUndefined();
+    // The candidate now holds the lane's lease, and its id is in the history the
+    // next reader gets.
+    expect(out.lane?.state).toBe("claude-working");
+    expect(out.lane?.lease?.lease_id).toBe(CANDIDATE_ID);
+    expect(out.used_lease_ids).toEqual([OTHER_ID, CANDIDATE_ID]);
+  });
+
+  it("the deciding fact is prior consumption of the candidate id, nothing else", () => {
+    // ONE durable candidate event, not two lookalikes.
+    expect(CONSUMED_HISTORY.at(-1)).toBe(FRESH_HISTORY.at(-1));
+    expect(CONSUMED_HISTORY).toHaveLength(FRESH_HISTORY.length);
+
+    // The lane the candidate is reduced against is IDENTICAL in both histories:
+    // same state, same event_sequence, same attempt, same (null) lease, same
+    // last_transition. So no sequence, state, actor, expiry or policy difference
+    // is available to explain the two outcomes.
+    const beforeConsumed = run(CONSUMED_HISTORY.slice(0, 5));
+    const beforeFresh = run(FRESH_HISTORY.slice(0, 5));
+    expect(beforeFresh.lane).toEqual(beforeConsumed.lane);
+    expect(beforeConsumed.lane?.state).toBe("ready-for-claude");
+    expect(beforeConsumed.lane?.lease).toBeNull();
+    expect(beforeConsumed.lane?.event_sequence).toBe(4);
+    expect(beforeFresh.dispositions).toEqual(beforeConsumed.dispositions);
+
+    // The one difference at that point is the projected lease history: the
+    // candidate id is consumed in A and fresh in B.
+    expect(beforeConsumed.used_lease_ids).toEqual([CANDIDATE_ID]);
+    expect(beforeFresh.used_lease_ids).toEqual([OTHER_ID]);
+    expect(beforeFresh.used_lease_ids).not.toContain(CANDIDATE_ID);
+
+    // And that difference alone flips the candidate's disposition, in the
+    // direction the projection predicts. Two readings of ONE fact; a second,
+    // competing lease-history resolver could disagree here, and this is where it
+    // would show.
+    const consumed = run(CONSUMED_HISTORY);
+    const fresh = run(FRESH_HISTORY);
+    expect(statusOf(consumed, 6)?.refusal).toBe("lease-id-reused");
+    expect(statusOf(fresh, 6)?.refusal).not.toBe("lease-id-reused");
+    expect(statusOf(fresh, 6)?.status).toBe("applied");
+    // In each history the candidate id is consumed exactly once, and by the one
+    // acquisition of it that APPLIED — comment 4 in A, comment 6 in B. A's
+    // refused acquisition of the same id added nothing to the history it was
+    // refused against.
+    expect(consumed.used_lease_ids?.filter((id) => id === CANDIDATE_ID)).toHaveLength(1);
+    expect(fresh.used_lease_ids?.filter((id) => id === CANDIDATE_ID)).toHaveLength(1);
+    expect(statusOf(consumed, 4)?.status).toBe("applied");
+    expect(statusOf(fresh, 6)?.status).toBe("applied");
   });
 
   it("the refusal is decided against history, not against the lane's current lease", () => {
