@@ -1,0 +1,60 @@
+# Phase 50A non-production proof harness — TWO separate PostgreSQL servers.
+#
+# ADR-049Q §13.1(c), (i) and §13.2 ("Non-production only"):
+#   * This file exists solely to run the Phase 50A local proof. It provisions
+#     no production resource, contacts no provider, and holds no production
+#     credential.
+#   * `source` and `replacement` are two GENUINELY SEPARATE server instances:
+#     separate containers, separate PGDATA volumes, separate TCP ports,
+#     separate superuser passwords. Not one server with two databases, and
+#     not one database renamed twice — the replacement-host proof
+#     (§13.1(i), P-6, P-8) requires the restore to land in a different
+#     conforming host, and a second database on the same server would not be
+#     one.
+#   * The credentials below are FIXED LOCAL-ONLY test values, bound to
+#     127.0.0.1 and meaningful only inside this harness. They are not secrets,
+#     grant nothing anywhere else, and are deliberately committed so the proof
+#     is reproducible without any credential handling. Nothing in this file may
+#     ever be pointed at a real deployment.
+#   * The image is plain upstream `postgres`, pinned by tag. No provider image,
+#     no managed-service configuration, no platform extension.
+
+name: straylight-phase-50a
+
+services:
+  source:
+    image: postgres:16
+    container_name: straylight-phase-50a-source
+    environment:
+      POSTGRES_USER: straylight_proof
+      POSTGRES_PASSWORD: straylight_local_proof_only
+      POSTGRES_DB: straylight_source
+    # Bound to loopback: unreachable from outside this machine.
+    ports:
+      - "127.0.0.1:55432:5432"
+    tmpfs:
+      # PGDATA in tmpfs — the proof is ephemeral by construction and leaves
+      # no on-disk artifact to be mistaken for durable estate data.
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U straylight_proof -d straylight_source"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  replacement:
+    image: postgres:16
+    container_name: straylight-phase-50a-replacement
+    environment:
+      POSTGRES_USER: straylight_proof
+      POSTGRES_PASSWORD: straylight_local_proof_only
+      POSTGRES_DB: straylight_replacement
+    ports:
+      - "127.0.0.1:55433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U straylight_proof -d straylight_replacement"]
+      interval: 2s
+      timeout: 5s
+      retries: 30

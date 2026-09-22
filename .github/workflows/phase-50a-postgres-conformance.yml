@@ -1,0 +1,155 @@
+name: Phase 50A PostgreSQL Conformance
+
+# Phase 50A canonical-store proof — FIXED WRAPPER v3 (process-tree proof
+# closure, patch cycle 3).
+#
+# This file is a CANONICAL WRAPPER whose complete raw bytes are fixed by the
+# coordinator task packet and pinned by SHA-256 inside
+# `scripts/phase-50a/fixed-proof-executor.mjs`. It declares triggers,
+# permissions, services, bootstrap actions, and ONE proof invocation. It
+# carries no proof schedule, no configurable command, and no second `run:`
+# step: the command schedule is a closed, hard-coded argv table inside the
+# executor.
+#
+# Non-production only (ADR-049Q §13.2). This workflow provisions nothing
+# outside the runner, contacts no provider, holds no production credential,
+# and touches no living estate. The two services below are ephemeral upstream
+# `postgres` containers on the runner, with the same fixed local-only
+# credentials the checked-in harness uses.
+#
+# The pull-request trigger is UNCONDITIONAL: no `paths` key and no
+# `paths-ignore` key, so trigger completeness is a property of the TRIGGER
+# ITSELF and there is no enumeration of repository inputs to keep in step with
+# the tree. The manual path stays BOUNDED to exactly one required 40-hex SHA,
+# and it may only SUPPLEMENT the automatic run — never substitute for it.
+#
+# PROCESS-TREE POSTURE (v3). The sequence-54 audit recorded that the previous
+# executor bounded only the DIRECT child it launched: after a timeout the
+# direct process was terminated and correctly classified, but its own
+# descendants stayed alive until GitHub's runner cleanup killed them. This
+# wrapper is unchanged in kind — it still launches exactly one program and
+# still knows nothing about the schedule — because the defect was never here.
+# The remedy lives in the EXECUTOR, which now owns a bounded process group per
+# entry, signals the WHOLE group on timeout, verifies the group is gone before
+# it writes a receipt, and fails closed when containment cannot be proven.
+#
+# CREDENTIAL POSTURE. This file names NO registry-authentication variable. It
+# hands the ephemeral, job-scoped workflow token to the executor under a
+# distinct ingress name, and the EXECUTOR decides which single child process
+# may see registry authentication at all: it builds every child environment by
+# ENUMERATING names and skipping both credential names before any value is
+# read, then adds the registry variable to exactly one install child. The
+# identity probe and every later schedule child run without either, and the
+# install argv carries --ignore-scripts so no repository lifecycle script runs
+# inside the authenticated process tree. Checkout leaves no credential behind
+# in the working tree.
+#
+# Unsupported changes to this file fail for exactly one reason: the raw bytes
+# no longer match the operator-authorized fingerprint. A flipped quote, an
+# appended comment, a changed line ending, or a BOM all break it. Nothing here
+# is parsed as YAML, scanned line by line, or interpreted by the proof.
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      head_sha:
+        description: 'Exact 40-hex commit SHA to check out and assert (required)'
+        required: true
+        type: string
+
+# Least privilege. `packages: read` exists solely so `npm ci` can resolve the
+# private `@0xhoneyjar/loa-hounfour` dependency from GitHub Packages using the
+# EPHEMERAL, job-scoped `GITHUB_TOKEN`. No write scope anywhere.
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: phase-50a-postgres-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres-proof:
+    name: Canonical store — two-host proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    # TWO separately initialized PostgreSQL servers, on two different ports.
+    # Not one server with two databases: ADR-049Q §13.1(i) requires the restore
+    # to land in a different conforming host, and the proof mechanically
+    # verifies the two clusters report different system identifiers.
+    services:
+      source:
+        image: postgres:16
+        env:
+          POSTGRES_USER: straylight_proof
+          POSTGRES_PASSWORD: straylight_local_proof_only
+          POSTGRES_DB: straylight_source
+        ports:
+          - 55432:5432
+        options: >-
+          --name straylight-phase-50a-source
+          --health-cmd "pg_isready -U straylight_proof -d straylight_source"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+      replacement:
+        image: postgres:16
+        env:
+          POSTGRES_USER: straylight_proof
+          POSTGRES_PASSWORD: straylight_local_proof_only
+          POSTGRES_DB: straylight_replacement
+        ports:
+          - 55433:5432
+        options: >-
+          --name straylight-phase-50a-replacement
+          --health-cmd "pg_isready -U straylight_proof -d straylight_replacement"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+
+    steps:
+      # Checkout pins the EXACT audited head: the actual PR head on a
+      # pull_request run, the dispatch input on a manual run. Never
+      # refs/pull/<n>/merge — a synthetic merge commit is not exact-head
+      # identity evidence even when its tree is identical.
+      #
+      # The expected SHA reaches the executor through the ENVIRONMENT. The
+      # EXECUTOR — not this file — validates its 40-hex shape, reads
+      # `git rev-parse HEAD`, and requires identity before it launches any
+      # child process.
+      - name: Checkout the exact target head SHA
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || inputs.head_sha }}
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+          cache: npm
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@0xhoneyjar'
+
+      # THE ONLY `run:` STEP IN THIS FILE. It invokes the fixed executor and
+      # nothing else. The executor depends on Node builtins alone, so it starts
+      # before any dependency is installed; `npm ci` is the first entry in its
+      # closed schedule.
+      #
+      # PHASE_50A_NPM_TOKEN is the ephemeral, job-scoped workflow identity,
+      # handed to the executor under an INGRESS name that no child process
+      # inherits. The executor builds every child environment by enumerating
+      # names and skipping both this ingress name and the registry variable
+      # before reading any value, then sets the registry variable for the
+      # single install child alone. It is never echoed, written into the tree,
+      # persisted, transformed, or placed in a receipt. There is deliberately
+      # NO fallback registry: if package authorization is unavailable the
+      # install FAILS rather than silently resolving the dependency from
+      # somewhere else.
+      - name: Phase 50A fixed proof executor
+        run: node scripts/phase-50a/fixed-proof-executor.mjs
+        env:
+          PHASE_50A_EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || inputs.head_sha }}
+          PHASE_50A_NPM_TOKEN: ${{ secrets.GITHUB_TOKEN }}
